@@ -52,6 +52,10 @@ selectPassTarget(state, carrierId, yaw) -> PassTarget | null            // visé
 passAimDirection(team, yaw), planPass, kickLaunch, predictBallLanding,  // trajectoires du porteur (PURES : rendu, bots)
 ballisticVelocity, ballSpeedMult, backwardZ, canShoot, canCarrierAct
 debugGiveBall(state, id), debugResetBall(state)                         // OUTILS DE TEST, entre deux step (?debug / entraînement)
+fireOverridesSprint, fireIntervalTicks, spreadDirection, weaponImplemented // tir (étape 5, PURES : HUD, bots, tests)
+damageFalloff, damageAmount, isHittable                                 // dégâts, cible touchable
+segmentCapsuleEntry, segmentTerrainEntry                                // intersections balayées des projectiles
+abilityActive, abilityImplemented                                       // capacités (étape 5 : sprint boosté de l'ailier)
 ```
 
 - Tick fixe à 30 Hz (`TICK_RATE`, `TICK_DT`). `dt` existe pour la forme de l'API mais doit valoir `TICK_DT`.
@@ -79,11 +83,14 @@ Ordre des opérations dans `step` (à respecter et documenter dans `match.ts`) :
 2. Phase : décompte `kickoff` -> `play` ; décompte `try` -> remise en jeu.
 3. Pour chaque joueur (ordre des ids) : lecture de l'entrée, fronts montants (`buttons & ~lastButtons`), yaw/pitch (pitch borné).
    En `kickoff`/`try`/`ended` : seule la visée est appliquée (joueurs figés).
-4. Minuteries (cooldowns, statut down/getting_up, invulnérabilité, recharge).
-5. Actions : capacité, actions du porteur (passe, coup de pied, plongeon), tir (création de projectiles).
-6. Déplacement : esquive / glissade / plongeon / saut / course, gravité, terrain (marche, grimpe), murs invisibles, séparation entre joueurs.
-7. Projectiles : déplacement balayé, collisions joueurs / boucliers / terrain -> dégâts, explosions, knockback.
-8. Stabilité : plaquages (statut down, lâcher du ballon), régénération.
+4. Minuteries (cooldowns ; statut down/getting_up, rechargement, délai de régénération ; durée / cooldown des capacités).
+5. Actions : capacité, actions du porteur (passe, coup de pied), tir (création de projectiles ; le porteur du DÉBUT du tick
+   n'utilise pas son arme, même s'il vient de passer / taper le ballon).
+6. Projectiles : déplacement balayé, collisions joueurs / boucliers / terrain -> dégâts, explosions, knockback (`projectiles.ts`),
+   **avant le déplacement** (capsules au début du tick, là où le tireur les voyait, §10) ; puis décompte de l'invulnérabilité
+   (`tickInvulnerability` : les projectiles voient la valeur du tick précédent).
+7. Déplacement : esquive / glissade / plongeon / saut / course, gravité, terrain (marche, grimpe), murs invisibles, séparation entre joueurs.
+8. Stabilité : plaquages (statut down, lâcher du ballon), régénération (`stability.ts`).
 9. Ballon : suit le porteur, ou physique (gravité, rebonds seedés, frottement), puis ramassage / réception / interception
    (`updateBallPickup(state, from, fromMode)` reçoit la position et le mode du ballon AVANT sa physique : test balayé).
 10. Zones (ralentissement), mêlée.
@@ -95,7 +102,9 @@ Ordre des opérations dans `step` (à respecter et documenter dans `match.ts`) :
 Voir l'en-tête de `src/sim/vec.ts`.
 - Y vers le haut, terrain dans le plan XZ. L'équipe 0 attaque vers **+Z**, l'équipe 1 vers **-Z**.
 - `forward(yaw) = (sin yaw, 0, cos yaw)`, `right(yaw) = (-cos yaw, 0, sin yaw)`. Souris vers la droite => yaw diminue.
-- **Origine de visée** = pieds + `AIM_ORIGIN_HEIGHT` vers le haut + `SHOULDER_OFFSET` vers `right(yaw)` (`aimOrigin` dans `player.ts`).
+- **Origine de visée** = pieds + `AIM_ORIGIN_HEIGHT` vers le haut + `SHOULDER_OFFSET` vers `right(yaw)` (`aimOrigin`, défini dans
+  `playerStatus.ts`, ré-exporté par `player.ts` et l'API publique). Elle ne dépend pas de la posture : c'est pourquoi on ne tire
+  pas en posture basse (glissade, plongeon, §10).
   Les tirs partent de ce point selon `aimDir(yaw, pitch)`. La caméra épaule se place sur la MÊME droite, en arrière :
   `camPos = aimOrigin - aimDir * distance`. Le tir part donc exactement vers le réticule, à toute distance, sans que la sim
   connaisse la caméra. (Si la caméra est rapprochée par une collision, elle reste sur cette droite.)
@@ -107,7 +116,8 @@ Voir l'en-tête de `src/sim/vec.ts`.
   appui plus bref que `SPRINT_HOLD_DELAY_SEC`, et `SPRINT` tant que la touche est maintenue au-delà : maintenir Shift
   sprinte **sans consommer l'esquive** (comme B et L3 séparés à la manette). Latence de l'esquive = durée du tape.
   Avec `false` : `DODGE` au front d'appui (latence nulle), mais chaque sprint commence par une esquive.
-  Sprint : uniquement en avançant ; empêche de tirer ; annulé par la visée (sauf pour le porteur, qui ne vise pas).
+  Sprint : uniquement en avançant ; annulé par la visée (sauf pour le porteur, qui ne vise pas) ; **le tir l'emporte**
+  (étape 5) : FIRE maintenu avec une arme prête => le sprint est ignoré ce tick (`fireOverridesSprint`, §10).
 - **Le porteur ne vise pas** : la sim ignore `AIM` pour lui (pas de `AIM_SPEED_MULT`, sprint non annulé) ; côté client,
   la visée ne rapproche pas sa caméra, ne change pas les sensibilités et ne coupe pas le sprint L3.
 - **Glissade** : touche **C** en courant (`SLIDE`). Pour le porteur, **C = plongeon**.
@@ -119,7 +129,7 @@ Voir l'en-tête de `src/sim/vec.ts`.
   | Contrôle | Action |
   |---|---|
   | Stick gauche | déplacement (zone morte radiale `GAMEPAD_MOVE_DEADZONE`) |
-  | Clic stick gauche (L3) | sprint (bascule ; s'annule quand le stick revient au centre, en visée ou au tir — sauf porteur) |
+  | Clic stick gauche (L3) | sprint (bascule ; s'annule quand le stick revient au centre ou en visée — sauf porteur ; le tir ne l'annule pas : la sim ignore le sprint tant que l'arme tire, comme Maj au clavier, §10) |
   | Stick droit | caméra (courbe `GAMEPAD_LOOK_CURVE`, vitesses `GAMEPAD_LOOK_*`, boost en bout de course) |
   | A / Croix | saut |
   | B / Rond | esquive |
@@ -146,7 +156,8 @@ Voir l'en-tête de `src/sim/vec.ts`.
   l'autre équipe derrière la médiane (`KICKOFF_DEFEND_OFFSET`). Joueurs figés `KICKOFF_FREEZE_SEC`. Coup d'envoi initial : `FIRST_KICKOFF_TEAM`.
 - **Fin du match** : à 0 au chrono, immédiatement. Égalité possible.
 - **Armes** : toutes à projectiles (rapides pour SMG/pompe, balistiques pour grenades). Visibles, esquivables, déterministes.
-  Pas de tir ami. Le porteur ne tire pas. Sprint, bouclier levé, au sol : pas de tir.
+  Pas de tir ami. Le porteur ne tire pas. Au sol, en glissade, en plongeon, en grimpe, bouclier levé (étape 7) : pas de tir.
+  Le sprint n'empêche pas de tirer : tirer coupe le sprint (§10).
 - **Stabilité** : `stabilityMax` par rôle (100 par défaut). Jauge vide => `down` `DOWN_DURATION_SEC`, ballon lâché (petit rebond),
   puis `getting_up` (`GETUP_DURATION_SEC`) puis invulnérabilité `GETUP_INVULN_SEC`. Sur place, pas de respawn.
 - **Mêlée** : ballon `loose` depuis `SCRUM_LOOSE_SEC` avec ≥ N joueurs actifs de chaque camp dans `SCRUM_RADIUS` (×échelle) => ballon `scrum`
@@ -188,10 +199,14 @@ Voir l'en-tête de `src/sim/vec.ts`.
 | `formation.ts` | Placement des équipes (début de match, remises en jeu de l'étape 6). |
 | `serialize.ts` | `cloneState`, `hashState`. |
 | `carrier.ts` | **Étape 4** : passe, coup de pied, plongeon (`tryStartDive`, appelé quand le porteur presse SLIDE), ramassage, réception (§9). |
-| `playerStatus.ts` | `isCarrier`, `playerHeight`, `cooldownTicks` (partagés par player.ts et carrier.ts sans import circulaire ; ré-exportés par player.ts). |
-| `combat.ts` | **Étape 5** (vide) : statut down/getting_up, tir, projectiles, stabilité. |
+| `playerStatus.ts` | `aimOrigin`, `isCarrier`, `playerHeight`, `cooldownTicks` (partagés par player.ts, carrier.ts et combat.ts sans import circulaire ; ré-exportés par player.ts). |
+| `combat.ts` | **Étape 5** : statut down/getting_up, rechargement, tir (cadence, dispersion seedée, projectiles), `canShoot`, `fireOverridesSprint` (§10). |
+| `projectiles.ts` | **Étape 5** : déplacement balayé des projectiles, collisions capsules / relief, points d'extension bouclier et grenade (§10). |
+| `stability.ts` | **Étape 5** : dégâts (atténuation, porteur), plaquage, lâcher du ballon, régénération (§10). |
+| `raycast.ts` | **Étape 5** : intersections segment / capsule et segment / relief (exactes ; buttes échantillonnées). |
 | `rules.ts` | Décompte kickoff -> play ; **étape 6** (vide) : essai, remise en jeu, chrono, fin. |
-| `abilities.ts`, `scrum.ts` | **Étape 7** (vides) : capacités, zones, multiplicateurs de vitesse ; mêlée. |
+| `abilities.ts` | **Étape 5** : sprint boosté de l'ailier (durée, cooldown, multiplicateurs) ; **étape 7** : bouclier, zones. |
+| `scrum.ts` | **Étape 7** (vide) : mêlée. |
 
 Décisions prises à l'étape 2 :
 
@@ -252,6 +267,10 @@ Décisions prises à l'étape 2 :
 | `game/loop.ts` | Pur : `FixedStepLoop` (accumulateur -> ticks par frame, rattrapage borné, alpha). |
 | `game/session.ts` | `GameSession` : boucle, entrées, pause, haptique, instantané UI, `inputProviders` (bots). |
 | `game/roles.ts` | Composition des équipes (humain = joueur 0 de l'équipe 0). |
+| `render/CombatFxView.ts` | **Étape 5** : traceurs, flashs de bouche, étincelles, éclats de plaquage (pools préalloués). |
+| `game/combatHud.ts` | **Étape 5** : hitmarker, direction des tirs reçus, vignette (pur, testé). |
+| `bots/turret.ts` | **Étape 5** : tourelle d'entraînement (InputProvider pur, PRNG propre), remplacée par les bots de l'étape 6. |
+| `bots/aim.ts` | **Étape 5** : visée des bots (`leadAimPoint` : avance sur une cible qui court ; `aimAnglesTo`), pure, réutilisée à l'étape 6. |
 
 Décisions prises à l'étape 3 :
 
@@ -277,8 +296,9 @@ Décisions prises à l'étape 3 :
 - **Caméra** : le port du ballon prime sur la visée (`cameraTargets`). Bonus de FOV lié à la vitesse plafonné à
   `CAMERA_FOV_SPEED_MAX_BONUS`. `SHOULDER_OFFSET` = 0,75 m : la droite de tir passe à 0,30 m du bord de la capsule
   (réticule dégagé de la tête, cibles visibles juste à sa gauche).
-- **Postures basses** (glissade, plongeon, au sol) : capsule écrasée à `PLAYER_LOW_HEIGHT` (la hitbox de la sim est une
+- **Postures basses** (glissade, plongeon) : capsule écrasée à `PLAYER_LOW_HEIGHT` (la hitbox de la sim est une
   capsule verticale basse), à peine inclinée (`STYLE.lowPostureLean`) : le corps affiché ne déborde pas de la hitbox.
+  (Au sol après un plaquage : capsule couchée, voir §10 ; un joueur au sol est intouchable, aucune hitbox à respecter.)
 - **Ballon** : position ET rotation (culbute, vrille) interpolées entre deux ticks.
 - **Aide à la visée** : seulement manette active, joueur actif non porteur ; cibles = adversaires `active` dans la portée
   de l'arme, angle mesuré jusqu'à la capsule ; ralentissement continu jusqu'à `AIM_ASSIST_SLOWDOWN` ; suivi =
@@ -401,3 +421,140 @@ Décisions prises à l'étape 4 :
   l'écran ne promet jamais une passe qui ne partira pas. Coque blanche pulsante pendant `invulnTicks > 0`. Effets : `Renderer.handleEvents` appelé par la session après chaque step.
 - **Vibrations** : réception / ramassage (`catch`), interception réussie (`interceptionMade`), sa passe interceptée
   (`interceptionSuffered`). Un coup de pied réceptionné par l'adversaire n'est pas une interception.
+
+## 10. Tir, projectiles, stabilité et plaquage (étape 5)
+
+| Fichier | Rôle |
+|---|---|
+| `sim/combat.ts` | `updateStatusTimers` (down -> getting_up -> active, rechargement, délai de régénération), `updateShooting` (rechargement, tir), `canShoot`, `fireOverridesSprint`, `spreadDirection`, `fireIntervalTicks`, `weaponImplemented`. |
+| `sim/projectiles.ts` | `updateProjectiles` : segment par tick, premier contact (capsules adverses, relief), dégâts, `projectile_end` ; `shieldBlocks` et `onGrenadeImpact` (points d'extension de l'étape 7). |
+| `sim/raycast.ts` | `segmentCapsuleEntry`, `segmentTerrainEntry` (Cyrus-Beck sur murets / rampes, sol plat, murs invisibles, buttes échantillonnées puis affinées par dichotomie). |
+| `sim/stability.ts` | `applyDamage`, `damageFalloff`, `damageAmount`, `isHittable`, `updateStability` (plaquage, lâcher, régénération). |
+| `sim/abilities.ts` | `tickAbilityTimers`, `updateAbilities`, `endAbility`, multiplicateurs de vitesse / accélération (sprint boosté). |
+| `bots/turret.ts` | `createTurret(seed, id, active)`, `turretInput(mem, state, id)`, `createTurretMemory`. |
+| `bots/aim.ts` | `leadAimPoint(origin, target, speed, fraction)`, `aimAnglesTo(me, point)` (visée avec avance, partagée avec l'étape 6). |
+| `render/CombatFxView.ts` | Traceurs (`inFlightTracer`, `tracerPoint` purs), flashs, étincelles, éclats. |
+| `render/PlayerView.ts` | Clignotement, barre de stabilité, posture au sol couchée + étoiles, relevé. |
+| `game/combatHud.ts` | Retours de visée du joueur local. |
+
+Décisions prises à l'étape 5 :
+
+- **Cadence** : `fireInterval` est arrondi au tick (au moins 1) : `fireIntervalTicks`. Les minuteries restant des entiers en
+  ticks, une cadence fractionnaire (0,075 s = 2,25 ticks) n'est pas représentable sans état flottant ; l'ailier passe donc à
+  `2 / TICK_RATE` (15 coups/s, valeur exacte). Tir à t, t + k, t + 2k… tant que FIRE est maintenu (`fireCd`, décompté dans
+  `tickPlayerTimers`). **Dernière minute** : `LAST_MINUTE_COOLDOWN_MULT` raccourcit le rechargement et le cooldown de capacité
+  (comme esquive, glissade, plongeon) mais PAS la cadence de tir (documenté dans constants.ts).
+- **Qui peut tirer** (`canShoot`) : actif, non porteur, ni en glissade, ni en plongeon / récupération, ni en grimpe ; permis en
+  saut et en esquive. **Pas de tir en glissade** (correction) : l'origine de visée reste à `AIM_ORIGIN_HEIGHT` (1,6 m) quelle que
+  soit la posture, alors que la capsule glissée fait `PLAYER_LOW_HEIGHT` (0,9 m) : on tirait par-dessus un muret de 1,1 m avec
+  une hitbox entièrement cachée (≈ 40 % du temps en enchaînant les glissades). Abaisser l'origine aurait obligé la caméra à
+  suivre (§3) ; interdire le tir est plus simple et lisible (glisser = esquiver, pas s'abriter pour tirer). Le même prédicat
+  autorise le rechargement manuel. **Porteur du début du tick** : `updateShooting` ignore le joueur qui portait le ballon au
+  début du tick (`carrierAtStart`), même s'il vient de passer ou de taper : à la manette, Y émet KICK + RELOAD, et le coup de
+  pied ne lance plus en plus un rechargement de 1,4 s (ni un tir au tick d'une passe).
+- **Tir contre sprint** : si FIRE est maintenu et que l'arme est prête (`canShoot`, arme implémentée, munitions, pas en
+  rechargement), le sprint est ignoré ce tick (`fireOverridesSprint`, lu par `targetRunSpeed`) : le tir l'emporte, on ne court
+  pas en arrosant. Entre deux balles le sprint reste coupé (pas de vitesse qui « pulse » à 15 Hz) ; pendant un rechargement il
+  reprend. La visée (AIM) coupe toujours le sprint. **Une seule règle clavier / manette** (correction) : la bascule L3
+  (`SprintToggle`) ne s'annule plus au tir (seulement stick au centre ou visée) ; SPRINT reste émis et la sim coupe le sprint
+  exactement comme pour Maj maintenu. Avant, RT annulait la bascule même quand la sim n'aurait pas tiré (rechargement, demi) et
+  il fallait recliquer L3 après chaque rafale.
+- **Rechargement** : automatique au tir qui vide le chargeur (événement `reload` au même tick), manuel sur front montant RELOAD
+  chargeur incomplet (prioritaire sur un tir du même tick). Durée `cooldownTicks(reloadSec)` ; chargeur plein au tick où
+  `reloadTicks` revient à 0 (on peut tirer ce tick-là). Un rechargement entamé continue si le joueur est plaqué ou prend le ballon.
+- **Dispersion** : chaque projectile part uniformément dans la calotte sphérique de demi-angle `spreadHipDeg` (ou
+  `spreadAimDeg` en visée) autour de `aimDir(yaw, pitch)` : 2 tirages `state.rng` par projectile (cos de l'écart, azimut),
+  joueurs dans l'ordre des ids. Origine : `aimOrigin` (le tir part vers le réticule, §3). Un tir = `pellets` projectiles et UNE
+  munition ; `stats.shotsFired` compte les projectiles (précision = `shotsHit / shotsFired` ≤ 1, plombs compris).
+- **Projectiles** : un projectile créé à l'étape 5 de `step` est déplacé dès l'étape 6 du même tick (premier segment depuis
+  l'origine). Segment `[pos, pos + vel·dt]` (parabole exacte si `gravity`, grenades de l'étape 7), raccourci au reste de portée.
+  Premier contact exact sur le segment (pas de tunnel à 10 m par tick) : capsules des adversaires **touchables** (`isHittable` :
+  actifs, `invulnTicks == 0`, jauge > 0) à leur hauteur courante (`playerHeight` : glissade / plongeon = capsule basse),
+  élargies de `PROJECTILE_HIT_RADIUS` (balles et plombs ; pas les grenades, à décider à l'étape 7),
+  relief (sol plat, murets et rampes exacts, buttes échantillonnées tous les `PROJECTILE_MOUND_SAMPLE_STEP` puis dichotomie),
+  murs invisibles **franchis vers l'extérieur** (l'origine de visée d'un joueur collé au bord peut être dehors de 0,3 m : ce mur ne
+  l'arrête pas). Plus petit t ; égalité joueur / relief => relief ; égalité entre joueurs => plus petit id. Projectiles traités par id
+  croissant (tableau rangé, compactage en place). Fin de vie : impact, bout de portée (`range`), ou `PROJECTILE_MAX_LIFE_SEC` ;
+  événement `projectile_end` (raison : `player`, `blocked`, `terrain`, `expired`).
+- **Hitbox et image affichée** (correction, constat majeur de la relecture) : les projectiles étaient testés APRÈS le
+  déplacement, contre les positions de fin de tick, alors que le client affiche `lerp(prev, curr, alpha)` : la hitbox avait
+  (2 − alpha) ticks d'avance sur l'image. Viser le centre d'un porteur qui court en travers à 6 m ratait 46 balles sur 48 ; les
+  traceurs passaient « sur » la cible sans toucher. Trois changements : (1) `updateProjectiles` passe **avant le déplacement**
+  (étape 6) : positions, posture et invulnérabilité de la fin du tick précédent, c'est-à-dire l'état que le tireur voyait
+  (l'invulnérabilité est décomptée juste après les projectiles, `tickInvulnerability`, pour qu'une invulnérabilité de N ticks
+  arrête exactement N segments ; une esquive / un plongeon déclenché pendant le déplacement protège donc à partir du tick
+  suivant, ce que voient les autres joueurs) ; (2) rayon de balle `PROJECTILE_HIT_RADIUS` (0,15 m) pour le demi-tick
+  d'interpolation restant ; (3) balles d'ailier à 300 m/s (10 m par tick : peu d'avance à prendre jusqu'à ~15 m). Mesuré
+  (porteur qui sprinte en travers, visée au centre affiché, alpha 0,5) : 47/48 à 3, 6 et 10 m ; à 20 m il faut prendre de
+  l'avance (5/48 sans, 47/48 avec) — c'est voulu : des projectiles visibles et esquivables de loin. Test de non-régression
+  « cible qui court en travers à 6 m ».
+- **Tir collé à l'épaule** : au premier segment (projectile qui part de l'origine de visée), un adversaire dont la capsule
+  CONTIENT l'origine n'est touché que si le tir va vers son axe (`startsInsideLeaving`) ; avant, toute balle le touchait, même
+  tirée vers le ciel. Les segments suivants gardent la règle « départ dans la capsule = touché à t = 0 » (cible qui s'est
+  déplacée sur la balle).
+- **Traversés sans effet** : coéquipiers (pas de tir ami), joueurs `down` / `getting_up`, invulnérables (plongeon, fin de relevé),
+  et un joueur dont la jauge est déjà tombée à 0 plus tôt dans le même tick (le crédit du plaquage reste au tireur qui l'a vidée).
+- **Dégâts** : `damage × damageFalloff(distance parcourue jusqu'à l'impact) × CARRIER_DAMAGE_MULT` si la cible porte le ballon ;
+  atténuation 1 jusqu'à `falloffStart`, linéaire jusqu'à `falloffMinMult` à `range`. Point d'extension `shieldBlocks` appelé AVANT les
+  dégâts (étape 7 : `blocked`). `applyDamage` : jauge, `regenDelayTicks = secToTicks(REGEN_DELAY_SEC)`, `lastHitBy`, `hit`
+  (pos d'impact, montant BRUT, non borné à la jauge restante). `stats.shotsHit` est crédité par `projectiles.ts`, une fois par
+  projectile qui touche (pas dans `applyDamage`) : une grenade qui touchera plusieurs joueurs (étape 7) comptera une touche,
+  `shotsHit ≤ shotsFired` reste vrai.
+- **Régénération** : un coup au tick T => première régénération au tick T + secToTicks(REGEN_DELAY_SEC) (exactement 2 s), puis
+  `REGEN_RATE × TICK_DT` par tick jusqu'au max ; joueur actif seulement.
+- **Réglage du plaquage** (correction, après le correctif de hitbox qui rend les tirs fiables) : objectif ≈ 1,2–1,3 s de feu
+  continu pour plaquer un porteur à un tireur (≈ 0,6 s à deux), priorité au feeling du porteur. Ailier : dégâts 6 -> 5
+  (« faible mais précis »), `CARRIER_DAMAGE_MULT` 1,25 -> 1,1 (« un peu plus fort »), balles 150 -> 300 m/s. Porteur ailier
+  boosté : `BOOST_SPEED_MULT` 1,3 -> 1,2 (8,8 × 1,22 × 1,08 × 1,2 ≈ 13,9 m/s au lieu de 15,1, contre 10,7 pour un ailier qui
+  poursuit au sprint). Temps mesurés (cible immobile, toutes les balles touchent) : 10 m 1,27 s (porteur 1,20 s), 25 m 1,33 s
+  (1,27 s), 35 m 1,70 s (1,57 s) ; tableau dans docs/TESTING.md, vérifié par le test « temps pour plaquer ».
+- **Plaquage** (étape 8, ordre des ids) : jauge ≤ 0 => `down` pendant secToTicks(DOWN_DURATION_SEC) ticks (compte exact), jauge
+  à 0, mouvement spécial annulé (`run`, y compris une grimpe : le corps retombe sur le muret), invulnérabilité et tampon de saut
+  remis à 0, capacité terminée (`endAbility` : le cooldown démarre). Le corps glisse : vitesse horizontale plafonnée à
+  `TACKLE_SLIDE_MAX_SPEED` au plaquage, puis freinage `TACKLE_SLIDE_DECEL` (≈ 1,2 m au plus) ; aucune action, aucun ramassage,
+  exclu de la séparation, et il ne grimpe pas les murets (`body.ts` : seul un joueur actif déclenche une grimpe, un corps au
+  sol bute contre la face). Crédit `stats.tackles` au dernier tireur s'il est adverse. Porteur : ballon `loose` à sa position de
+  port (`carryPosition`), vitesse horizontale = min(`TACKLE_DROP_CARRY_KEEP` × la sienne, `TACKLE_DROP_MAX_CARRY`) +
+  `TACKLE_DROP_POP_FORWARD` dans le sens de course (sa vitesse horizontale, à défaut son regard), verticale `TACKLE_DROP_POP_UP`,
+  culbute `TACKLE_DROP_TUMBLE_RATE`, `throwerId` = plaqué, lui seul bloqué `TACKLE_PICKUP_BLOCK_SEC` (les autres peuvent le
+  ramasser dès ce tick ; ce blocage est une sécurité, sans effet tant que la durée au sol + relevé est plus longue).
+  Événements `tackled` puis `drop`. **Correction** : avant, le ballon gardait TOUTE la vitesse du porteur et le corps n'était pas
+  plafonné : plaqué en esquive (21 m/s), le corps glissait 15 m et le ballon partait à 31 m (un coup de pied gratuit vers l'en-but
+  adverse) ; il retombe maintenant à 4–5 m, quel que soit le mouvement.
+- **Relevé** : `down` -> `getting_up` (secToTicks(GETUP_DURATION_SEC), immobile, intouchable) -> `active` sur place (pas de respawn) :
+  jauge pleine, `lastHitBy = -1`, `invulnTicks = secToTicks(GETUP_INVULN_SEC)`, événement `getup`.
+- **Sprint boosté (ailier)** : front montant ABILITY, joueur actif, `abilityCd == 0`, capacité inactive => `abilityTicks` =
+  secToTicks(duration), événement `ability`. Pendant exactement ces ticks : vitesse de course × `BOOST_SPEED_MULT` (cumulé avec
+  sprint et porteur) et accélération au sol × `BOOST_ACCEL_MULT`. Au tick où la durée s'achève, `abilityCd = cooldownTicks(cooldown)`
+  (décompté dès le tick suivant : réactivable exactement `cooldown` après la fin). Utilisable en portant le ballon. Pilier / demi :
+  ABILITY ignoré sans consommer de cooldown (TODO étape 7). Minuteries dans `tickAbilityTimers` (étape 4, même en phase figée).
+- **Points d'extension de l'étape 7** : `weaponImplemented` (le lance-grenades ne tire pas encore : ni munition consommée, ni
+  sprint coupé), `onGrenadeImpact` (explosion, knockback), `shieldBlocks` (bouclier frontal), `canShoot` (bouclier levé),
+  `abilitySpeedMultiplier` (bouclier, zone de ralentissement), `updateZones`.
+- **Tourelles d'entraînement** (`bots/turret.ts`) : contrat `InputProvider` ; immobile, se tourne (au plus `TURRET_TURN_RATE_DEG`)
+  vers l'ennemi actif le plus proche à portée (`range × TURRET_ENGAGE_RANGE_MULT`), réagit après `TURRET_REACTION_SEC`, puis
+  rafales / pauses ; vise la position prévue de la cible à l'arrivée de la balle (`TURRET_LEAD_FRACTION` de l'avance, `aim.ts` :
+  sans avance, une tourelle ne plaquait jamais un porteur qui court) ; erreur de visée par rafale et tremblement par tick tirés
+  sur son PRNG propre (`deriveSeed(seed, id)`, dans sa mémoire, jamais dans MatchState) ; suppose un appel par tick. La session les branche sur tous les adversaires
+  (`SessionOptions.dummies`, `?dummies=off` => passives). Limite assumée : elles visent l'ennemi le plus proche, souvent un
+  coéquipier passif du joueur ; le demi d'en face ne tire pas (grenades : étape 7). L'étape 6 les remplace par de vrais bots.
+- **Rendu** : traceurs interpolés sans lecture de l'état précédent (position affichée = `pos − vel·dt·(1 − alpha)`, origine =
+  `pos − dir·traveled`) ; un projectile terminé pendant le tick est prolongé jusqu'à son point final (`projectile_end` + position
+  dans l'état précédent, passé à `Renderer.handleEvents(events, state, t, prev)`). Plusieurs ticks dans la même frame (≤ 30 i/s,
+  à-coup) : les fins des ticks précédents sont dessinées en entier pendant une image, seules celles du dernier tick suivent alpha
+  (avant, elles étaient perdues : flash sans traceur). Les traceurs partent visuellement du canon de
+  l'arme affichée (`STYLE.muzzle*`) et rejoignent la vraie trajectoire en `STYLE.tracerConvergeDist` : effet cosmétique, la
+  collision part de l'origine de visée. Joueur touché : matériau de corps propre à chaque joueur (émissif blanc bref). Barre de
+  stabilité face caméra au-dessus des AUTRES joueurs actifs quand la jauge n'est pas pleine (rouge sous
+  `STYLE.stabilityBarLowFraction`). Au sol : capsule **couchée face contre terre, vers l'avant** (intouchable, aucune hitbox à
+  respecter ; le joueur local tombe loin de sa caméra), orienté selon le lacet AU MOMENT du plaquage (la sim met à jour la visée
+  de tous les joueurs, même au sol : le corps couché ne tourne plus avec la souris du plaqué), étoiles qui tournent, puis
+  redressement suivant `statusTicks` du relevé ;
+  coque d'invulnérabilité aussi pendant `getting_up`. Pools préalloués (traceurs, flashs, étincelles, éclats).
+- **Retours de visée** (`combatHud.ts`, valeurs visuelles dans `STYLE`) : hitmarker quand le joueur local touche (plus grand et rouge
+  sur un plaquage, non écrasé par une touche simple pendant son affichage ; durée transmise au CSS par `--hm-dur`, pas recopiée),
+  indicateurs de direction des tirs reçus (un par tireur,
+  angle recalculé à chaque frame avec la caméra et la position COURANTES du tireur), vignette rouge sous
+  `STYLE.vignetteFromFraction` de stabilité + flash à chaque tir reçu. Mini-HUD provisoire (stabilité, munitions / rechargement,
+  capacité, esquive) dans `App.svelte` ; retours texte « Plaqué ! », « Plaquage ! », « Plaqué ! Ballon lâché ». Vibrations : tir
+  reçu (léger), plaquage subi (fort), plaquage réussi (court) — table `GAMEPAD_RUMBLE_EFFECTS`.

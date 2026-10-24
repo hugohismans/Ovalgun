@@ -134,15 +134,18 @@ export function stickLookRates(stick: StickValue, opts: LookRateOptions): { yawR
 
 /**
  * Sprint en bascule sur L3 : un appui l'active (ou le coupe) ; il s'annule tout seul quand le
- * stick revient au centre (zone morte), en visée ou au tir — sauf pour le porteur, qui ne vise ni
- * ne tire (une gâchette effleurée ne doit pas couper sa course).
+ * stick revient au centre (zone morte) ou en visée — sauf pour le porteur, qui ne vise pas (une
+ * gâchette effleurée ne doit pas couper sa course).
+ * Le TIR ne l'annule pas (étape 5) : la bascule reste active et c'est la simulation qui ignore le sprint
+ * tant que l'arme tire vraiment (fireOverridesSprint), exactement comme Maj maintenu au clavier. Le sprint
+ * reprend donc tout seul entre deux rafales, pendant un rechargement, ou si l'arme ne peut pas tirer.
  */
 export class SprintToggle {
   active = false;
 
-  update(togglePressed: boolean, moveMag: number, aiming: boolean, firing: boolean, carrier = false): boolean {
+  update(togglePressed: boolean, moveMag: number, aiming: boolean, carrier = false): boolean {
     if (togglePressed) this.active = !this.active;
-    if (moveMag <= 0 || (!carrier && (aiming || firing))) this.active = false;
+    if (moveMag <= 0 || (!carrier && aiming)) this.active = false;
     return this.active;
   }
 
@@ -169,7 +172,6 @@ const DEBUG_GIVE_BALL_BIT = padActionBit('debugGiveBall');
 const DEBUG_RESET_BALL_BIT = padActionBit('debugResetBall');
 const SPRINT_BIT = padActionBit('sprintToggle');
 const AIM_BIT = padActionBit('aim');
-const FIRE_BIT = padActionBit('fire');
 
 /** État d'une manette, mis à jour à chaque frame par `update()`. */
 export class GamepadInput {
@@ -186,7 +188,7 @@ export class GamepadInput {
   heldActions = 0;
   /**
    * Le joueur local porte le ballon (fourni par la session à chaque frame) : il ne vise pas, donc la
-   * gâchette de visée ne ralentit pas la caméra et ni la visée ni le tir ne coupent le sprint L3.
+   * gâchette de visée ne ralentit pas la caméra et ne coupe pas le sprint L3.
    */
   carrier = false;
 
@@ -248,13 +250,7 @@ export class GamepadInput {
     if (confirm && !this.prevConfirm) this.confirmRequested = true;
     this.prevConfirm = confirm;
 
-    this.sprint.update(
-      (pressed & SPRINT_BIT) !== 0,
-      this.move.mag,
-      (actions & AIM_BIT) !== 0,
-      (actions & FIRE_BIT) !== 0,
-      this.carrier,
-    );
+    this.sprint.update((pressed & SPRINT_BIT) !== 0, this.move.mag, (actions & AIM_BIT) !== 0, this.carrier);
     this.latch.setHeld(padActionsToButtons(actions));
     // Activité = geste franc (seuil distinct de la zone morte) : une légère dérive ne prend pas la main.
     this.active =

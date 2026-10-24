@@ -249,22 +249,40 @@ describe('mapping manette -> bits Buttons', () => {
 });
 
 describe('sprint en bascule (L3)', () => {
-  it('appui = bascule ; annulé au centre, en visée ou au tir', () => {
+  it('appui = bascule ; annulé au centre ou en visée ; le tir ne l’annule pas (la sim coupe le sprint)', () => {
     const s = new SprintToggle();
-    expect(s.update(true, 1, false, false)).toBe(true);
-    expect(s.update(false, 0.8, false, false)).toBe(true);
-    expect(s.update(false, 0, false, false)).toBe(false); // stick au centre
-    expect(s.update(true, 1, false, false)).toBe(true);
-    expect(s.update(true, 1, false, false)).toBe(false); // second appui : coupe
-    s.update(true, 1, false, false);
-    expect(s.update(false, 1, true, false)).toBe(false); // visée
-    s.update(true, 1, false, false);
-    expect(s.update(false, 1, false, true)).toBe(false); // tir
-    expect(s.update(true, 0, false, false)).toBe(false); // stick au centre : rien
-    // Porteur : visée / tir ignorés, seul le retour au centre coupe.
-    expect(s.update(true, 1, false, false, true)).toBe(true);
-    expect(s.update(false, 1, true, true, true)).toBe(true);
-    expect(s.update(false, 0, false, false, true)).toBe(false);
+    expect(s.update(true, 1, false)).toBe(true);
+    expect(s.update(false, 0.8, false)).toBe(true);
+    expect(s.update(false, 0, false)).toBe(false); // stick au centre
+    expect(s.update(true, 1, false)).toBe(true);
+    expect(s.update(true, 1, false)).toBe(false); // second appui : coupe
+    s.update(true, 1, false);
+    expect(s.update(false, 1, true)).toBe(false); // visée
+    expect(s.update(true, 0, false)).toBe(false); // stick au centre : rien
+    // Porteur : visée ignorée, seul le retour au centre coupe.
+    expect(s.update(true, 1, false, true)).toBe(true);
+    expect(s.update(false, 1, true, true)).toBe(true);
+    expect(s.update(false, 0, false, true)).toBe(false);
+  });
+
+  it('RT maintenu (rafale, rechargement) : la bascule L3 reste active, SPRINT et FIRE sont émis ensemble', () => {
+    const g = new GamepadInput();
+    const p = fakePad();
+    p.axes[1] = -1; // stick à fond vers l'avant
+    g.update(p); // branchement (boutons déjà enfoncés ignorés)
+    press(p, 10, true); // L3
+    g.update(p);
+    press(p, 10, false);
+    press(p, 7, true); // RT
+    for (let i = 0; i < 5; i++) g.update(p);
+    const held = g.sampleButtons();
+    expect(held & Buttons.SPRINT).not.toBe(0);
+    expect(held & Buttons.FIRE).not.toBe(0);
+    press(p, 7, false); // fin de rafale : toujours en sprint, sans recliquer L3
+    g.update(p);
+    g.sampleButtons();
+    g.update(p);
+    expect(g.sampleButtons() & Buttons.SPRINT).not.toBe(0);
   });
 });
 

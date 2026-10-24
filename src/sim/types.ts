@@ -210,12 +210,12 @@ export interface PlayerState {
   /** Dernier joueur à l'avoir touché (crédit du plaquage), -1 sinon. */
   lastHitBy: number;
 
-  /** Arme. */
+  /** Arme : ticks avant le prochain tir possible, munitions dans le chargeur, ticks de rechargement restants (0 = pas en rechargement). */
   fireCd: number;
   ammo: number;
   reloadTicks: number;
 
-  /** Capacité : cooldown et durée active restante. */
+  /** Capacité : cooldown (démarre à la fin de la durée active) et durée active restante, en ticks. */
   abilityCd: number;
   abilityTicks: number;
 
@@ -319,10 +319,20 @@ export interface ScrumState {
 // Événements (consommés par le rendu / HUD / sons, effacés à chaque tick)
 // ---------------------------------------------------------------------------
 
+/** Fin de vie d'un projectile : joueur touché, bouclier, relief / mur invisible, portée ou durée de vie atteinte. */
+export type ProjectileEndReason = 'player' | 'blocked' | 'terrain' | 'expired';
+
 export type MatchEvent =
+  /** Un tir (une gâchette, tous les plombs) : `pos` = origine de visée, `dir` = direction visée (avant dispersion). */
   | { type: 'shot'; playerId: number; kind: ProjectileKind; pos: Vec3; dir: Vec3 }
+  /**
+   * Projectile reçu : `amount` = dégâts BRUTS (atténuation et multiplicateur porteur compris), non bornés à ce qui
+   * restait de jauge ; `pos` = point d'impact.
+   */
   | { type: 'hit'; targetId: number; sourceId: number; amount: number; pos: Vec3 }
   | { type: 'blocked'; targetId: number; sourceId: number; pos: Vec3 }
+  /** Un projectile disparaît (traceurs, étincelles) : `pos` = point final (impact, ou bout de portée). */
+  | { type: 'projectile_end'; projectileId: number; ownerId: number; kind: ProjectileKind; pos: Vec3; reason: ProjectileEndReason }
   | { type: 'explosion'; ownerId: number; pos: Vec3; radius: number }
   | { type: 'tackled'; targetId: number; byId: number }
   | { type: 'getup'; playerId: number }

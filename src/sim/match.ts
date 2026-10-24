@@ -7,11 +7,15 @@
  *   1. events = [], tick++
  *   2. Phase : décompte kickoff -> play ; décompte try -> remise en jeu        (rules.ts, étape 6 pour 'try')
  *   3. Entrées : par joueur (ordre des ids), entrée assainie, fronts montants, yaw/pitch
- *   4. Minuteries : cooldowns, invulnérabilité…  ; statut down/getting_up, recharge (combat.ts, étape 5)
- *   5. Actions : capacité (abilities.ts, étape 7), porteur : passe / coup de pied (carrier.ts), tir (combat.ts, étape 5)
- *   6. Déplacement (player.ts / body.ts ; plongeon du porteur : carrier.ts), puis séparation entre joueurs
- *   7. Projectiles                                                            (combat.ts, étape 5)
- *   8. Stabilité : plaquages, régénération                                    (combat.ts, étape 5)
+ *   4. Minuteries : cooldowns… (player.ts) ; statut down/getting_up, rechargement, délai de
+ *      régénération (combat.ts) ; durée / cooldown des capacités (abilities.ts)
+ *   5. Actions : capacité (abilities.ts), porteur : passe / coup de pied (carrier.ts), tir (combat.ts ; le
+ *      porteur du DÉBUT du tick n'utilise pas son arme, même s'il vient de lâcher le ballon)
+ *   6. Projectiles : déplacement balayé, collisions, dégâts                   (projectiles.ts)
+ *      — AVANT le déplacement : les capsules sont testées là où le tireur les voyait en tirant ;
+ *      puis décompte de l'invulnérabilité (player.ts, tickInvulnerability)
+ *   7. Déplacement (player.ts / body.ts ; plongeon du porteur : carrier.ts), puis séparation entre joueurs
+ *   8. Stabilité : plaquages (lâcher du ballon), régénération                 (stability.ts)
  *   9. Ballon : porteur ou physique (ball.ts), puis ramassage / réception / interception (carrier.ts)
  *  10. Zones (abilities.ts) et mêlée (scrum.ts)                               (étape 7)
  *  11. Règles : essai, chrono, dernière minute, fin                           (rules.ts, étape 6)
@@ -20,11 +24,11 @@
  * Phases figées (kickoff / try / ended) : seule la visée est appliquée aux joueurs.
  */
 
-import { updateAbilities, updateZones } from './abilities';
+import { tickAbilityTimers, updateAbilities, updateZones } from './abilities';
 import { updateBall } from './ball';
 import { separatePlayers } from './body';
 import { updateBallPickup, updateCarrierActions } from './carrier';
-import { updateProjectiles, updateShooting, updateStability, updateStatusTimers } from './combat';
+import { updateShooting, updateStatusTimers } from './combat';
 import {
   BALL_DROP_HEIGHT,
   BALL_DROP_HORIZONTAL_SPEED,
@@ -37,11 +41,13 @@ import {
 } from './constants';
 import { createField } from './field';
 import { placeTeamInFormation } from './formation';
+import { updateProjectiles } from './projectiles';
 import { readTickInput, type TickInput } from './input';
-import { tickPlayerTimers, updatePlayerMovement } from './player';
+import { tickInvulnerability, tickPlayerTimers, updatePlayerMovement } from './player';
 import { rand, seedToInt } from './prng';
 import { isFrozenPhase, updatePhase, updateRules } from './rules';
 import { updateScrum } from './scrum';
+import { updateStability } from './stability';
 import { secToTicks } from './time';
 import type { BallState, InputFrame, MatchConfig, MatchState, PlayerState, Role, TeamId } from './types';
 
@@ -199,17 +205,21 @@ export function step(state: MatchState, inputs: InputFrame, dt: number = TICK_DT
   // 4.
   for (const p of state.players) tickPlayerTimers(p);
   updateStatusTimers(state);
+  tickAbilityTimers(state);
   // 5.
   if (!frozen) {
+    const carrierAtStart = state.ball.mode === 'carried' ? state.ball.carrierId : -1;
     updateAbilities(state, tickInputs);
     updateCarrierActions(state, tickInputs);
-    updateShooting(state, tickInputs);
+    updateShooting(state, tickInputs, carrierAtStart);
   }
-  // 6.
+  // 6. (avant le déplacement : positions du début du tick, celles que le tireur voyait)
+  updateProjectiles(state);
+  tickInvulnerability(state); // après les projectiles : ils voient l'invulnérabilité du tick précédent
+  // 7.
   for (const p of state.players) updatePlayerMovement(state, p, tickInputs[p.id], frozen);
   separatePlayers(state);
-  // 7. 8.
-  updateProjectiles(state);
+  // 8.
   updateStability(state);
   // 9. (position et mode du ballon avant sa physique : réception balayée sur le segment parcouru)
   const ballFrom = { x: state.ball.pos.x, y: state.ball.pos.y, z: state.ball.pos.z };

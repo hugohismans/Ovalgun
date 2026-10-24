@@ -49,6 +49,10 @@ export {
   type PassPlan,
   type PassTarget,
 } from './carrier';
-export { canShoot } from './combat';
+// Tir, projectiles, stabilité, capacités (étape 5) : règles PURES lues par le rendu, le HUD et les bots.
+export { canShoot, fireIntervalTicks, fireOverridesSprint, spreadDirection, weaponImplemented } from './combat';
+export { damageAmount, damageFalloff, isHittable } from './stability';
+export { segmentCapsuleEntry, segmentTerrainEntry } from './raycast';
+export { abilityActive, abilityImplemented } from './abilities';
 // Sérialisation.
 export { cloneState, hashState, fnv1a } from './serialize';

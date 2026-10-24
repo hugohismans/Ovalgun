@@ -1,6 +1,7 @@
 /**
  * Retours texte temporaires pour le joueur local (étape 4, en attendant le vrai HUD de l'étape 8) :
- * « Aucun coéquipier derrière », « Interception ! »… Table PURE (testée) : événement -> message.
+ * « Aucun coéquipier derrière », « Interception ! », « Plaqué ! », « Plaquage ! »…
+ * Table PURE (testée) : événement -> message.
  */
 
 import type { MatchEvent, MatchState } from '../sim';
@@ -30,6 +31,12 @@ export function feedbackFor(e: MatchEvent, state: MatchState, localId: number): 
       if (catcher === undefined) return null;
       return catcher.team === me.team ? { text: 'Interception de ton équipe !', kind: 'good' } : { text: 'Interception adverse', kind: 'bad' };
     }
+    case 'tackled':
+      if (e.targetId === localId) return { text: 'Plaqué !', kind: 'bad' };
+      return e.byId === localId ? { text: 'Plaquage !', kind: 'good' } : null;
+    case 'drop':
+      // Émis juste après 'tackled' quand le plaqué portait le ballon : ce message remplace « Plaqué ! ».
+      return e.playerId === localId ? { text: 'Plaqué ! Ballon lâché', kind: 'bad' } : null;
     default:
       return null;
   }

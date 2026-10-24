@@ -1,7 +1,8 @@
 /**
  * Bots : producteurs de PlayerInput. Ils lisent le MatchState et renvoient une
  * entrée, exactement comme le client humain. Ils ne modifient JAMAIS l'état.
- * Module PUR (même contrainte que src/sim). Implémentation : étape 6.
+ * Module PUR (même contrainte que src/sim). Étape 5 : tourelle d'entraînement (turret.ts) et visée avec avance
+ * (aim.ts, réutilisée par les vrais bots de l'étape 6).
  */
 
 import type { MatchState, PlayerInput } from '../sim/types';

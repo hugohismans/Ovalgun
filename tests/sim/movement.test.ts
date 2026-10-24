@@ -529,6 +529,7 @@ describe('arène et contacts', () => {
     for (const status of ['down', 'getting_up'] as const) {
       const s = soloMatch('ailier');
       s.players[0].status = status;
+      s.players[0].statusTicks = 100; // depuis l'étape 5, le statut a une durée (relevé à 0)
       run(s, 20, () => only0({ moveY: 1, buttons: Buttons.JUMP | Buttons.DODGE }));
       expect(s.players[0].pos).toEqual({ x: 0, y: 0, z: 0 });
     }

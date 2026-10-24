@@ -126,11 +126,12 @@ function moveHorizontal(state: MatchState, p: PlayerState, dx: number, dz: numbe
       if (sup > p.climbTargetY) p.climbTargetY = sup;
       return;
     }
-    if (approachesFace(field, p, ox, oz, nx, nz)) {
+    // Seul un joueur actif grimpe : un corps plaqué qui glisse au sol bute contre le muret (obstacle).
+    if (p.status === 'active' && approachesFace(field, p, ox, oz, nx, nz)) {
       startClimb(state, p, sup);
       return;
     }
-    // On frôle le muret sans aller vers lui : il fait obstacle (glissement ci-dessous).
+    // On frôle le muret sans aller vers lui (ou corps au sol) : il fait obstacle (glissement ci-dessous).
   }
 
   // Obstacle (trop haut, ou muret frôlé) : retour à la position précédente, on retire la

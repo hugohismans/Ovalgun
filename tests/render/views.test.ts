@@ -5,8 +5,9 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { BallView } from '../../src/render/BallView';
+import { CombatFxView, inFlightTracer, tracerPoint } from '../../src/render/CombatFxView';
 import { fxForEvent, FxView } from '../../src/render/FxView';
-import { FX } from '../../src/render/palette';
+import { FX, STYLE } from '../../src/render/palette';
 import { PassIndicatorView } from '../../src/render/PassIndicatorView';
 import { PlayerAssets, PlayerView } from '../../src/render/PlayerView';
 import { PLAYER_HEIGHT, PLAYER_LOW_HEIGHT, PLAYER_RADIUS } from '../../src/sim/constants';
@@ -48,7 +49,7 @@ describe('PlayerView', () => {
     const frame = { feet: { x: 0, y: 0, z: 0 }, yaw: 0, pitch: 0, ground: 0, carrier: false };
     for (let i = 0; i < 120; i++) v.update(p, frame, 1 / 60, i / 60);
     v.root.updateMatrixWorld(true);
-    const body = v.root.children[0].children[0].children[0]; // yawGroup > pose > corps
+    const body = v.root.children[0].children[0].children[0].children[0]; // yawGroup > fallGroup > pose > corps
     const box = new THREE.Box3().setFromObject(body, true); // précis : sommets transformés
     const size = box.getSize(new THREE.Vector3());
     expect(size.y).toBeLessThanOrEqual(PLAYER_LOW_HEIGHT + 0.1);
@@ -133,7 +134,7 @@ describe('effets et indicateurs du porteur (étape 4)', () => {
     const assets = new PlayerAssets();
     const v = new PlayerView(assets, p.id, p.team, p.role, true);
     const frame = { feet: { x: 0, y: 0, z: 0 }, yaw: 0, pitch: 0, ground: 0, carrier: true };
-    const pose = v.root.children[0].children[0];
+    const pose = v.root.children[0].children[0].children[0]; // yawGroup > fallGroup > pose
     const shell = pose.children[pose.children.length - 1];
     v.update(p, frame, 1 / 60, 0);
     expect(shell.visible).toBe(false);
@@ -147,3 +148,167 @@ describe('effets et indicateurs du porteur (étape 4)', () => {
     assets.dispose();
   });
 });
+
+describe('combat (étape 5)', () => {
+  it('fxForEvent : plaquage, relevé, capacité ancrés sur le bon joueur', () => {
+    const s = match();
+    s.players[4].pos = { x: 2, y: 0, z: 5 };
+    expect(fxForEvent({ type: 'tackled', targetId: 4, byId: 0 }, s)?.rings).toBe(FX.tackled);
+    expect(fxForEvent({ type: 'tackled', targetId: 4, byId: 0 }, s)?.ground).toEqual({ x: 2, y: 0, z: 5 });
+    expect(fxForEvent({ type: 'getup', playerId: 4 }, s)?.rings).toBe(FX.getup);
+    expect(fxForEvent({ type: 'ability', playerId: 0, role: 'ailier' }, s)?.rings).toBe(FX.ability);
+  });
+
+  it('PlayerView : couché au sol (étoiles), se relève ; barre de stabilité des autres seulement ; clignote quand touché', () => {
+    const s = match();
+    const p = s.players[3];
+    const assets = new PlayerAssets();
+    const v = new PlayerView(assets, p.id, p.team, p.role, false);
+    const frame = { feet: { x: 0, y: 0, z: 0 }, yaw: 0, pitch: 0, ground: 0, carrier: false };
+    const body = v.root.children[0].children[0].children[0].children[0];
+    const settle = (t0: number) => {
+      for (let i = 0; i < 90; i++) v.update(p, frame, 1 / 60, t0 + i / 60);
+      v.root.updateMatrixWorld(true);
+      return new THREE.Box3().setFromObject(body, true);
+    };
+    // Barre : invisible jauge pleine, visible entamée.
+    settle(0);
+    expect(v.bar.visible).toBe(false);
+    p.stability = 40;
+    settle(2);
+    expect(v.bar.visible).toBe(true);
+    // Au sol : couché (moins haut qu'un rayon et demi), posé sur le sol, sans barre.
+    p.status = 'down';
+    p.statusTicks = 50;
+    const lying = settle(4);
+    expect(lying.max.y).toBeLessThan(PLAYER_RADIUS * 2 + 0.15);
+    expect(lying.min.y).toBeGreaterThan(-0.1);
+    expect(lying.getSize(new THREE.Vector3()).z).toBeGreaterThan(PLAYER_HEIGHT - 0.2);
+    expect(v.bar.visible).toBe(false);
+    // Relevé terminé : debout.
+    p.status = 'active';
+    p.statusTicks = 0;
+    expect(settle(6).getSize(new THREE.Vector3()).y).toBeCloseTo(PLAYER_HEIGHT, 1);
+    // Clignotement.
+    const mat = (body as THREE.Mesh).material as THREE.MeshToonMaterial;
+    v.flash(10);
+    v.update(p, frame, 1 / 60, 10.01);
+    expect(mat.emissiveIntensity).toBeGreaterThan(0);
+    v.update(p, frame, 1 / 60, 11);
+    expect(mat.emissiveIntensity).toBe(0);
+    // Le joueur humain n'a pas de barre au-dessus de lui.
+    const me = new PlayerView(assets, 0, 0, 'ailier', true);
+    me.update({ ...s.players[0], stability: 10 }, frame, 1 / 60, 0);
+    expect(me.bar.visible).toBe(false);
+    v.dispose();
+    me.dispose();
+    assets.dispose();
+  });
+
+  it('traceurs : interpolés entre deux ticks, partent du canon et rejoignent la trajectoire', () => {
+    const proj = {
+      id: 1,
+      kind: 'bullet' as const,
+      ownerId: 0,
+      team: 0 as const,
+      pos: { x: 0, y: 1.6, z: 10 },
+      vel: { x: 0, y: 0, z: 150 },
+      ttl: 80,
+      traveled: 10,
+      damage: 6,
+    };
+    const spec = { origin: { x: 0, y: 0, z: 0 }, dir: { x: 0, y: 0, z: 1 }, head: 0, kind: 'bullet' as const, ownerYaw: 0 };
+    inFlightTracer(proj, 1, 0, spec);
+    expect(spec.head).toBeCloseTo(10, 9);
+    expect(spec.origin.z).toBeCloseTo(0, 9);
+    inFlightTracer(proj, 0, 0, spec);
+    expect(spec.head).toBeCloseTo(5, 9);
+    const out = { x: 0, y: 0, z: 0 };
+    tracerPoint(spec, STYLE.tracerConvergeDist + 1, out);
+    expect(out).toEqual({ x: 0, y: 1.6, z: STYLE.tracerConvergeDist + 1 });
+    tracerPoint(spec, 0, out);
+    expect(out.y).toBeCloseTo(1.6 + STYLE.muzzleUp, 9);
+    expect(out.z).toBeCloseTo(STYLE.muzzleForward, 9);
+  });
+
+  it('CombatFxView : un traceur par projectile en vol + les projectiles terminés au dernier tick', () => {
+    const prev = match();
+    prev.projectiles.push({ id: 7, kind: 'bullet', ownerId: 0, team: 0, pos: { x: 0, y: 1.6, z: 5 }, vel: { x: 0, y: 0, z: 150 }, ttl: 80, traveled: 5, damage: 6 });
+    const curr = cloneState(prev);
+    curr.projectiles = [{ id: 8, kind: 'bullet', ownerId: 3, team: 1, pos: { x: 0, y: 1.6, z: -5 }, vel: { x: 0, y: 0, z: -150 }, ttl: 80, traveled: 5, damage: 6 }];
+    const fx = new CombatFxView();
+    fx.handleEvents(
+      [
+        { type: 'projectile_end', projectileId: 7, ownerId: 0, kind: 'bullet', pos: { x: 0, y: 1.6, z: 8 }, reason: 'player' },
+        { type: 'hit', targetId: 4, sourceId: 0, amount: 6, pos: { x: 0, y: 1.6, z: 8 } },
+        { type: 'shot', playerId: 3, kind: 'bullet', pos: { x: 0, y: 1.6, z: 0 }, dir: { x: 0, y: 0, z: -1 } },
+        { type: 'tackled', targetId: 4, byId: 0 },
+      ],
+      curr,
+      prev,
+      0,
+    );
+    const cam = new THREE.PerspectiveCamera();
+    fx.update(curr, 0.5, cam, 1 / 60, 0.01);
+    const visible = fx.group.children.filter((c) => c.visible);
+    // 2 traceurs + flash + étincelles + éclat.
+    expect(visible.length).toBeGreaterThanOrEqual(2 + 1 + 1 + 1);
+    fx.update(curr, 0.5, cam, 1 / 60, 5);
+    fx.handleEvents([], curr, curr, 5);
+    fx.update({ ...curr, projectiles: [] }, 0.5, cam, 1 / 60, 5.01);
+    expect(fx.group.children.filter((c) => c.visible)).toHaveLength(0);
+    fx.dispose();
+  });
+
+  it('CombatFxView : deux ticks dans la même frame, les fins de projectiles du premier tick sont aussi dessinées', () => {
+    const s0 = match();
+    const proj = (id: number, z: number) => ({ id, kind: 'bullet' as const, ownerId: 0, team: 0 as const, pos: { x: 0, y: 1.6, z }, vel: { x: 0, y: 0, z: 300 }, ttl: 80, traveled: z, damage: 5 });
+    s0.projectiles = [proj(7, 5), proj(9, 2)];
+    const s1 = cloneState(s0);
+    s1.projectiles = [proj(9, 12)];
+    const s2 = cloneState(s1);
+    s2.projectiles = [];
+    const end = (id: number, z: number) => ({ type: 'projectile_end' as const, projectileId: id, ownerId: 0, kind: 'bullet' as const, pos: { x: 0, y: 1.6, z }, reason: 'terrain' as const });
+    const fx = new CombatFxView();
+    const cam = new THREE.PerspectiveCamera();
+    const tracers = () => fx.group.children.slice(0, STYLE.tracerPoolSize).filter((c) => c.visible).length;
+    // Frame lente : deux ticks (7 finit au premier, 9 au second), puis une seule image.
+    fx.handleEvents([end(7, 9)], s1, s0, 0);
+    fx.handleEvents([end(9, 15)], s2, s1, 0);
+    fx.update(s2, 0.5, cam, 1 / 30, 0.01);
+    expect(tracers()).toBe(2);
+    // Image suivante sans nouveau tick : seule la fin du dernier tick reste (elle suit alpha).
+    fx.update(s2, 0.9, cam, 1 / 60, 0.02);
+    expect(tracers()).toBe(1);
+    // Nouveau tick sans événement : plus rien.
+    fx.handleEvents([], s2, s2, 0.03);
+    fx.update(s2, 0.1, cam, 1 / 60, 0.03);
+    expect(tracers()).toBe(0);
+    fx.dispose();
+  });
+
+  it('PlayerView : le corps couché garde le lacet du plaquage (il ne tourne pas avec la visée du plaqué)', () => {
+    const s = match();
+    const p = s.players[3];
+    const assets = new PlayerAssets();
+    const v = new PlayerView(assets, p.id, p.team, p.role, true);
+    const yawGroup = v.root.children[0];
+    const frame = (yaw: number) => ({ feet: { x: 0, y: 0, z: 0 }, yaw, pitch: 0, ground: 0, carrier: false });
+    v.update(p, frame(0.4), 1 / 60, 0);
+    expect(yawGroup.rotation.y).toBeCloseTo(0.4, 9);
+    p.status = 'down';
+    p.statusTicks = 50;
+    v.update(p, frame(0.5), 1 / 60, 0.1);
+    v.update(p, frame(2.5), 1 / 60, 0.2);
+    expect(yawGroup.rotation.y).toBeCloseTo(0.5, 9);
+    p.status = 'getting_up';
+    v.update(p, frame(-1), 1 / 60, 0.3);
+    expect(yawGroup.rotation.y).toBeCloseTo(0.5, 9);
+    p.status = 'active';
+    v.update(p, frame(-1), 1 / 60, 0.4);
+    expect(yawGroup.rotation.y).toBeCloseTo(-1, 9);
+    v.dispose();
+    assets.dispose();
+  });
+});
+

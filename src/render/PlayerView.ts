@@ -4,13 +4,28 @@
  * tête, posture basse (capsule écrasée à la hauteur de la hitbox de la sim, PLAYER_LOW_HEIGHT, à peine
  * inclinée) en glissade / plongeon / au sol, ombre portée au sol,
  * anneau sous le joueur humain, losange au-dessus du porteur visible à travers le relief, coque blanche
- * pulsante pendant l'invulnérabilité (plongeon : on voit d'un coup d'œil que le porteur est intouchable).
+ * pulsante pendant l'invulnérabilité (plongeon, relevé : on voit d'un coup d'œil que le joueur est intouchable).
+ * Étape 5 : clignotement quand il est touché (`flash`), barre de stabilité au-dessus de la tête des AUTRES joueurs
+ * (visible quand la jauge n'est pas pleine), posture au sol COUCHÉE avec des étoiles qui tournent, puis relevé.
  *
- * Géométries et matériaux partagés (PlayerAssets) : aucune allocation par frame.
+ * Géométries et matériaux partagés (PlayerAssets) ; seuls le corps (clignotement) et la jauge (couleur) ont un
+ * matériau propre à chaque joueur. Aucune allocation par frame.
  */
 
 import * as THREE from 'three';
-import { PLAYER_HEIGHT, PLAYER_LOW_HEIGHT, PLAYER_RADIUS, playerHeight, type PlayerState, type Role, type TeamId, type Vec3 } from '../sim';
+import {
+  GETUP_DURATION_SEC,
+  PLAYER_HEIGHT,
+  PLAYER_LOW_HEIGHT,
+  PLAYER_RADIUS,
+  playerHeight,
+  ROLES,
+  secToTicks,
+  type PlayerState,
+  type Role,
+  type TeamId,
+  type Vec3,
+} from '../sim';
 import { PALETTE, STYLE } from './palette';
 
 /** Dégradé à 3 paliers pour MeshToonMaterial (ombrage flat). */
@@ -46,6 +61,9 @@ export class PlayerAssets {
   readonly shadow = new THREE.CircleGeometry(PLAYER_RADIUS * 1.15, 24).rotateX(-Math.PI / 2);
   readonly ring = new THREE.RingGeometry(STYLE.humanRingInner, STYLE.humanRingOuter, 40).rotateX(-Math.PI / 2);
   readonly marker = new THREE.OctahedronGeometry(STYLE.markerSize, 0).scale(1, 1.45, 1);
+  /** Barre de stabilité (plan unité) et étoiles du joueur au sol. */
+  readonly bar = new THREE.PlaneGeometry(1, 1);
+  readonly star = starShape(5, 0.45);
 
   readonly teamMats: [THREE.MeshToonMaterial, THREE.MeshToonMaterial];
   readonly teamDarkMats: [THREE.MeshToonMaterial, THREE.MeshToonMaterial];
@@ -83,6 +101,8 @@ export class PlayerAssets {
     depthWrite: false,
     transparent: true,
   });
+  readonly barBackMat = new THREE.MeshBasicMaterial({ color: PALETTE.stabilityBarBack, transparent: true, opacity: STYLE.stabilityBarBackOpacity, depthWrite: false });
+  readonly starMat = new THREE.MeshBasicMaterial({ color: PALETTE.dizzyStar, side: THREE.DoubleSide });
 
   constructor() {
     const toon = (color: string): THREE.MeshToonMaterial => new THREE.MeshToonMaterial({ color, gradientMap: this.gradient });
@@ -102,6 +122,8 @@ export class PlayerAssets {
       this.shadow,
       this.ring,
       this.marker,
+      this.bar,
+      this.star,
     ];
     for (const g of geos) g.dispose();
     const mats = [
@@ -117,20 +139,48 @@ export class PlayerAssets {
       this.markerMat,
       this.markerOutlineMat,
       this.invulnMat,
+      this.barBackMat,
+      this.starMat,
     ];
     for (const m of mats) m.dispose();
     this.gradient.dispose();
   }
 }
 
+/** Géométrie d'étoile plate (branches de rayon 1, creux de rayon `inner`). */
+function starShape(points: number, inner: number): THREE.ShapeGeometry {
+  const shape = new THREE.Shape();
+  for (let i = 0; i < points * 2; i++) {
+    const a = (i / (points * 2)) * Math.PI * 2 + Math.PI / 2;
+    const r = i % 2 === 0 ? 1 : inner;
+    if (i === 0) shape.moveTo(Math.cos(a) * r, Math.sin(a) * r);
+    else shape.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+  }
+  shape.closePath();
+  return new THREE.ShapeGeometry(shape);
+}
+
 /**
  * Posture visuelle. `low` (0 debout, 1 bas) suit EXACTEMENT la hitbox de la sim (playerHeight : capsule
- * verticale de PLAYER_LOW_HEIGHT en glissade / plongeon / au sol) ; la bascule n'est qu'un indice de
- * lisibilité (en arrière en glissade et au sol, en avant en plongeon), bornée à STYLE.lowPostureLean
- * pour que le corps affiché ne déborde pas de la hitbox.
+ * verticale de PLAYER_LOW_HEIGHT en glissade / plongeon) ; la bascule n'est qu'un indice de
+ * lisibilité (en arrière en glissade, en avant en plongeon), bornée à STYLE.lowPostureLean
+ * pour que le corps affiché ne déborde pas de la hitbox. AU SOL (plaqué, intouchable : aucune hitbox à
+ * respecter), le joueur est COUCHÉ de tout son long (`targetFall`), pas écrasé.
  */
 function targetLow(p: PlayerState): number {
+  if (p.status !== 'active') return 0;
   return playerHeight(p) < PLAYER_HEIGHT ? 1 : 0;
+}
+
+const BAR_HIGH = new THREE.Color(PALETTE.stabilityBarHigh);
+const BAR_LOW = new THREE.Color(PALETTE.stabilityBarLow);
+
+/** Chute visuelle (0 debout, 1 couché) : couché au sol, puis se redresse pendant le relevé. */
+const GETUP_TICKS = Math.max(1, secToTicks(GETUP_DURATION_SEC));
+export function targetFall(p: PlayerState): number {
+  if (p.status === 'down') return 1;
+  if (p.status === 'getting_up') return Math.min(1, Math.max(0, p.statusTicks / GETUP_TICKS));
+  return 0;
 }
 
 function targetLean(p: PlayerState): number {
@@ -157,8 +207,25 @@ export class PlayerView {
   /** Objets posés au sol (ombre, anneau), indépendants de la hauteur du joueur. */
   readonly groundGroup = new THREE.Group();
   readonly marker = new THREE.Group();
+  /** Barre de stabilité (face caméra), au-dessus de la tête des autres joueurs. */
+  readonly bar = new THREE.Group();
   private readonly yawGroup = new THREE.Group();
+  /** Bascule au sol (pivot aux pieds), entre le lacet et la posture. */
+  private readonly fallGroup = new THREE.Group();
   private readonly pose = new THREE.Group();
+  private readonly bodyMat: THREE.MeshToonMaterial;
+  private readonly barFill: THREE.Mesh;
+  private readonly barFillMat: THREE.MeshBasicMaterial;
+  private readonly dizzy = new THREE.Group();
+  private readonly stars: THREE.Mesh[] = [];
+  private readonly role: Role;
+  private hitAt = -1;
+  private fall = 0;
+  /**
+   * Lacet figé au moment du plaquage : la sim met à jour la visée de tous les joueurs, même au sol ; le corps
+   * couché ne tourne pas avec la souris / l'entrée du plaqué (« aiguille de boussole »). NaN : debout.
+   */
+  private downYaw = Number.NaN;
   private readonly weapon = new THREE.Group();
   private readonly shadow: THREE.Mesh;
   private readonly invulnShell: THREE.Mesh;
@@ -175,11 +242,16 @@ export class PlayerView {
   ) {
     const H = PLAYER_HEIGHT;
     const R = PLAYER_RADIUS;
+    this.role = role;
     this.root.add(this.yawGroup);
-    this.yawGroup.add(this.pose);
+    this.yawGroup.add(this.fallGroup);
+    this.fallGroup.add(this.pose);
 
-    // Corps + contour.
-    const body = new THREE.Mesh(assets.capsule, assets.teamMats[team]);
+    // Corps + contour. Matériau propre (clignotement émissif quand il est touché).
+    this.bodyMat = assets.teamMats[team].clone();
+    this.bodyMat.emissive.set(PALETTE.hitFlash);
+    this.bodyMat.emissiveIntensity = 0;
+    const body = new THREE.Mesh(assets.capsule, this.bodyMat);
     const outline = new THREE.Mesh(assets.capsule, assets.outlineMat);
     outline.scale.setScalar(STYLE.outlineScale);
     this.pose.add(body, outline);
@@ -241,12 +313,67 @@ export class PlayerView {
     gemOutline.renderOrder = 1000;
     this.marker.add(gemOutline, gem);
     this.marker.visible = false;
+
+    // Barre de stabilité (fond + jauge ancrée à gauche), dessinée au-dessus du décor.
+    const back = new THREE.Mesh(assets.bar, assets.barBackMat);
+    back.scale.set(STYLE.stabilityBarWidth + STYLE.stabilityBarBackMargin, STYLE.stabilityBarHeight + STYLE.stabilityBarBackMargin, 1);
+    back.renderOrder = 900;
+    this.barFillMat = new THREE.MeshBasicMaterial({ color: PALETTE.stabilityBarHigh, depthWrite: false, transparent: true });
+    this.barFill = new THREE.Mesh(assets.bar, this.barFillMat);
+    this.barFill.position.z = 0.002;
+    this.barFill.renderOrder = 901;
+    this.bar.add(back, this.barFill);
+    this.bar.visible = false;
+
+    // Étoiles qui tournent au-dessus du joueur au sol.
+    for (let i = 0; i < STYLE.dizzyStars; i++) {
+      const st = new THREE.Mesh(assets.star, assets.starMat);
+      st.scale.setScalar(STYLE.dizzyStarSize);
+      this.stars.push(st);
+      this.dizzy.add(st);
+    }
+    this.dizzy.visible = false;
+    this.dizzy.position.z = PLAYER_HEIGHT * STYLE.dizzyForwardFraction; // au-dessus du corps couché vers l'avant
+    this.yawGroup.add(this.dizzy);
+  }
+
+  /** Le joueur vient d'être touché : clignotement (STYLE.hitFlashSec). */
+  flash(timeSec: number): void {
+    this.hitAt = timeSec;
+  }
+
+  /** Oriente la barre de stabilité vers la caméra (après la mise à jour de la caméra). */
+  faceCamera(q: THREE.Quaternion): void {
+    if (this.bar.visible) this.bar.quaternion.copy(q);
+  }
+
+  dispose(): void {
+    this.bodyMat.dispose();
+    this.barFillMat.dispose();
   }
 
   /** Met à jour la vue pour une frame (état interpolé). */
   update(p: PlayerState, f: PlayerFrame, dt: number, timeSec: number): void {
     this.root.position.set(f.feet.x, f.feet.y, f.feet.z);
-    this.yawGroup.rotation.y = f.yaw;
+    if (p.status === 'active') this.downYaw = Number.NaN;
+    else if (Number.isNaN(this.downYaw)) this.downYaw = f.yaw;
+    this.yawGroup.rotation.y = Number.isNaN(this.downYaw) ? f.yaw : this.downYaw;
+
+    // Au sol : couché face contre terre, vers l'avant (pivot aux pieds, posé sur son rayon ; le joueur local tombe
+    // donc loin de sa caméra), puis se redresse pendant le relevé.
+    const tf = targetFall(p);
+    this.fall = tf + (this.fall - tf) * Math.exp(-STYLE.fallRate * dt);
+    this.fallGroup.rotation.x = this.fall * (Math.PI / 2);
+    this.fallGroup.position.y = this.fall * PLAYER_RADIUS;
+    this.dizzy.visible = p.status === 'down';
+    if (this.dizzy.visible) {
+      for (let i = 0; i < this.stars.length; i++) {
+        const a = timeSec * STYLE.dizzySpinRate + (i / this.stars.length) * Math.PI * 2;
+        const st = this.stars[i];
+        st.position.set(Math.cos(a) * STYLE.dizzyRadius, STYLE.dizzyHeight + STYLE.dizzyBob * Math.sin(a * 2), Math.sin(a) * STYLE.dizzyRadius);
+        st.rotation.set(0, -a, 0);
+      }
+    }
 
     // Posture lissée (rendu seulement) : capsule écrasée à la hauteur de la hitbox, légèrement inclinée.
     const blend = Math.exp(-STYLE.poseRate * dt);
@@ -259,10 +386,13 @@ export class PlayerView {
     this.pose.rotation.x = this.lean;
     this.pose.scale.set(1, scaleY, 1);
     this.pose.position.y = (PLAYER_HEIGHT * scaleY) / 2;
-    // L'arme reste pointée vers l'avant (contre-rotation de la posture) et suit le pitch debout.
-    this.weapon.rotation.x = -this.lean - f.pitch * (1 - k);
+    // L'arme reste pointée vers l'avant (contre-rotation de la posture et de la chute) et suit le pitch debout.
+    this.weapon.rotation.x = -this.lean - this.fall * (Math.PI / 2) - f.pitch * (1 - k) * (1 - this.fall);
     this.weapon.visible = !f.carrier; // le porteur ne tire pas : le ballon prend la place de l'arme
-    this.invulnShell.visible = p.invulnTicks > 0;
+    this.invulnShell.visible = p.invulnTicks > 0 || p.status === 'getting_up';
+    // Clignotement quand il est touché.
+    const since = this.hitAt < 0 ? Infinity : timeSec - this.hitAt;
+    this.bodyMat.emissiveIntensity = since < STYLE.hitFlashSec ? STYLE.hitFlashIntensity * (1 - since / STYLE.hitFlashSec) : 0;
     if (this.invulnShell.visible) {
       this.invulnMat.opacity = STYLE.invulnOpacity + STYLE.invulnPulse * Math.sin(timeSec * STYLE.invulnPulseRate);
     }
@@ -273,11 +403,23 @@ export class PlayerView {
     this.groundGroup.position.set(f.feet.x, f.ground + 0.015, f.feet.z);
     this.shadow.scale.setScalar(STYLE.playerShadowMinScale + (1 - STYLE.playerShadowMinScale) * fade);
 
+    // Barre de stabilité : autres joueurs actifs, jauge non pleine.
+    const ratio = Math.max(0, Math.min(1, p.stability / ROLES[this.role].stabilityMax));
+    this.bar.visible = !this.isHuman && p.status === 'active' && ratio < 1 - 1e-6;
+    if (this.bar.visible) {
+      const w = STYLE.stabilityBarWidth;
+      this.bar.position.set(f.feet.x, f.feet.y + PLAYER_HEIGHT * scaleY + STYLE.stabilityBarAboveHead, f.feet.z);
+      this.barFill.scale.set(Math.max(1e-3, w * ratio), STYLE.stabilityBarHeight, 1);
+      this.barFill.position.x = -w / 2 + (w * ratio) / 2;
+      this.barFillMat.color.copy(ratio <= STYLE.stabilityBarLowFraction ? BAR_LOW : BAR_HIGH);
+    }
+
     // Marqueur du porteur : flotte et tourne au-dessus de la tête.
     this.marker.visible = f.carrier;
     if (f.carrier) {
       const bob = Math.sin(timeSec * STYLE.markerBobRate) * STYLE.markerBobAmp;
-      this.marker.position.set(f.feet.x, f.feet.y + PLAYER_HEIGHT * scaleY + STYLE.markerAboveHead + bob, f.feet.z);
+      const lift = this.bar.visible ? STYLE.stabilityBarAboveHead : 0; // le losange passe au-dessus de la jauge
+      this.marker.position.set(f.feet.x, f.feet.y + PLAYER_HEIGHT * scaleY + STYLE.markerAboveHead + lift + bob, f.feet.z);
       this.marker.rotation.y = timeSec * STYLE.markerSpinRate;
       this.marker.scale.setScalar(this.isHuman ? STYLE.markerHumanScale : 1); // plus discret au-dessus de sa propre tête
     }

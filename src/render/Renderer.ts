@@ -4,6 +4,8 @@
  * directionnelle, brouillard léger, couleurs saturées (palette.ts).
  * Étape 4 : indicateurs du porteur local (cible de la passe assistée recalculée à chaque frame avec le yaw
  * courant, cône de passe, point de chute du coup de pied) et effets des événements (`handleEvents`).
+ * Étape 5 : traceurs, flashs, étincelles, éclats de plaquage (CombatFxView), joueur touché qui clignote,
+ * barres de stabilité face caméra, posture au sol (PlayerView).
  */
 
 import * as THREE from 'three';
@@ -22,6 +24,7 @@ import {
   type Vec3,
 } from '../sim';
 import { BallView } from './BallView';
+import { CombatFxView } from './CombatFxView';
 import { FieldView } from './FieldView';
 import { FxView } from './FxView';
 import { lerpPos, lerpYaw } from './interpolate';
@@ -140,6 +143,7 @@ export class Renderer {
   private readonly ball = new BallView();
   private readonly passIndicator = new PassIndicatorView();
   private readonly fx = new FxView();
+  private readonly combatFx = new CombatFxView();
   private readonly sky = createSky();
   /** Cible de la passe assistée affichée à la dernière frame (-1 : aucune, ou le joueur local ne porte pas). */
   passTargetId = -1;
@@ -175,7 +179,7 @@ export class Renderer {
     const sun = new THREE.DirectionalLight(PALETTE.sun, STYLE.sunIntensity);
     sun.position.set(18, 30, -10);
     this.scene.add(sun);
-    this.scene.add(this.ball.group, this.passIndicator.group, this.fx.group);
+    this.scene.add(this.ball.group, this.passIndicator.group, this.fx.group, this.combatFx.group);
     this.resize();
   }
 
@@ -188,7 +192,7 @@ export class Renderer {
     this.scene.add(this.backdrop);
     this.players = state.players.map((p) => {
       const v = new PlayerView(this.assets, p.id, p.team, p.role, p.id === humanId);
-      this.scene.add(v.root, v.groundGroup, v.marker);
+      this.scene.add(v.root, v.groundGroup, v.marker, v.bar);
       return v;
     });
     this.interpFeet = state.players.map(() => ({ x: 0, y: 0, z: 0 }));
@@ -205,7 +209,10 @@ export class Renderer {
       (this.backdrop.userData.dispose as () => void)();
       this.backdrop = null;
     }
-    for (const v of this.players) this.scene.remove(v.root, v.groundGroup, v.marker);
+    for (const v of this.players) {
+      this.scene.remove(v.root, v.groundGroup, v.marker, v.bar);
+      v.dispose();
+    }
     this.players = [];
   }
 
@@ -284,6 +291,8 @@ export class Renderer {
 
     this.updatePassIndicator(curr, view, carrierId, timeSec);
     this.fx.update(timeSec, this.shoulder.camera);
+    this.combatFx.update(curr, a, this.shoulder.camera, dt, timeSec);
+    for (const v of this.players) v.faceCamera(this.shoulder.camera.quaternion);
 
     this.sky.position.copy(this.shoulder.camera.position);
     this.renderer.render(this.scene, this.shoulder.camera);
@@ -325,9 +334,16 @@ export class Renderer {
     this.passIndicator.update(f, timeSec);
   }
 
-  /** Effets des événements d'un tick (appelé par la session après chaque step, avec l'état juste après). */
-  handleEvents(events: readonly MatchEvent[], state: MatchState, timeSec: number): void {
-    for (const e of events) this.fx.handle(e, state, timeSec);
+  /**
+   * Effets des événements d'un tick (appelé par la session après chaque step, avec l'état juste après et l'état
+   * juste avant : un projectile terminé pendant le tick est prolongé jusqu'à son point d'impact).
+   */
+  handleEvents(events: readonly MatchEvent[], state: MatchState, timeSec: number, prev: MatchState | null = null): void {
+    for (const e of events) {
+      this.fx.handle(e, state, timeSec);
+      if (e.type === 'hit') this.players[e.targetId]?.flash(timeSec);
+    }
+    this.combatFx.handleEvents(events, state, prev, timeSec);
   }
 
   dispose(): void {
@@ -335,6 +351,7 @@ export class Renderer {
     this.ball.dispose();
     this.passIndicator.dispose();
     this.fx.dispose();
+    this.combatFx.dispose();
     this.assets.dispose();
     this.sky.geometry.dispose();
     (this.sky.material as THREE.Material).dispose();

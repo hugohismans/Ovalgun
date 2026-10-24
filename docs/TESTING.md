@@ -284,3 +284,122 @@ immobiles : ce sont des plots, coéquipiers orange et adversaires bleus).
 
 Réglages purement visuels (indicateur de passe, chevron, point de chute, coque d'invulnérabilité, effets) :
 `src/render/palette.ts` (`PALETTE`, `STYLE`, `FX`).
+
+## Étape 5 — stabilité, plaquage et tir de l'ailier
+
+On peut enfin tirer et plaquer. Toujours en entraînement 3v3, tu joues l'ailier (pistolet-mitrailleur). Les adversaires
+sont des **tourelles d'entraînement** : immobiles, elles se tournent vers l'ennemi actif le plus proche à portée, **anticipent**
+sa course et tirent par rafales (les vrais bots arrivent à l'étape 6). Seuls l'ailier et le pilier d'en face tirent : le
+lance-grenades du demi et les capacités du pilier et du demi arrivent à l'étape 7. Tes coéquipiers restent des plots.
+
+### Comment tester
+
+1. **Tests automatiques** : `npm test`, ou seulement le combat : `npx vitest run tests/sim/combat.test.ts tests/bots`
+   (cadence exacte, chargeur et rechargement automatique / manuel, porteur, joueur au sol et glissade qui ne tirent pas,
+   coup de pied à la manette sans rechargement parasite, tir prioritaire sur le sprint, dispersion reproductible dans le cône,
+   balle rapide sans « tunnel », cible qui court en travers touchée en visant son centre AFFICHÉ, adversaire collé à l'épaule,
+   pas de tir ami, posture basse qui évite un tir à hauteur de torse, muret et butte qui bloquent, portée, atténuation,
+   multiplicateur porteur, régénération au tick près, plaquage, relevé et invulnérabilité, glissade du plaqué plafonnée, corps
+   au sol qui ne grimpe pas les murets, ballon lâché à sa position exacte, sprint boosté, dernière minute, tourelle pure,
+   déterministe et qui anticipe). Le test de déterminisme fait tirer des tourelles sur des porteurs jusqu'au plaquage.
+   Côté client : `npx vitest run tests/render tests/game tests/input` (traceurs même à deux ticks par image, corps couché qui
+   ne tourne pas, hitmarker, bascule L3 qui survit au tir). Tout le projet : `npm run check`.
+2. **Lancer** : `npm run dev`, puis l'URL affichée (ajouter `?debug` pour jouer sans pointer lock). Ajouter `?dummies=off`
+   (ou `?debug&dummies=off`) pour des cibles **passives** qui ne tirent pas : idéal pour régler le plaquage tranquillement.
+3. **Contrôles** :
+   - **Clavier / souris** : **clic gauche** tir (maintenu = automatique), **clic droit** visée (plus précis), **R** recharger,
+     **A** (Q en QWERTY) capacité (sprint boosté), **Maj maintenu** sprint, **C** glissade, **G** ballon pour toi (`?debug`).
+   - **Manette** : **RT / R2** tir, **LT / L2** visée, **Y / △** recharger (coup de pied si tu portes le ballon, sans
+     recharger en plus), **LB / L1** capacité, **L3** sprint (bascule), **X / □** glissade, **View / Share** ballon pour toi.
+     L'aide à la visée « colle » légèrement aux adversaires actifs (pas à ceux au sol).
+4. **Scénario conseillé** (une fois au clavier, une fois à la manette) :
+   - `?dummies=off`, vise un adversaire et maintiens le tir : traceurs qui partent de l'arme, étincelles, hitmarker blanc sur
+     le réticule, la cible clignote et sa barre de stabilité descend au-dessus de sa tête. À 0 : « Plaquage ! », hitmarker
+     rouge, éclat en étoile et onde au sol, la cible tombe face contre terre avec des étoiles qui tournent, puis se relève sur
+     place 2,5 s plus tard (coque blanche : intouchable un court instant).
+   - Cibles mobiles : les tourelles sont immobiles (les bots qui courent arrivent à l'étape 6) ; c'est le test automatique
+     « cible qui court en travers à 6 m » qui vérifie qu'on touche en visant le centre affiché. À l'inverse, tu peux le
+     ressentir en courant en travers devant une tourelle : elle te touche (elle anticipe), et ses traceurs arrivent sur toi.
+   - Arrête de tirer sur une cible entamée : sa barre ne bouge pas pendant 2 s, puis remonte vite.
+   - Vide un chargeur : rechargement automatique (barre dans le mini-HUD). Tire 5 balles puis R / Y : rechargement manuel.
+   - Sprint et tir : maintiens Maj (clavier) ou clique L3 (manette) en avançant, puis tire : le sprint s'arrête tant que tu
+     tires (le tir l'emporte), et **reprend tout seul** quand tu lâches la gâchette ou pendant un rechargement — à la manette
+     aussi, sans recliquer L3. La visée (clic droit / LT) coupe toujours le sprint.
+   - Glissade (C / X) : pas de tir pendant la glissade (chip munitions grisée), le tir reprend dès que tu te relèves.
+   - Capacité (A / LB) : 3 s de vitesse boostée (anneau vert, chip verte dans le HUD), puis 9 s de cooldown qui ne démarre qu'à la
+     fin du boost. Ça marche aussi en portant le ballon.
+   - Sans `?dummies=off` : **G** / **View** (ballon pour toi) puis avance vers l'ailier ou le pilier adverses (les tourelles
+     visent l'ennemi le plus proche ; le demi d'en face ne tire pas encore) : tu encaisses (flèche rouge autour du réticule
+     vers le tireur, vignette rouge quand ta stabilité baisse, vibration légère à chaque balle) jusqu'au plaquage, même en
+     courant en travers (elles anticipent) : « Plaqué ! Ballon lâché », ton corps glisse un peu (≈ 1 m), le ballon rebondit
+     3 à 5 m devant toi et n'importe qui d'autre peut le ramasser tout de suite (pas toi). Même plaqué en pleine esquive
+     (Maj / B) ou en plongeon, le ballon ne part pas à 30 m.
+   - Au sol, bouge la souris / le stick droit : ton corps couché ne tourne pas sur lui-même.
+   - Zigzag et esquives face à une tourelle : on tient nettement plus longtemps qu'en ligne droite.
+   - Plongeon du porteur (C / X) face à une rafale : invulnérable 0,3 s (coque blanche).
+5. Pour simuler la dernière minute (`?debug`, console) : `__ovalgun.session.state.lastMinute = true` (rechargement et cooldown de
+   capacité raccourcis de 30 % ; la cadence de tir ne change pas).
+
+### Ce qu'on doit voir / ressentir
+
+- **Tir** : 15 balles/s, très précis en visée (0,35°), un peu moins à la hanche (1,2°). Balles à 300 m/s : le traceur file de
+  l'arme vers le réticule ; à courte et moyenne distance (≲ 15 m), viser la cible suffit, même si elle court. Portée 45 m,
+  dégâts pleins jusqu'à 25 m puis ×0,6 à 45 m.
+- **Hitbox honnête** : une balle dont le traceur passe sur la cible la touche (les projectiles sont testés contre les positions
+  que tu voyais en tirant, avec une petite tolérance de 0,15 m).
+- **Porteur** : il ne tire jamais (pas de traceur, pas de munition consommée) et encaisse ×1,1.
+- **Au sol** : pas de tir, pas de déplacement, pas de ramassage ; les balles le traversent. Relevé sur place, jamais de respawn.
+  Le corps glisse ≈ 1 m au plus et ne franchit pas les murets.
+- **Plaquage lisible** : éclat jaune, onde blanche au sol, capsule couchée et étoiles, texte et vibration forte (manette).
+- **Retours de visée** : hitmarker à chaque touche (rouge et plus gros au plaquage), indicateurs de direction des tirs reçus qui
+  suivent le tireur quand tu tournes la caméra, vignette rouge sous 50 % de stabilité, flash rouge bref à chaque balle reçue.
+- **Mini-HUD provisoire** (en bas) : jauge de stabilité (rouge et pulsante sous 35 %), munitions / rechargement, capacité
+  (active / cooldown / prête), esquive. Le vrai HUD arrive à l'étape 8.
+
+### Temps pour plaquer (mesuré, précision parfaite)
+
+Ailier sur une cible immobile, toutes les balles touchent (en visée, la dispersion reste dans la capsule jusqu'à ~70 m).
+Formule : n = ⌈100 / (dégâts × atténuation × porteur)⌉ balles, (n − 1) intervalles de 2 ticks, plus le vol de la dernière balle
+(10 m par tick). Vérifié au tick près par `tests/sim/combat.test.ts` (« temps pour plaquer »). Le premier tir part à t = 0.
+
+| Distance | Cible | Dégâts / balle | Balles | Temps |
+|---|---|---|---|---|
+| 10 m | non-porteur | 5 | 20 | 38 ticks ≈ **1,27 s** |
+| 10 m | porteur | 5,5 | 19 | 36 ticks ≈ **1,20 s** |
+| 25 m | non-porteur | 5 | 20 | 40 ticks ≈ **1,33 s** |
+| 25 m | porteur | 5,5 | 19 | 38 ticks ≈ **1,27 s** |
+| 35 m | non-porteur | 4,1 | 25 | 51 ticks ≈ 1,70 s |
+| 35 m | porteur | 4,5 | 23 | 47 ticks ≈ 1,57 s |
+
+Repères : un chargeur (30) suffit toujours ; la régénération remonte une jauge vide en 2,2 s après 2 s de répit ; à deux tireurs,
+diviser à peu près les temps par deux. Un porteur qui zigzague et esquive fait rater des balles et tient bien plus longtemps.
+Porteur ailier boosté au sprint : ≈ 13,9 m/s, contre 10,7 m/s pour un ailier qui le poursuit au sprint.
+
+### Constantes utiles pour ajuster le feeling
+
+| Constante | Effet | Valeur actuelle | Piste de réglage |
+|---|---|---|---|
+| `ROLES.ailier.weapon.damage` | Dégâts d'une balle | 5 | 6 => 17 balles pour plaquer (~1,1 s) ; 4 => 25 balles (~1,6 s) |
+| `ROLES.ailier.weapon.fireInterval` | Intervalle entre deux balles, arrondi au tick | 2/30 s (15 coups/s) | 3/30 s = 10 coups/s, plus « lourd » |
+| `ROLES.ailier.weapon.spreadHipDeg` / `spreadAimDeg` | Dispersion à la hanche / en visée (demi-angle) | 1,2° / 0,35° | Monter la hanche (2°) pour récompenser la visée |
+| `ROLES.ailier.weapon.speed` | Vitesse des balles (m/s) | 300 | 200 pour des balles plus visibles et esquivables (plus d'avance à prendre) |
+| `PROJECTILE_HIT_RADIUS` | Tolérance des balles autour des capsules (m) | 0,15 | 0,25 si l'on rate encore « sur » la cible ; 0 pour une précision stricte |
+| `ROLES.ailier.weapon.range` / `falloffStart` / `falloffMinMult` | Portée, début de l'atténuation, dégâts restants à portée max | 45 m / 25 m / 0,6 | Baisser `falloffStart` (18) pour pousser au combat rapproché |
+| `ROLES.ailier.weapon.magazine` / `reloadSec` | Chargeur et rechargement | 30 / 1,4 s | 24 balles pour forcer un rechargement par plaquage |
+| `CARRIER_DAMAGE_MULT` | Dégâts subis par le porteur | 1,1 | 1,25 pour une défense plus forte ; 1 si le porteur tombe trop vite |
+| `REGEN_DELAY_SEC` / `REGEN_RATE` | Répit avant régénération, vitesse de remontée (points/s) | 2 s / 45 | Cahier des charges : 2 s ; baisser le taux (30) pour que les dégâts « collent » plus |
+| `DOWN_DURATION_SEC` / `GETUP_DURATION_SEC` / `GETUP_INVULN_SEC` | Au sol, relevé, invulnérabilité après relevé | 2,5 / 0,5 / 0,6 s | Cahier des charges : 2,5 s au sol ; monter l'invulnérabilité si l'on se fait replaquer en se relevant |
+| `TACKLE_SLIDE_MAX_SPEED` / `TACKLE_SLIDE_DECEL` | Glissade du corps plaqué : vitesse max au plaquage, freinage | 7 m/s / 20 m/s² | Freinage 30 pour une chute plus sèche ; vitesse 9 pour une glissade plus spectaculaire |
+| `TACKLE_DROP_POP_FORWARD` / `TACKLE_DROP_POP_UP` | Rebond du ballon lâché (avant / haut, m/s) | 2,5 / 4 | Monter l'avant (4) pour plus de « courses au ballon » |
+| `TACKLE_DROP_CARRY_KEEP` / `TACKLE_DROP_MAX_CARRY` | Part de la vitesse du porteur transmise au ballon, plafond | 0,3 / 4 m/s | 0 : le ballon tombe toujours au même endroit ; plafond 6 pour des lâchers plus longs en sprint |
+| `BOOST_SPEED_MULT` / `BOOST_ACCEL_MULT` | Sprint boosté de l'ailier : vitesse, accélération | 1,2 / 1,4 | 1,3 pour un boost plus grisant (porteur boosté presque intouchable) |
+| `ROLES.ailier.ability.duration` / `cooldown` | Durée et cooldown du sprint boosté (le cooldown démarre à la fin) | 3 s / 9 s | 2 s / 8 s pour un boost plus « coup de rein » |
+| `LAST_MINUTE_COOLDOWN_MULT` | Dernière minute : rechargement, capacité, esquive, glissade, plongeon (pas la cadence de tir) | 0,7 | — |
+| `TURRET_LEAD_FRACTION` | Avance prise par les tourelles sur une cible qui court | 1 | 0,5 pour s'entraîner contre des tourelles qu'on esquive en courant |
+| `TURRET_*` (autres) | Tourelles : portée, rotation, réaction, rafales, pauses, imprécision | 0,85 / 200°/s / 0,5 s / 0,5 s / 0,9 + 0,6 s / 1,6° + 0,5° | Monter l'erreur (3°) pour s'entraîner sous un feu moins précis |
+| `GAMEPAD_RUMBLE_EFFECTS.hitTaken` / `.tackled` / `.tackleDealt` | Vibrations : tir reçu, plaquage subi, plaquage réussi | — | Mettre `strong` et `weak` à 0 pour couper |
+
+`TACKLE_PICKUP_BLOCK_SEC` (0,5 s) n'est qu'une sécurité : il ne compte que si l'on raccourcit beaucoup la durée au sol.
+
+Réglages purement visuels (traceurs, convergence vers le canon, flashs, étincelles, clignotement, barres de stabilité, chute,
+étoiles, durées du hitmarker et des indicateurs, seuil de la vignette) : `src/render/palette.ts` (`PALETTE`, `STYLE`, `FX`).

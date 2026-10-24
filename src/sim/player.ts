@@ -1,5 +1,5 @@
 /**
- * Déplacement des joueurs piloté par PlayerInput (étape 6 de `step`, voir docs/ARCHITECTURE.md §2).
+ * Déplacement des joueurs piloté par PlayerInput (étape 7 de `step`, voir docs/ARCHITECTURE.md §2).
  *
  * Ce fichier décide de la VITESSE (course, esquive, glissade, saut, grimpe) ; l'intégration
  * de la position contre le terrain et les murs, et la séparation entre joueurs, sont dans body.ts.
@@ -9,8 +9,8 @@
 
 import { abilityAccelMultiplier, abilitySpeedMultiplier } from './abilities';
 import { tryStartDive, updateDiveMovement } from './carrier';
+import { fireOverridesSprint } from './combat';
 import {
-  AIM_ORIGIN_HEIGHT,
   AIM_SPEED_MULT,
   AIR_ACCEL,
   AIR_JUMP_VELOCITY,
@@ -41,14 +41,14 @@ import {
   SLIDE_STEER_RATE,
   SPRINT_MIN_FORWARD_COS,
   SPRINT_MIN_TILT,
-  SHOULDER_OFFSET,
   SPRINT_SPEED_MULT,
   STRAFE_SPEED_MULT,
+  TACKLE_SLIDE_DECEL,
   TICK_DT,
 } from './constants';
 import { integrateBody } from './body';
 import { has, type TickInput } from './input';
-import { cooldownTicks, isCarrier, playerHeight } from './playerStatus';
+import { aimOrigin, cooldownTicks, isCarrier, playerHeight } from './playerStatus';
 import { secToTicks } from './time';
 import { Buttons, type MatchState, type PlayerState, type Vec3 } from './types';
 import { forward, right } from './vec';
@@ -56,18 +56,8 @@ import { forward, right } from './vec';
 /** Norme d'entrée sous laquelle on considère qu'il n'y a pas d'intention de déplacement. */
 const MOVE_EPS = 1e-3;
 
-// Lectures partagées avec carrier.ts (définies dans playerStatus.ts pour éviter un import circulaire).
-export { cooldownTicks, isCarrier, playerHeight };
-
-/**
- * Origine de visée (docs/ARCHITECTURE.md §3) : pieds + AIM_ORIGIN_HEIGHT vers le haut + SHOULDER_OFFSET
- * vers right(yaw). Les tirs partent de ce point selon aimDir(yaw, pitch) ; la caméra épaule du client se
- * place sur la même droite, en arrière (le tir part donc exactement vers le réticule).
- */
-export function aimOrigin(feet: Vec3, yaw: number): Vec3 {
-  const r = right(yaw);
-  return { x: feet.x + r.x * SHOULDER_OFFSET, y: feet.y + AIM_ORIGIN_HEIGHT, z: feet.z + r.z * SHOULDER_OFFSET };
-}
+// Lectures partagées avec carrier.ts et combat.ts (définies dans playerStatus.ts pour éviter un import circulaire).
+export { aimOrigin, cooldownTicks, isCarrier, playerHeight };
 
 /** Direction monde (horizontale, unitaire ou nulle) correspondant à l'entrée locale. */
 export function wishDirection(yaw: number, moveX: number, moveY: number): Vec3 {
@@ -92,7 +82,9 @@ export function sprintApplies(inp: TickInput): boolean {
 /**
  * Vitesse de course cible (m/s) pour l'entrée donnée : vitesse du rôle × direction locale
  * (avant 1, pas chassé STRAFE, arrière BACKPEDAL, interpolés) × inclinaison analogique ×
- * visée (sauf porteur) / sprint × porteur × capacités (étape 7).
+ * visée (sauf porteur) / sprint × porteur × capacités (sprint boosté de l'ailier ; étape 7 : bouclier, zones).
+ * Tir contre sprint (étape 5) : FIRE maintenu avec une arme prête (fireOverridesSprint) => le sprint est
+ * ignoré ce tick (le tir l'emporte).
  */
 export function targetRunSpeed(state: MatchState, p: PlayerState, inp: TickInput): number {
   if (inp.moveMag <= MOVE_EPS) return 0;
@@ -105,7 +97,7 @@ export function targetRunSpeed(state: MatchState, p: PlayerState, inp: TickInput
   // Le porteur ne vise pas (cahier des charges) : AIM est ignoré pour lui (ni ralentissement, ni sprint annulé).
   const carrier = isCarrier(state, p);
   if (has(inp.buttons, Buttons.AIM) && !carrier) speed *= AIM_SPEED_MULT;
-  else if (sprintApplies(inp)) speed *= SPRINT_SPEED_MULT;
+  else if (sprintApplies(inp) && !fireOverridesSprint(state, p, inp)) speed *= SPRINT_SPEED_MULT;
   if (carrier) speed *= CARRIER_SPEED_MULT;
   return speed * abilitySpeedMultiplier(state, p);
 }
@@ -321,7 +313,7 @@ export function updatePlayerMovement(state: MatchState, p: PlayerState, inp: Tic
       p.vel.x = 0;
       p.vel.z = 0;
     } else if (p.onGround) {
-      approachHorizontal(p.vel, 0, 0, GROUND_DECEL * TICK_DT);
+      approachHorizontal(p.vel, 0, 0, (p.status === 'down' ? TACKLE_SLIDE_DECEL : GROUND_DECEL) * TICK_DT);
     }
     p.lastMoveX = 0;
     p.lastMoveY = 0;
@@ -364,13 +356,26 @@ export function updatePlayerMovement(state: MatchState, p: PlayerState, inp: Tic
   integrateBody(state, p);
 }
 
-/** Étape 4 de `step` : minuteries liées au déplacement et génériques (entiers, jamais < 0). */
+/**
+ * Étape 4 de `step` : minuteries liées au déplacement et génériques (entiers, jamais < 0).
+ * L'invulnérabilité n'est PAS décomptée ici mais juste après les projectiles (tickInvulnerability).
+ */
 export function tickPlayerTimers(p: PlayerState): void {
   if (p.dodgeCd > 0) p.dodgeCd--;
   if (p.slideCd > 0) p.slideCd--;
   if (p.diveCd > 0) p.diveCd--;
-  if (p.invulnTicks > 0) p.invulnTicks--;
   if (p.jumpBufferTicks > 0) p.jumpBufferTicks--;
   if (p.pickupBlockTicks > 0) p.pickupBlockTicks--;
   if (p.fireCd > 0) p.fireCd--;
+}
+
+/**
+ * Fin de l'étape 6 de `step` (juste après les projectiles, avant le déplacement) : décompte de l'invulnérabilité.
+ * Les projectiles voient ainsi la valeur de la fin du tick précédent (l'état que le tireur voyait) : une
+ * invulnérabilité de N ticks (plongeon, fin de relevé) arrête exactement N segments de projectiles. Les valeurs
+ * en fin de tick sont les mêmes qu'avec un décompte en début de tick pour le plongeon et l'esquive (posés pendant
+ * le déplacement, après ce décompte).
+ */
+export function tickInvulnerability(state: MatchState): void {
+  for (const p of state.players) if (p.invulnTicks > 0) p.invulnTicks--;
 }

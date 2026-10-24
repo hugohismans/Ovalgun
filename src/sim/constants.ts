@@ -29,7 +29,11 @@ export const TICK_DT = 1 / TICK_RATE;
 export const MATCH_DURATION_SEC = 360;
 /** Durée de la « dernière minute » (cooldowns raccourcis, ballon plus rapide). */
 export const LAST_MINUTE_SEC = 60;
-/** Multiplicateur des cooldowns (esquive, glissade, plongeon, capacité, rechargement) pendant la dernière minute. ↓ = plus frénétique. */
+/**
+ * Multiplicateur des cooldowns (esquive, glissade, plongeon, capacité, rechargement) pendant la dernière minute.
+ * N'accélère PAS la cadence de tir (fireInterval) : on recharge et on relance ses capacités plus vite, mais
+ * une arme ne tire pas plus vite. ↓ = plus frénétique.
+ */
 export const LAST_MINUTE_COOLDOWN_MULT = 0.7;
 /** Multiplicateur de vitesse du ballon (passes, coups de pied) pendant la dernière minute. */
 export const LAST_MINUTE_BALL_SPEED_MULT = 1.12;
@@ -248,24 +252,57 @@ export const SLIDE_COOLDOWN_SEC = 1.0;
 //  STABILITÉ ET PLAQUAGE
 // ============================================================================
 
-/** Délai sans être touché avant que la stabilité remonte (s). Cahier des charges : 2 s. */
+/**
+ * Délai sans être touché avant que la stabilité remonte (s). Cahier des charges : 2 s.
+ * ↑ = les dégâts « collent » plus longtemps (se mettre à couvert compte moins).
+ */
 export const REGEN_DELAY_SEC = 2.0;
-/** Vitesse de régénération de la stabilité (points/s). */
+/** Vitesse de régénération de la stabilité (points/s) une fois le délai écoulé. ↑ = la jauge remonte plus vite. */
 export const REGEN_RATE = 45;
-/** Multiplicateur des dégâts subis par le porteur. ↑ = le porteur tombe plus vite. */
-export const CARRIER_DAMAGE_MULT = 1.25;
-/** Durée au sol après un plaquage (s). Cahier des charges : 2,5 s. */
+/**
+ * Multiplicateur des dégâts subis par le porteur (cahier des charges : « un peu plus fort »).
+ * ↑ = le porteur tombe plus vite (défense plus forte).
+ */
+export const CARRIER_DAMAGE_MULT = 1.1;
+/** Durée au sol après un plaquage (s). Cahier des charges : 2,5 s. ↑ = un plaquage pèse plus lourd (supériorité numérique plus longue). */
 export const DOWN_DURATION_SEC = 2.5;
-/** Durée de relevé, invulnérable et immobile (s). */
+/** Durée de relevé, invulnérable et immobile (s). ↑ = relevé plus lent (le plaqué revient plus tard dans le jeu). */
 export const GETUP_DURATION_SEC = 0.5;
-/** Invulnérabilité supplémentaire après le relevé (s) pour éviter le « re-plaquage » instantané. */
+/** Invulnérabilité supplémentaire après le relevé (s) pour éviter le « re-plaquage » instantané. ↑ = moins de re-plaquages au relevé. */
 export const GETUP_INVULN_SEC = 0.6;
-/** Vitesse verticale donnée au ballon lâché lors d'un plaquage (m/s). */
+/** Vitesse verticale donnée au ballon lâché lors d'un plaquage (m/s). ↑ = rebond plus haut, ballon en l'air plus longtemps. */
 export const TACKLE_DROP_POP_UP = 4;
-/** Vitesse horizontale donnée au ballon lâché (dans le sens de course du porteur, m/s). */
+/**
+ * Vitesse horizontale ajoutée au ballon lâché, dans le sens de course du porteur (m/s), en plus de la part de sa
+ * vitesse qu'il garde (TACKLE_DROP_CARRY_KEEP). ↑ = le ballon tombe plus loin devant (plus de « courses au ballon »).
+ */
 export const TACKLE_DROP_POP_FORWARD = 2.5;
-/** Durée pendant laquelle le joueur plaqué ne peut pas reprendre le ballon (s). */
+/**
+ * Part de la vitesse horizontale du porteur transmise au ballon lâché (0..1), plafonnée à TACKLE_DROP_MAX_CARRY :
+ * plaqué en pleine esquive (21 m/s) ou en plongeon, le ballon ne part pas comme un coup de pied.
+ * ↑ = le ballon lâché suit davantage l'élan du porteur.
+ */
+export const TACKLE_DROP_CARRY_KEEP = 0.3;
+/** Plafond (m/s) de la part de vitesse du porteur transmise au ballon lâché. ↑ = lâchers plus longs à grande vitesse. */
+export const TACKLE_DROP_MAX_CARRY = 4;
+/**
+ * Durée pendant laquelle le joueur plaqué ne peut pas reprendre le ballon qu'il vient de lâcher (s).
+ * Sécurité : sans effet tant que DOWN_DURATION_SEC + GETUP_DURATION_SEC est plus long (un joueur au sol ou qui se
+ * relève ne ramasse jamais). Ne compte que si l'on raccourcit beaucoup la durée au sol.
+ */
 export const TACKLE_PICKUP_BLOCK_SEC = 0.5;
+/**
+ * Freinage horizontal du corps d'un joueur plaqué (m/s²) : il glisse au sol puis s'arrête (≈ v²/2a : 7 m/s
+ * => ≈ 1,2 m). ↑ = le plaqué s'arrête plus net (moins de glissade).
+ */
+export const TACKLE_SLIDE_DECEL = 20;
+/**
+ * Vitesse horizontale max (m/s) du corps d'un joueur au moment du plaquage : plaqué en esquive (21 m/s) ou en
+ * plongeon, il ne glisse pas sur 15 m (glissade ≤ v²/2·TACKLE_SLIDE_DECEL ≈ 1,2 m). ↑ = glissades plus longues.
+ */
+export const TACKLE_SLIDE_MAX_SPEED = 7;
+/** Rotation visuelle du ballon lâché sur un plaquage : culbute (rad/s). ↑ = lâcher plus désordonné. */
+export const TACKLE_DROP_TUMBLE_RATE = 9;
 
 // ============================================================================
 //  BALLON
@@ -500,28 +537,48 @@ export const DIVE_IN_AIR = true;
 // ============================================================================
 
 export interface WeaponStats {
-  /** Type de projectile tiré. */
+  /**
+   * Type de projectile tiré. Étape 5 : balles et plombs ; les grenades (explosion, knockback) arrivent à
+   * l'étape 7 (d'ici là, le lance-grenades ne tire pas).
+   */
   projectile: 'bullet' | 'pellet' | 'grenade';
-  /** Intervalle entre deux tirs (s). */
+  /**
+   * Intervalle entre deux tirs (s), ARRONDI AU TICK le plus proche (au moins 1 tick) : la cadence réelle est
+   * TICK_RATE / secToTicks(fireInterval) coups/s. Choisir de préférence un multiple de 1/30 s.
+   * Non raccourci en dernière minute. ↓ = cadence plus élevée.
+   */
   fireInterval: number;
-  /** Projectiles par tir (plombs du fusil à pompe). */
+  /** Projectiles par tir (plombs du fusil à pompe) ; un tir consomme UNE munition. */
   pellets: number;
-  /** Dégâts de stabilité par projectile. */
+  /** Dégâts de stabilité par projectile (avant atténuation et multiplicateur porteur). ↑ = plaquage plus rapide. */
   damage: number;
-  /** Dispersion (demi-angle, degrés) sans visée / en visée. */
+  /**
+   * Dispersion : demi-angle (degrés) du cône dans lequel chaque projectile part, tirage uniforme seedé.
+   * Sans visée / en visée (AIM). ↑ = moins précis.
+   */
   spreadHipDeg: number;
   spreadAimDeg: number;
-  /** Vitesse initiale du projectile (m/s). */
+  /**
+   * Vitesse initiale du projectile (m/s). Le déplacement est balayé (aucun « tunnel », quelle que soit la vitesse).
+   * ↑ = moins d'avance à prendre sur une cible qui court ; ↓ = balles plus visibles et esquivables de loin.
+   */
   speed: number;
-  /** Portée maximale (m) : le projectile disparaît au-delà. */
+  /** Portée maximale (m) : le projectile disparaît au-delà. ↑ = on touche de plus loin. */
   range: number;
-  /** Distance à partir de laquelle les dégâts diminuent, et fraction restante à portée max. */
+  /**
+   * Atténuation : dégâts pleins jusqu'à `falloffStart` (m), puis baisse linéaire jusqu'à `falloffMinMult` × dégâts
+   * à `range`. ↑ falloffStart = dégâts pleins plus loin ; ↑ falloffMinMult = l'arme reste efficace de loin.
+   */
   falloffStart: number;
   falloffMinMult: number;
-  /** Taille du chargeur et durée de rechargement (s). Munitions infinies. */
+  /**
+   * Taille du chargeur et durée de rechargement (s, raccourcie en dernière minute). Munitions infinies :
+   * rechargement automatique chargeur vide, ou manuel (RELOAD) chargeur incomplet.
+   * ↑ magazine = moins de rechargements ; ↑ reloadSec = rechargement plus pénalisant.
+   */
   magazine: number;
   reloadSec: number;
-  /** Gravité appliquée au projectile (grenades), m/s². */
+  /** Gravité appliquée au projectile (grenades), m/s². ↑ = trajectoire plus en cloche, portée utile plus courte. */
   gravity: number;
   /** Explosion (grenades) : rayon, dégâts au centre / au bord, bonus impact direct. */
   blastRadius: number;
@@ -599,12 +656,14 @@ export const ROLES: Record<Role, RoleStats> = {
     airJumps: 1,
     weapon: {
       projectile: 'bullet',
-      fireInterval: 0.075,
+      // 2 ticks = 15 coups/s (cadence arrondie au tick, voir WeaponStats.fireInterval).
+      fireInterval: 2 / TICK_RATE,
       pellets: 1,
-      damage: 6,
+      damage: 5,
       spreadHipDeg: 1.2,
       spreadAimDeg: 0.35,
-      speed: 150,
+      // 300 m/s = 10 m par tick : peu d'avance à prendre jusqu'à ~15 m, le traceur reste lisible.
+      speed: 300,
       range: 45,
       falloffStart: 25,
       falloffMinMult: 0.6,
@@ -646,8 +705,19 @@ export const ROLES: Record<Role, RoleStats> = {
   },
 };
 
-/** Durée de vie max d'un projectile (s), sécurité. */
+/** Durée de vie max d'un projectile (s), sécurité (la portée `range` arrête normalement les balles bien avant). ↑ = projectiles lents vivent plus longtemps. */
 export const PROJECTILE_MAX_LIFE_SEC = 3;
+/**
+ * Pas d'échantillonnage (m) du test projectile / butte (le relief lisse des buttes est échantillonné puis affiné
+ * par dichotomie ; murets, rampes et sol sont exacts). ↓ = contact plus précis sur les buttes, plus coûteux.
+ */
+export const PROJECTILE_MOUND_SAMPLE_STEP = 0.1;
+/**
+ * Rayon des balles et plombs (m), ajouté à PLAYER_RADIUS dans le test projectile / joueur (pas contre le relief) :
+ * absorbe le demi-tick d'interpolation entre l'image affichée et la simulation. Une glissade (capsule de
+ * PLAYER_LOW_HEIGHT) passe toujours sous un tir à hauteur de torse. ↑ = balles plus tolérantes.
+ */
+export const PROJECTILE_HIT_RADIUS = 0.15;
 
 /** Pilier — bouclier : demi-angle de l'arc protégé devant le joueur (degrés). */
 export const SHIELD_HALF_ANGLE_DEG = 65;
@@ -658,9 +728,12 @@ export const SHIELD_DISTANCE = 0.8;
 /** Pilier — bouclier : rayon (demi-largeur) du bouclier (m). */
 export const SHIELD_RADIUS = 1.1;
 
-/** Ailier — sprint boosté : multiplicateur de vitesse (cumulé avec le sprint). */
-export const BOOST_SPEED_MULT = 1.3;
-/** Ailier — sprint boosté : multiplicateur d'accélération. */
+/**
+ * Ailier — sprint boosté : multiplicateur de la vitesse de course pendant la capacité (cumulé avec le sprint et
+ * le bonus du porteur ; utilisable en portant le ballon). ↑ = boost plus grisant (mais porteur plus dur à rattraper).
+ */
+export const BOOST_SPEED_MULT = 1.2;
+/** Ailier — sprint boosté : multiplicateur d'accélération au sol pendant la capacité. ↑ = démarrages plus secs. */
 export const BOOST_ACCEL_MULT = 1.4;
 
 /** Demi — zone de ralentissement : rayon (m). */
@@ -716,6 +789,34 @@ export interface BotDifficultyStats {
   /** Probabilité de réagir (esquive) quand il est touché, par seconde. */
   dodgeReflex: number;
 }
+
+/*
+ * Cible d'entraînement « tourelle » (src/bots/turret.ts, étape 5, remplacée par de vrais bots à l'étape 6) :
+ * un adversaire immobile qui se tourne vers l'ennemi actif le plus proche à portée et tire par rafales.
+ */
+/** Tourelle : portée d'engagement (fraction de la portée de l'arme). ↑ = elle tire de plus loin. */
+export const TURRET_ENGAGE_RANGE_MULT = 0.85;
+/** Tourelle : vitesse de rotation max (degrés/s). ↑ = elle suit mieux une cible qui court. */
+export const TURRET_TURN_RATE_DEG = 200;
+/** Tourelle : délai avant la première rafale sur une nouvelle cible (s). ↑ = plus de temps pour réagir. */
+export const TURRET_REACTION_SEC = 0.5;
+/** Tourelle : durée d'une rafale (s). ↑ = rafales plus longues (plus de dégâts). */
+export const TURRET_BURST_SEC = 0.5;
+/** Tourelle : pause entre deux rafales (s), plus un supplément tiré au sort (TURRET_PAUSE_JITTER_SEC). ↑ = moins de pression. */
+export const TURRET_PAUSE_SEC = 0.9;
+/** Tourelle : supplément de pause tiré au sort entre 0 et cette valeur (s) à chaque rafale. ↑ = rythme moins prévisible. */
+export const TURRET_PAUSE_JITTER_SEC = 0.6;
+/** Tourelle : erreur de visée tirée à chaque rafale (demi-amplitude, degrés). ↑ = moins précise. */
+export const TURRET_AIM_ERROR_DEG = 1.6;
+/** Tourelle : tremblement de visée tiré à chaque tick (demi-amplitude, degrés). ↑ = rafales plus dispersées. */
+export const TURRET_AIM_JITTER_DEG = 0.5;
+/** Tourelle : elle ne tire que si sa visée est à moins de cet angle de la cible voulue (degrés). ↑ = tire plus tôt en tournant. */
+export const TURRET_FIRE_CONE_DEG = 5;
+/**
+ * Tourelle : part de l'avance prise sur une cible qui court (0 = vise sa position actuelle, 1 = vise sa position
+ * prévue à l'arrivée de la balle). ↓ = plus facile à esquiver en courant.
+ */
+export const TURRET_LEAD_FRACTION = 1;
 
 export const BOT_DIFFICULTY: Record<BotDifficulty, BotDifficultyStats> = {
   facile: {

@@ -69,6 +69,25 @@ export const PALETTE = {
   /** Coque d'invulnérabilité (plongeon, relevé). */
   invuln: '#ffffff',
 
+  /** Combat (étape 5) : traceurs par équipe (cœur vif), flash de bouche, étincelles (joueur touché / relief). */
+  tracers: ['#fff0a0', '#c8f4ff'] as const,
+  muzzleFlash: '#fff6c2',
+  sparkHit: '#ffffff',
+  sparkTerrain: '#fff3c4',
+  /** Joueur touché : teinte émissive du clignotement. */
+  hitFlash: '#ffffff',
+  /** Barre de stabilité au-dessus des autres joueurs : fond, jauge pleine, jauge basse. */
+  stabilityBarBack: '#17142a',
+  stabilityBarHigh: '#ffffff',
+  stabilityBarLow: '#ff3d5a',
+  /** Plaquage : éclat en étoile, onde au sol, étoiles qui tournent au-dessus du joueur au sol. */
+  tackleBurst: '#ffe12e',
+  tackleRing: '#ffffff',
+  dizzyStar: '#ffe12e',
+  /** Relevé, capacité (sprint boosté). */
+  fxGetup: '#ffffff',
+  fxAbility: '#3dffa0',
+
   /** Décor lointain autour de l'arène. */
   backdropA: '#7b5cff',
   backdropB: '#ff4fa3',
@@ -184,6 +203,91 @@ export const STYLE = {
   invulnPulseRate: 40,
   /** Distance (m) au-delà de laquelle un saut entre deux ticks est une téléportation (pas d'interpolation). */
   teleportDist: 4,
+
+  // --- Combat (étape 5) ---
+  /** Traceurs : nombre max simultanés, longueur (m) et épaisseur (m) — balles / plombs ; opacité. */
+  tracerPoolSize: 96,
+  tracerLength: 3.2,
+  tracerWidth: 0.07,
+  pelletTracerLength: 1.2,
+  pelletTracerWidth: 0.05,
+  tracerOpacity: 0.95,
+  /**
+   * Traceurs : départ visuel au canon de l'arme affichée, rejoint la vraie trajectoire (partie de l'origine de visée,
+   * sur la droite de la caméra) sur cette distance (m) : on voit les balles partir de l'arme vers le réticule.
+   */
+  tracerConvergeDist: 7,
+  /** Position du canon de l'arme affichée par rapport à l'origine de visée (m) : vers la droite, vers le haut, vers l'avant. */
+  muzzleRight: -0.2,
+  muzzleUp: -0.48,
+  muzzleForward: 0.7,
+  /** Flash de bouche : durée (s), taille (m), nombre max simultanés. */
+  muzzleFlashSec: 0.06,
+  muzzleFlashSize: 0.32,
+  muzzlePoolSize: 24,
+  /** Flash de bouche : avance devant le canon (m), rotation ajoutée à chaque tir (rad), rétrécissement en fin de vie (fraction). */
+  muzzleFlashAhead: 0.15,
+  muzzleFlashSpinStep: 0.9,
+  muzzleFlashShrink: 0.4,
+  /** Étincelles d'impact : nombre max, par impact (joueur / relief), vitesse (m/s), durée (s), taille (m), gravité (m/s²). */
+  sparkPoolSize: 120,
+  sparksPerHit: 6,
+  sparksPerTerrain: 4,
+  sparkSpeed: 5,
+  sparkSec: 0.28,
+  sparkSize: 0.09,
+  sparkGravity: 14,
+  /**
+   * Étincelles : dispersion (rendu seulement) — part verticale de la vitesse (min + tirage × plage), facteur de vitesse
+   * (min + tirage × plage) et facteur de durée de vie (min + tirage × plage).
+   */
+  sparkUpMin: 0.3,
+  sparkUpRange: 0.9,
+  sparkSpeedMin: 0.5,
+  sparkSpeedRange: 0.7,
+  sparkLifeMin: 0.7,
+  sparkLifeRange: 0.6,
+  /** Joueur touché : durée du clignotement (s) et intensité émissive max. */
+  hitFlashSec: 0.12,
+  hitFlashIntensity: 0.85,
+  /** Barre de stabilité : largeur, hauteur (m), hauteur au-dessus de la tête (m), seuil « basse » (fraction). */
+  stabilityBarWidth: 1.05,
+  stabilityBarHeight: 0.14,
+  stabilityBarAboveHead: 0.32,
+  stabilityBarLowFraction: 0.35,
+  /** Barre de stabilité : opacité du fond, marge du fond autour de la jauge (m). */
+  stabilityBarBackOpacity: 0.75,
+  stabilityBarBackMargin: 0.06,
+  /** Plaquage : éclat en étoile (durée s, taille max m), nombre max simultanés. */
+  tackleBurstSec: 0.4,
+  tackleBurstSize: 2.2,
+  tackleBurstPoolSize: 8,
+  /** Éclat de plaquage : hauteur au-dessus des pieds (m), rotation sur sa durée (rad), échelle de départ (fraction). */
+  tackleBurstHeight: 0.9,
+  tackleBurstSpin: 1.2,
+  tackleBurstStartScale: 0.3,
+  /** Joueur au sol : étoiles qui tournent (nombre, rayon m, hauteur m, vitesse rad/s, taille m) ; vitesse de chute / relevé visuels (1/s). */
+  dizzyStars: 3,
+  dizzyRadius: 0.45,
+  dizzyHeight: 1.15,
+  dizzySpinRate: 5,
+  dizzyStarSize: 0.16,
+  /** Étoiles : amplitude de l'oscillation verticale (m), position vers l'avant du corps couché (fraction de PLAYER_HEIGHT). */
+  dizzyBob: 0.08,
+  dizzyForwardFraction: 0.55,
+  fallRate: 14,
+
+  // --- Retours de visée (HUD, lus par la session) ---
+  /** Hitmarker sur le réticule : durée (s), normal / plaquage. */
+  hitMarkerSec: 0.16,
+  hitMarkerStrongSec: 0.42,
+  /** Indicateur de direction des tirs reçus : durée (s) ; nombre max affichés. */
+  damageIndicatorSec: 0.9,
+  damageIndicatorMax: 4,
+  /** Vignette rouge : commence sous cette fraction de stabilité ; flash à chaque tir reçu (opacité, durée s). */
+  vignetteFromFraction: 0.5,
+  vignetteHitFlash: 0.25,
+  vignetteHitSec: 0.18,
 } as const;
 
 /** Un anneau d'effet : au sol ou face caméra, rayon de départ / d'arrivée (m), durée (s), délai (s). */
@@ -226,4 +330,16 @@ export const FX = {
   ],
   pass: [{ color: PALETTE.fxPass, billboard: true, r0: 0.1, r1: 0.7, duration: 0.2, delay: 0, lift: 0 }],
   passDenied: [{ color: PALETTE.passNone, billboard: false, r0: 1.2, r1: 0.7, duration: 0.3, delay: 0, lift: 0.04 }],
+  /** Plaquage (étape 5) : onde de choc au sol, en deux temps. */
+  tackled: [
+    { color: PALETTE.tackleRing, billboard: false, r0: 0.4, r1: 3.2, duration: 0.45, delay: 0, lift: 0.04 },
+    { color: PALETTE.tackleBurst, billboard: false, r0: 0.3, r1: 2.2, duration: 0.4, delay: 0.08, lift: 0.05 },
+  ],
+  /** Relevé : anneau discret qui se resserre. */
+  getup: [{ color: PALETTE.fxGetup, billboard: false, r0: 1.4, r1: 0.6, duration: 0.3, delay: 0, lift: 0.04 }],
+  /** Capacité (sprint boosté). */
+  ability: [
+    { color: PALETTE.fxAbility, billboard: false, r0: 0.4, r1: 2.0, duration: 0.35, delay: 0, lift: 0.04 },
+    { color: PALETTE.fxAbility, billboard: true, r0: 0.3, r1: 1.2, duration: 0.25, delay: 0, lift: 0 },
+  ],
 } as const satisfies Record<string, readonly RingFx[]>;

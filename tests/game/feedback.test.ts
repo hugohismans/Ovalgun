@@ -21,4 +21,12 @@ describe('feedbackFor', () => {
     expect(feedbackFor({ type: 'catch', playerId: 0, fromId: 1, intercepted: false }, s, 0)).toBeNull();
     expect(feedbackFor({ type: 'jump', playerId: 0, air: false }, s, 0)).toBeNull();
   });
+
+  it('plaquages (étape 5) : subi, réussi, ballon lâché ; rien pour les autres', () => {
+    expect(feedbackFor({ type: 'tackled', targetId: 0, byId: 4 }, s, 0)).toEqual({ text: 'Plaqué !', kind: 'bad' });
+    expect(feedbackFor({ type: 'tackled', targetId: 4, byId: 0 }, s, 0)).toEqual({ text: 'Plaquage !', kind: 'good' });
+    expect(feedbackFor({ type: 'tackled', targetId: 4, byId: 1 }, s, 0)).toBeNull();
+    expect(feedbackFor({ type: 'drop', playerId: 0 }, s, 0)?.kind).toBe('bad');
+    expect(feedbackFor({ type: 'drop', playerId: 3 }, s, 0)).toBeNull();
+  });
 });
