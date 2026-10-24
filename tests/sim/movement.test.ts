@@ -152,6 +152,19 @@ describe('course', () => {
     });
     expect(v).toBeCloseTo(ROLES.demi.runSpeed * CARRIER_SPEED_MULT, 6);
   });
+
+  it('le porteur ne vise pas : AIM ne le ralentit pas et n’annule pas son sprint', () => {
+    const carry = (s: MatchState): void => {
+      s.ball.mode = 'carried';
+      s.ball.carrierId = 0;
+    };
+    const base = ROLES.demi.runSpeed * CARRIER_SPEED_MULT;
+    expect(steadySpeed('demi', { moveY: 1, buttons: Buttons.AIM }, 30, carry)).toBeCloseTo(base, 6);
+    expect(steadySpeed('demi', { moveY: 1, buttons: Buttons.AIM | Buttons.SPRINT }, 30, carry)).toBeCloseTo(
+      base * SPRINT_SPEED_MULT,
+      6,
+    );
+  });
 });
 
 describe('saut', () => {

@@ -30,6 +30,8 @@ export { formationSlot, placeTeamInFormation, resetPlayerAt, type FormationSlot 
 // Entrées.
 export { NEUTRAL_INPUT, makeInput, ALL_BUTTONS, PITCH_MIN, PITCH_MAX, type TickInput } from './input';
 // Joueurs (lectures utiles au rendu / HUD / bots).
-export { isCarrier, playerHeight, targetRunSpeed, wishDirection } from './player';
+export { aimOrigin, isCarrier, playerHeight, targetRunSpeed, wishDirection } from './player';
+// Ballon (position du ballon porté, partagée avec le rendu).
+export { carryPosition } from './ball';
 // Sérialisation.
 export { cloneState, hashState, fnv1a } from './serialize';

@@ -91,3 +91,84 @@ donc surtout par les tests automatiques, et un peu à la main depuis la console 
 | `BALL_BOUNCE_DEVIATION_DEG` | Déviation latérale aléatoire à chaque rebond | 40° | Descendre vers 25° si le ballon libre devient trop injuste |
 | `BALL_GROUND_FRICTION` | Freinage du ballon qui roule. Sert aussi de seuil : sur une pente plus douce, un ballon arrêté reste posé | 4 m/s² | Descendre vers 2,5 pour qu'il roule plus loin et redescende aussi des rampes |
 | `BALL_MIN_BOUNCE_SPEED` | Vitesse d'impact sous laquelle le ballon roule au lieu de rebondir | 1,2 m/s | Monter pour que le ballon se calme plus vite |
+
+## Étape 3 — rendu minimal, caméra épaule, interpolation, clavier/souris et manette
+
+On voit enfin le match : terrain, capsules, ballon, caméra épaule. Les bots n'existent pas encore (étape 6) : les
+autres joueurs restent immobiles (on peut les pousser, parfois loin). Le ballon tombe au centre au démarrage.
+La partie démarre en mode entraînement (chrono figé) : 3v3, tu joues l'ailier (joueur 0, orange).
+
+### Comment tester
+
+1. **Tests automatiques** : `npm test`, ou seulement le client : `npx vitest run tests/input tests/render tests/game`
+   (verrouillage des appuis, Shift appui/maintien, assemblage de l'entrée, zones mortes intérieure et extérieure,
+   courbe, boost, mapping manette, bascule L3, choix de la manette, débranchement, aide à la visée, vibrations, maths de
+   la caméra, interpolation, postures, boucle à pas fixe). Vérification complète : `npm run check`.
+2. **Clavier/souris** : `npm run dev`, ouvrir l'URL, **cliquer** pour capturer la souris (Échap la relâche et met en
+   pause). Sur AZERTY : Z Q S D (ou les flèches) pour se déplacer, la souris pour regarder, Espace pour sauter (double
+   saut : tu joues l'ailier), Maj **tapé** = esquive, Maj **maintenu** = sprint, C en courant = glissade, clic droit = visée.
+3. **Manette** (Xbox ou PlayStation, branchée avant ou pendant la partie, Chrome ou Edge) : appuyer sur A / ✕ ou
+   Menu / Options pour jouer, sans capturer la souris. Stick gauche : déplacement. Stick droit : caméra. A : saut.
+   B : esquive. X : glissade. L3 : sprint (bascule). LT : visée. Start : pause.
+   À essayer :
+   - débrancher la manette en jeu : la partie se met en pause et l'overlay repasse au clavier ;
+   - poser la manette et jouer au clavier : une légère dérive du stick ne fait pas basculer l'overlay sur la manette ;
+   - avec deux manettes, utiliser la seconde : c'est elle qui est lue.
+   La manette vibre lors d'un atterrissage brutal. Les autres vibrations arriveront avec les plaquages et les essais.
+4. **Mode debug** : ajouter `?debug` à l'URL (ex. `http://localhost:5173/?debug`). Pas d'overlay ni de pause, le clavier
+   marche sans capturer la souris, et la session est exposée dans la console (`__ovalgun.session.state`).
+   Pour essayer la caméra porteur avant l'étape 4, coller dans la console :
+   `__ovalgun.session.state.ball.mode = 'carried'; __ovalgun.session.state.ball.carrierId = 0;`
+   (le ramassage du ballon libre n'arrive qu'à l'étape 4 ; recharger la page pour revenir au départ).
+
+### Ce qu'on doit voir / ressentir
+
+- **Caméra épaule** : la caméra est derrière l'épaule droite, avec un vrai vide entre la tête et le réticule. Un tir
+  partira exactement vers le réticule (c'est la même droite que dans la sim). Elle se rapproche en visée.
+  Quand on porte le ballon, elle recule, même si l'on tient la visée : le porteur ne vise pas, sa caméra et ses
+  sensibilités ne changent pas et son sprint L3 continue. Le champ de vision s'élargit un peu au sprint et pendant
+  l'esquive, plafonné à +6° (pas de « coup de zoom » à chaque esquive).
+- **Fluidité** : le mouvement reste fluide au-delà de 30 Hz d'affichage (position et rotation du ballon interpolées).
+  La visée réagit à chaque image. Pause et reprise ne font pas reculer l'image.
+- **Clavier** : un appui très bref (saut, esquive) n'est jamais perdu. Maj tapé = esquive au relâchement. Maj
+  maintenu = sprint seul : l'esquive reste disponible pour le défenseur qui arrive.
+- **Manette** : le stick droit est précis au centre et rapide en bout de course. Maintenu à fond à l'horizontale, la
+  rotation accélère après 0,2 s ; regarder en l'air à fond ne prépare pas de demi-tour brutal. Un stick usé atteint
+  quand même la vitesse max. En visée, la caméra ralentit. Près d'un adversaire, elle « colle » légèrement (aide à la
+  visée) mais ne bouge jamais seule.
+- **Lisibilité** :
+  - le ballon libre a un cercle jaune au sol (rayon de ramassage) et une traînée ;
+  - un porteur a un losange jaune au-dessus de la tête, visible à travers les murets ;
+  - en glissade ou en plongeon, le joueur se ramasse à la hauteur de sa hitbox (une capsule basse), au lieu de se coucher de tout son long.
+- **Relief** : les reliefs affichés sont ceux de la sim. Limite connue : au bord d'une rampe ou d'un muret, un joueur
+  peut rester « perché » jusqu'à 0,45 m au-delà de la face (appui en disque, voir ARCHITECTURE §8).
+
+### Constantes utiles pour ajuster le feeling
+
+| Constante | Effet | Valeur actuelle | Piste de réglage |
+|---|---|---|---|
+| `SHOULDER_OFFSET` | Décalage de l'épaule (et du départ des tirs) vers la droite | 0,75 m | Garder au moins 0,25 m de plus que `PLAYER_RADIUS` (un test le vérifie) ; 0,8 pour dégager encore le centre en visée |
+| `AIM_ORIGIN_HEIGHT` | Hauteur du réticule (et du départ des tirs) au-dessus des pieds | 1,6 m | 1,7 pour faire passer le réticule au ras du haut de la tête |
+| `CAMERA_DISTANCE` / `_CARRY` / `_AIM` | Recul de la caméra : course / porteur / visée (m) | 4,2 / 5,4 / 2,8 | Porteur plus loin (6) pour mieux lire le jeu ; visée plus près (2,4) pour plus de précision |
+| `CAMERA_FOV` / `_CARRY` / `_AIM` | Champ de vision (degrés) | 72 / 78 / 58 | Monter pour plus de sensation de vitesse, au prix de la lisibilité au loin |
+| `CAMERA_FOV_SPEED_GAIN` / `CAMERA_FOV_SPEED_MAX_BONUS` | FOV ajouté par m/s au-delà de la course, et son plafond | 1,2 °/(m/s) / 6° | 2 et 8 pour un effet « warp » ; gain à 0 pour le couper |
+| `CAMERA_BLEND_RATE` | Vivacité des transitions de caméra (1/s) | 10 | Monter (15) pour des transitions plus sèches |
+| `CAMERA_GROUND_MARGIN` / `CAMERA_MIN_DISTANCE` | Collision caméra / sol | 0,3 / 0,9 m | Monter la marge si la caméra frôle le sol en regardant en l'air |
+| `MOUSE_SENSITIVITY` / `MOUSE_AIM_SENSITIVITY_MULT` | Sensibilité souris (rad/px), et multiplicateur en visée | 0,0022 / 0,6 | Réglage personnel ; un menu d'options viendra plus tard |
+| `SPRINT_HOLD_DELAY_SEC` | Maintien de Maj avant le sprint (et durée max d'un tape d'esquive) | 0,15 s | Baisser (0,12) si le sprint semble tarder, monter si des esquives partent en sprint |
+| `KEYBOARD_DODGE_ON_RELEASE` | Esquive clavier au relâchement (sprint sans esquive) ou à l'enfoncement (latence nulle, mais chaque sprint commence par une esquive) | oui | Passer à `false` si l'esquive au clavier semble en retard |
+| `GAMEPAD_MOVE_DEADZONE` / `GAMEPAD_LOOK_DEADZONE` | Zones mortes radiales intérieures | 0,15 / 0,12 | Monter si la manette dérive au repos |
+| `GAMEPAD_MOVE_OUTER_DEADZONE` / `GAMEPAD_LOOK_OUTER_DEADZONE` | Zones mortes extérieures (« à fond » atteint avant le bord) | 0,05 / 0,08 | Monter (0,12) pour les sticks très usés |
+| `GAMEPAD_ACTIVITY_THRESHOLD` | Geste nécessaire pour que la manette prenne la main sur le clavier | 0,35 | Monter si une manette posée « vole » encore la main |
+| `GAMEPAD_LOOK_CURVE` | Courbe du stick droit | 1,8 | 1 = linéaire ; 2,2 pour plus de précision au centre |
+| `GAMEPAD_LOOK_YAW_SPEED_DEG` / `_PITCH_SPEED_DEG` | Vitesse de caméra à fond (°/s) | 230 / 150 | Réglage principal du confort manette |
+| `GAMEPAD_LOOK_BOOST_*` | Accélération en bout de course : seuil, horizontalité min., délai, montée, multiplicateur | 0,95 / 0,7 / 0,2 s / 0,35 s / ×1,6 | Baisser le délai pour des demi-tours plus rapides ; seuil 0,9 si le boost se déclenche mal |
+| `GAMEPAD_AIM_LOOK_MULT` | Ralentissement de la caméra en visée | 0,55 | Baisser pour plus de précision en visée |
+| `GAMEPAD_TRIGGER_THRESHOLD` | Enfoncement des gâchettes | 0,35 | Baisser pour un tir plus réactif |
+| `GAMEPAD_INVERT_Y` | Axe vertical inversé | non | Préférence personnelle |
+| `AIM_ASSIST_ENABLED` / `_ANGLE_DEG` / `_SLOWDOWN` / `_TRACKING` / `_MAX_TRACK_DEG_PER_SEC` | Aide à la visée manette | oui / 4° / 0,55 / 0,3 / 25 °/s | Plus d'aide : angle 5, ralentissement 0,45 ; ne pas dépasser 0,5 de suivi |
+| `GAMEPAD_RUMBLE` / `GAMEPAD_RUMBLE_EFFECTS` / `RUMBLE_HARD_LANDING_SPEED` | Vibrations, leur table (durée, moteurs, priorité), seuil d'atterrissage brutal | oui / — / 9 m/s | Mettre `strong` et `weak` à 0 pour couper un signal |
+| `BALL_CARRY_SIDE` / `_FORWARD` / `_HEIGHT` | Position du ballon porté | 0,5 / 0,35 / 1,05 m | Garder `BALL_CARRY_SIDE` > `PLAYER_RADIUS` pour que le ballon reste visible |
+
+Réglages purement visuels (couleurs, contours, traînée, taille d'affichage du ballon, inclinaison des postures basses,
+brouillard, tribunes) : `src/render/palette.ts`.

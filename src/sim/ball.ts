@@ -42,11 +42,26 @@ import {
 import { faceContact, groundHeight, groundNormal } from './field';
 import { rand, randSigned } from './prng';
 import type { BallState, MatchState } from './types';
-import { forward, right, wrapAngle } from './vec';
+import { forward, right, wrapAngle, type Vec3 } from './vec';
 
 const DEVIATION_MAX = (BALL_BOUNCE_DEVIATION_DEG * Math.PI) / 180;
 /** Tolérance numérique (m) pour considérer que le ballon est posé au sol (pas une valeur de gameplay). */
 const GROUNDED_EPS = 1e-6;
+
+/**
+ * Position du ballon porté pour des pieds / un yaw de porteur : devant (BALL_CARRY_FORWARD), à droite
+ * (BALL_CARRY_SIDE), à hauteur de poitrine (BALL_CARRY_HEIGHT). Partagée avec le rendu (qui l'applique au
+ * porteur interpolé) : le ballon affiché est toujours exactement là où la sim le place.
+ * `out` permet au rendu d'éviter une allocation par frame.
+ */
+export function carryPosition(feet: Vec3, yaw: number, out: Vec3 = { x: 0, y: 0, z: 0 }): Vec3 {
+  const f = forward(yaw);
+  const r = right(yaw);
+  out.x = feet.x + f.x * BALL_CARRY_FORWARD + r.x * BALL_CARRY_SIDE;
+  out.y = feet.y + BALL_CARRY_HEIGHT;
+  out.z = feet.z + f.z * BALL_CARRY_FORWARD + r.z * BALL_CARRY_SIDE;
+  return out;
+}
 
 /** Ballon porté : placé devant / à droite du porteur, à hauteur de poitrine, à sa vitesse. */
 function followCarrier(state: MatchState, b: BallState): void {
@@ -57,13 +72,7 @@ function followCarrier(state: MatchState, b: BallState): void {
     b.carrierId = -1;
     return;
   }
-  const f = forward(c.yaw);
-  const r = right(c.yaw);
-  b.pos = {
-    x: c.pos.x + f.x * BALL_CARRY_FORWARD + r.x * BALL_CARRY_SIDE,
-    y: c.pos.y + BALL_CARRY_HEIGHT,
-    z: c.pos.z + f.z * BALL_CARRY_FORWARD + r.z * BALL_CARRY_SIDE,
-  };
+  b.pos = carryPosition(c.pos, c.yaw);
   b.vel = { x: c.vel.x, y: c.vel.y, z: c.vel.z };
   b.lastTeam = c.team;
   b.spinRate = 0;

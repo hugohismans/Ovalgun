@@ -22,12 +22,17 @@ Graphe de dépendances autorisé (une flèche = « peut importer ») :
 
 ```
 ui ──> game ──> render ──> sim
-        │  └──> input ──> sim (types/constants)
-        └────> bots ────> sim
+ │       ├────> input ───> sim
+ │       └────> bots ────> sim
+ └─────────────> input   (libellés des touches / glyphes manette de l'overlay)
 ```
 
 `sim` n'importe rien hors de `src/sim`. `bots` n'importe que `src/sim` (et `src/bots`).
-Le test `tests/architecture.test.ts` et `npm run typecheck` (tsconfig.sim.json) font respecter ces règles.
+Hors de `src/sim`, la simulation ne s'importe QUE par son API publique `src/sim/index.ts` (`from '../sim'`).
+`render` n'importe ni `input`, ni `game`, ni `ui` ; `input` n'importe ni `render`, ni `game`, ni `ui` ; `game` n'importe pas `ui` ;
+`ui` n'importe que `game` et `input`.
+Le test `tests/architecture.test.ts` (fichiers `.ts` ET balises `<script>` des `.svelte`) et `npm run typecheck`
+(tsconfig.sim.json) font respecter ces règles.
 
 ## 2. Contrat de la simulation
 
@@ -40,6 +45,8 @@ cloneState(state: MatchState): MatchState                              // copie 
 hashState(state: MatchState): string                                   // FNV-1a sur JSON.stringify (tests, vérif. client/serveur)
 NEUTRAL_INPUT, makeInput(partial), Buttons, constantes, types…
 createField, groundHeight, supportHeight, groundNormal, faceContact      // terrain, partagé avec le rendu
+aimOrigin(feet, yaw)                                                    // origine de visée (§3), partagée avec la caméra
+carryPosition(feet, yaw, out?)                                          // position du ballon porté, partagée avec le rendu
 placeTeamInFormation, formationSlot                                     // placement (remises en jeu)
 ```
 
@@ -83,7 +90,7 @@ Ordre des opérations dans `step` (à respecter et documenter dans `match.ts`) :
 Voir l'en-tête de `src/sim/vec.ts`.
 - Y vers le haut, terrain dans le plan XZ. L'équipe 0 attaque vers **+Z**, l'équipe 1 vers **-Z**.
 - `forward(yaw) = (sin yaw, 0, cos yaw)`, `right(yaw) = (-cos yaw, 0, sin yaw)`. Souris vers la droite => yaw diminue.
-- **Origine de visée** = pieds + `AIM_ORIGIN_HEIGHT` vers le haut + `SHOULDER_OFFSET` vers `right(yaw)`.
+- **Origine de visée** = pieds + `AIM_ORIGIN_HEIGHT` vers le haut + `SHOULDER_OFFSET` vers `right(yaw)` (`aimOrigin` dans `player.ts`).
   Les tirs partent de ce point selon `aimDir(yaw, pitch)`. La caméra épaule se place sur la MÊME droite, en arrière :
   `camPos = aimOrigin - aimDir * distance`. Le tir part donc exactement vers le réticule, à toute distance, sans que la sim
   connaisse la caméra. (Si la caméra est rapprochée par une collision, elle reste sur cette droite.)
@@ -91,8 +98,13 @@ Voir l'en-tête de `src/sim/vec.ts`.
 ## 4. Interprétations du cahier des charges (décisions)
 
 - **Shift** : appui = esquive (bouton `DODGE`), maintien = sprint (`SPRINT`), comme « tap to dodge / hold to sprint ».
-  Le client met `DODGE` au front d'appui et `SPRINT` tant que la touche est maintenue (après ~0,15 s).
-  Sprint : uniquement en avançant ; empêche de tirer ; annulé par la visée.
+  Par défaut (`KEYBOARD_DODGE_ON_RELEASE = true`, décision de l'étape 3), le client émet `DODGE` au **relâchement** d'un
+  appui plus bref que `SPRINT_HOLD_DELAY_SEC`, et `SPRINT` tant que la touche est maintenue au-delà : maintenir Shift
+  sprinte **sans consommer l'esquive** (comme B et L3 séparés à la manette). Latence de l'esquive = durée du tape.
+  Avec `false` : `DODGE` au front d'appui (latence nulle), mais chaque sprint commence par une esquive.
+  Sprint : uniquement en avançant ; empêche de tirer ; annulé par la visée (sauf pour le porteur, qui ne vise pas).
+- **Le porteur ne vise pas** : la sim ignore `AIM` pour lui (pas de `AIM_SPEED_MULT`, sprint non annulé) ; côté client,
+  la visée ne rapproche pas sa caméra, ne change pas les sensibilités et ne coupe pas le sprint L3.
 - **Glissade** : touche **C** en courant (`SLIDE`). Pour le porteur, **C = plongeon**.
 - **Touches** : on lit `KeyboardEvent.code` (position physique) pour que ZQSD/A sur AZERTY = WASD/Q sur QWERTY.
   Défaut : avancer `KeyW`(Z), gauche `KeyA`(Q), reculer `KeyS`, droite `KeyD`, saut `Space`, esquive/sprint `ShiftLeft`,
@@ -102,7 +114,7 @@ Voir l'en-tête de `src/sim/vec.ts`.
   | Contrôle | Action |
   |---|---|
   | Stick gauche | déplacement (zone morte radiale `GAMEPAD_MOVE_DEADZONE`) |
-  | Clic stick gauche (L3) | sprint (bascule ; s'annule quand le stick revient au centre, en visée ou au tir) |
+  | Clic stick gauche (L3) | sprint (bascule ; s'annule quand le stick revient au centre, en visée ou au tir — sauf porteur) |
   | Stick droit | caméra (courbe `GAMEPAD_LOOK_CURVE`, vitesses `GAMEPAD_LOOK_*`, boost en bout de course) |
   | A / Croix | saut |
   | B / Rond | esquive |
@@ -146,6 +158,8 @@ Voir l'en-tête de `src/sim/vec.ts`.
 - Style flat coloré : `MeshLambertMaterial`/`MeshToonMaterial`, couleurs saturées, équipe 0 orange, équipe 1 bleu.
 - Placeholders géométriques uniquement (capsules, ellipsoïde, boîtes), pas d'assets externes.
 - Le marqueur du porteur est rendu sans test de profondeur (visible à travers le relief).
+- Les valeurs purement visuelles (couleurs, épaisseurs de contour, durée de la traînée…) sont dans `render/palette.ts` ;
+  tout ce qui touche au feeling (caméra, sensibilités, manette, vibrations) reste dans `src/sim/constants.ts`.
 
 ## 6. Vérification
 
@@ -209,3 +223,66 @@ Décisions prises à l'étape 2 :
   pas chassé non) ET stick incliné d'au moins `SPRINT_MIN_TILT` (un stick à peine poussé ne sprinte pas).
   Le dash-saut (`DODGE_JUMP_CANCEL_SEC`) et l'absence de faux front montant sur entrée manquante visent aussi la manette.
   Zones mortes, bascule L3, aide à la visée et vibrations restent côté client (`src/input`, étape 3).
+
+## 8. Client : rendu, entrées, boucle (étape 3)
+
+| Fichier | Rôle |
+|---|---|
+| `input/keymap.ts` | `Action`, `Keymap` (données : `KeyboardEvent.code` / bouton souris), `DEFAULT_KEYMAP`, libellés AZERTY ou disposition réelle (`navigator.keyboard.getLayoutMap()`). |
+| `input/gamepadMap.ts` | `GamepadMap` (données : index de boutons / axes « standard » -> actions, un bouton peut émettre plusieurs actions), glyphes Xbox / PlayStation (`detectGamepadStyle(gamepad.id)`). |
+| `input/inputLogic.ts` | Pur : `PressLatch` (appuis brefs verrouillés jusqu'au tick suivant), `TapHoldState` (Shift appui/maintien), fusion des déplacements, `composeInput` (assemblage du `PlayerInput` d'un tick). |
+| `input/gamepad.ts` | Pur + état : zones mortes radiales (intérieure + extérieure), courbe, boost, `SprintToggle` (L3), `GamepadInput` (alimenté par un `GamepadLike`, donc testable), `GamepadPicker` (choix de la manette lue), `readGamepads()`. |
+| `input/aimAssist.ts` | Pur : aide à la visée manette (ralentissement progressif + suivi borné). |
+| `input/haptics.ts` | Table événement -> vibration (`rumbleCueFor`), lecture `dual-rumble` avec priorités, tolère l'absence d'actionneur. |
+| `input/InputManager.ts` | Clavier/souris + manette -> un `PlayerInput` par tick (`sample()`), yaw/pitch courants pour la caméra, périphérique actif. |
+| `render/Renderer.ts` | Scène, ciel en dégradé, lumières, brouillard, tribunes ; `render(prev, curr, alpha, view, dt, t)`. |
+| `render/FieldView.ts` | Sol (bandes de tonte + en-buts teintés par shader en coordonnées monde), lignes, bordure des murs invisibles, reliefs construits depuis `FieldLayout` / `groundHeight`. |
+| `render/PlayerView.ts` | Capsules toon + contour, visière, arme, signe de rôle, postures, ombre, anneau humain, losange du porteur (sans test de profondeur). |
+| `render/BallView.ts` | Ovale orienté (spin / tumble), traînée en ruban (tampon circulaire), cercle de ramassage, ombre. |
+| `render/cameraMath.ts`, `ShoulderCamera.ts` | Caméra épaule (§3) : maths pures testées, lissage distance / FOV. |
+| `render/interpolate.ts` | Interpolation positions / angles sans allocation (pas d'interpolation au-delà de `STYLE.teleportDist`). |
+| `game/loop.ts` | Pur : `FixedStepLoop` (accumulateur -> ticks par frame, rattrapage borné, alpha). |
+| `game/session.ts` | `GameSession` : boucle, entrées, pause, haptique, instantané UI, `inputProviders` (bots). |
+| `game/roles.ts` | Composition des équipes (humain = joueur 0 de l'équipe 0). |
+
+Décisions prises à l'étape 3 :
+
+- **Boucle** (`FixedStepLoop`) : accumulateur, au plus 5 ticks par frame (au-delà, retard abandonné), dt de frame borné à 0,25 s.
+  `prev = cloneState(state)` avant chaque `step` ; alpha = accumulateur / `TICK_DT`.
+- **Entrées des autres joueurs** : `session.inputProviders: Map<id, InputProvider>` avec
+  `InputProvider = (state: Readonly<MatchState>, playerId) => PlayerInput` (déclaré dans `src/bots/index.ts` : même contrat
+  pour le client et un futur serveur, aucun bot n'a besoin de la session) ; à défaut, entrée neutre qui garde la visée du
+  joueur (pas d'entrée manquante : `lastButtons` reste cohérent).
+- **Caméra souris** : yaw/pitch accumulés à chaque `mousemove` ; **caméra manette** intégrée à chaque frame (dt de rendu).
+  Le `PlayerInput` du tick lit simplement la valeur courante : la sim reçoit exactement l'orientation affichée.
+- **Fusion** : boutons en OU ; déplacement = le plus grand des deux (à égalité, périphérique actif) ; yaw/pitch communs.
+  Périphérique actif = dernier utilisé (touche, clic, souris > 4 px ; bouton, gâchette, stick au-delà de
+  `GAMEPAD_ACTIVITY_THRESHOLD` — distinct de la zone morte : une dérive ne vole pas la main au clavier).
+- **Manette lue** (`GamepadPicker`) : la manette « standard » courante tant qu'elle est connectée ; une AUTRE manette standard
+  qui montre un geste franc prend la main (manette virtuelle ou seconde manette à l'index 0). Une manette connectée sans
+  mapping « standard » est ignorée et l'overlay le signale. Débranchée : plus rien n'est maintenu (visée relâchée).
+- **Pause** : pointer lock perdu avec le clavier actif (sauf `?debug`) ; Start à la manette (bascule) ; manette ACTIVE
+  débranchée en jeu (sauf `?debug`, le périphérique actif repasse au clavier). En pause, la manette reste interrogée
+  (Start / A reprennent) ; à la reprise, tout est relâché et les boutons encore enfoncés sont ignorés jusqu'à leur
+  relâchement (le A qui relance la partie ne fait pas sauter). La pause garde l'accumulateur (image figée, pas de recul
+  d'un tick) ; la reprise repart de `prev = state`, alpha 0.
+- **Caméra** : le port du ballon prime sur la visée (`cameraTargets`). Bonus de FOV lié à la vitesse plafonné à
+  `CAMERA_FOV_SPEED_MAX_BONUS`. `SHOULDER_OFFSET` = 0,75 m : la droite de tir passe à 0,30 m du bord de la capsule
+  (réticule dégagé de la tête, cibles visibles juste à sa gauche).
+- **Postures basses** (glissade, plongeon, au sol) : capsule écrasée à `PLAYER_LOW_HEIGHT` (la hitbox de la sim est une
+  capsule verticale basse), à peine inclinée (`STYLE.lowPostureLean`) : le corps affiché ne déborde pas de la hitbox.
+- **Ballon** : position ET rotation (culbute, vrille) interpolées entre deux ticks.
+- **Aide à la visée** : seulement manette active, joueur actif non porteur ; cibles = adversaires `active` dans la portée
+  de l'arme, angle mesuré jusqu'à la capsule ; ralentissement continu jusqu'à `AIM_ASSIST_SLOWDOWN` ; suivi =
+  `AIM_ASSIST_TRACKING` × déplacement angulaire de la cible (même cible qu'à la frame précédente), seulement si un stick
+  est incliné (`AIM_ASSIST_MIN_INPUT`), borné à `AIM_ASSIST_MAX_TRACK_DEG_PER_SEC`.
+- **Vibrations** : `GAMEPAD_RUMBLE_EFFECTS` (constantes) ; branché dès maintenant : atterrissage brutal
+  (`RUMBLE_HARD_LANDING_SPEED`) ; prêts : tir reçu, plaquage subi / réussi, réception, essai marqué / encaissé.
+- **Ballon porté** : `BALL_CARRY_SIDE` porté à 0,5 m (> `PLAYER_RADIUS`) pour que le ballon sorte de la capsule ; l'arme du
+  porteur est masquée (il ne tire pas). Le rendu replace le ballon porté avec `carryPosition` (la fonction de `ball.ts`) à
+  partir du porteur interpolé (et du yaw courant pour le joueur local).
+- **Limite connue (sim, étape 2)** : l'appui d'un joueur sur une rampe / un muret est un disque de rayon `PLAYER_RADIUS`
+  (`supportHeight`) ; au bord d'un relief, la capsule peut donc tenir « perchée » jusqu'à 0,45 m au-delà de la face. Un
+  rayon de pied plus petit (pour l'appui seulement) est à décider avec la grimpe, pas changé à l'étape 3.
+- **Mode debug** (`?debug`) : pas de pause ni d'overlay au démarrage, clavier/clics acceptés sans pointer lock,
+  `window.__ovalgun = { session }` (Playwright).

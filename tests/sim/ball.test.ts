@@ -6,6 +6,7 @@ import {
   BALL_BOUNCE_DEVIATION_DEG,
   BALL_CARRY_HEIGHT,
   BALL_RADIUS,
+  carryPosition,
   createField,
   createMatch,
   groundHeight,
@@ -207,5 +208,24 @@ describe('ballon porté', () => {
     expect(s.ball.looseTicks).toBe(0);
     expect(s.ball.lastTeam).toBe(0);
     expect(hSpeed(s.ball.vel)).toBeGreaterThan(5);
+  });
+});
+
+describe('ballon porté : position partagée avec le rendu', () => {
+  it('la sim place le ballon porté exactement en carryPosition(pieds, yaw) du porteur', () => {
+    const s = soloMatch('ailier', [], 3, -4, 0.8);
+    s.ball.mode = 'carried';
+    s.ball.carrierId = 0;
+    run(s, 10, () => only0({ moveY: 1, moveX: 0.3, yaw: 0.8 }));
+    const c = s.players[0];
+    const expected = carryPosition(c.pos, c.yaw);
+    expect(s.ball.pos.x).toBeCloseTo(expected.x, 12);
+    expect(s.ball.pos.y).toBeCloseTo(expected.y, 12);
+    expect(s.ball.pos.z).toBeCloseTo(expected.z, 12);
+    expect(expected.y - c.pos.y).toBeCloseTo(BALL_CARRY_HEIGHT, 12);
+    // Variante sans allocation (rendu) : même résultat dans l'objet fourni.
+    const out = { x: 0, y: 0, z: 0 };
+    expect(carryPosition(c.pos, c.yaw, out)).toBe(out);
+    expect(out).toEqual(expected);
   });
 });

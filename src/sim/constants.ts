@@ -132,8 +132,11 @@ export const AIM_ORIGIN_HEIGHT = 1.6;
  * Décalage latéral (vers la droite) de l'origine de visée (m). La caméra épaule
  * est placée sur la droite du joueur, SUR LA MÊME DROITE que le tir : le tir part
  * donc exactement vers le réticule, quelle que soit la distance de la caméra.
+ * Doit dépasser nettement PLAYER_RADIUS : à 0,75, il reste 0,30 m entre la capsule et la droite
+ * de tir (le réticule ne touche plus la tête et le corps ne masque plus les cibles juste à sa gauche).
+ * ↑ = personnage plus décalé à gauche de l'écran (et tirs qui partent plus à droite du corps).
  */
-export const SHOULDER_OFFSET = 0.55;
+export const SHOULDER_OFFSET = 0.75;
 /** Distance minimale de séparation entre deux joueurs debout (collisions douces). */
 export const PLAYER_SEPARATION = PLAYER_RADIUS * 2;
 /** Fraction du chevauchement corrigée par tick entre deux joueurs (0..1). */
@@ -307,9 +310,12 @@ export const BALL_TUMBLE_PER_IMPACT = 1.6;
 export const BALL_SPIN_PER_IMPACT = 2.2;
 
 /** Ballon porté : décalage vers l'avant du porteur (m). ↑ = ballon tenu plus en avant. */
-export const BALL_CARRY_FORWARD = 0.3;
-/** Ballon porté : décalage vers la droite du porteur (m, côté caméra épaule pour rester visible). ↑ = ballon plus écarté du corps. */
-export const BALL_CARRY_SIDE = 0.3;
+export const BALL_CARRY_FORWARD = 0.35;
+/**
+ * Ballon porté : décalage vers la droite du porteur (m, côté caméra épaule pour rester visible).
+ * Doit dépasser PLAYER_RADIUS pour que le ballon sorte de la capsule. ↑ = ballon plus écarté du corps.
+ */
+export const BALL_CARRY_SIDE = 0.5;
 /** Ballon porté : hauteur du centre du ballon au-dessus des pieds (m). ↑ = ballon tenu plus haut. */
 export const BALL_CARRY_HEIGHT = 1.05;
 
@@ -639,21 +645,36 @@ export const BOT_DIFFICULTY: Record<BotDifficulty, BotDifficultyStats> = {
 //  CAMÉRA (lu uniquement par le rendu — regroupé ici pour régler le feeling au même endroit)
 // ============================================================================
 
-/** Distance caméra–épaule en course normale (m). */
+/** Distance caméra–épaule en course normale (m). ↑ = caméra plus reculée (plus de jeu visible, joueur plus petit). */
 export const CAMERA_DISTANCE = 4.2;
-/** Distance quand on porte le ballon (plus reculée : on ne vise pas, on lit le jeu). */
+/**
+ * Distance quand on porte le ballon (plus reculée : on ne vise pas, on lit le jeu). Le port du ballon
+ * PRIME sur la visée (le porteur ne vise pas). ↑ = caméra plus reculée quand on porte.
+ */
 export const CAMERA_DISTANCE_CARRY = 5.4;
-/** Distance en visée (clic droit). */
-export const CAMERA_DISTANCE_AIM = 2.4;
-/** Champ de vision vertical (degrés) : normal / porteur / visée. */
+/** Distance en visée (clic droit / gâchette gauche). ↑ = caméra moins rapprochée en visée (moins de précision). */
+export const CAMERA_DISTANCE_AIM = 2.8;
+/** Champ de vision vertical (degrés) : normal / porteur / visée. ↑ = champ plus large (vitesse ressentie, lisibilité au loin ↓). */
 export const CAMERA_FOV = 72;
 export const CAMERA_FOV_CARRY = 78;
 export const CAMERA_FOV_AIM = 58;
-/** Bonus de FOV proportionnel à la vitesse au-delà de la vitesse de course (degrés par m/s) : sensation de vitesse. */
+/** Bonus de FOV proportionnel à la vitesse au-delà de la vitesse de course (degrés par m/s). ↑ = sensation de vitesse plus forte. */
 export const CAMERA_FOV_SPEED_GAIN = 1.2;
+/**
+ * Plafond du bonus de FOV lié à la vitesse (degrés) : évite une « pulsation » de +14° à chaque esquive
+ * (21 m/s). ↑ = effet « warp » plus fort au sprint / à l'esquive.
+ */
+export const CAMERA_FOV_SPEED_MAX_BONUS = 6;
 /** Raideur du lissage des transitions de distance / FOV (1/s). ↑ = transitions plus vives. */
 export const CAMERA_BLEND_RATE = 10;
-/** Sensibilité souris (radians par pixel) et multiplicateur en visée. */
+/**
+ * Collision caméra / sol : marge minimale (m) entre la caméra et le sol (relief compris). Si la caméra
+ * passerait dessous, elle est rapprochée le long de la droite de visée. ↑ = caméra qui « décolle » plus tôt du sol.
+ */
+export const CAMERA_GROUND_MARGIN = 0.3;
+/** Distance minimale (m) caméra–épaule quand une collision la rapproche. ↓ = la caméra peut venir plus près de la tête. */
+export const CAMERA_MIN_DISTANCE = 0.9;
+/** Sensibilité souris (radians par pixel) et multiplicateur en visée. ↑ = caméra plus rapide pour un même geste. */
 export const MOUSE_SENSITIVITY = 0.0022;
 export const MOUSE_AIM_SENSITIVITY_MULT = 0.6;
 
@@ -661,40 +682,117 @@ export const MOUSE_AIM_SENSITIVITY_MULT = 0.6;
 //  CLAVIER (lu uniquement par src/input)
 // ============================================================================
 
-/** Shift : durée de maintien au-delà de laquelle l'appui devient un sprint (s). Un appui plus bref = esquive seule. */
+/** Shift : durée de maintien au-delà de laquelle l'appui devient un sprint (s). Un appui plus bref = esquive seule. ↑ = sprint plus tardif, tape plus tolérant. */
 export const SPRINT_HOLD_DELAY_SEC = 0.15;
+/**
+ * Shift : moment où part l'esquive.
+ * - true : au RELÂCHEMENT d'un appui bref (< SPRINT_HOLD_DELAY_SEC). Maintenir Shift sprinte SANS consommer
+ *   l'esquive (comme L3 / B séparés à la manette) ; latence de l'esquive = durée du tape (souvent 50 à 100 ms).
+ * - false : à l'ENFONCEMENT (latence nulle), mais chaque sprint commence par une esquive (cooldown consommé).
+ */
+export const KEYBOARD_DODGE_ON_RELEASE = true;
 
 // ============================================================================
 //  MANETTE (lu uniquement par src/input — Gamepad API, disposition « standard »)
 // ============================================================================
 
-/** Zone morte radiale du stick gauche (déplacement), 0..1. */
+/** Zone morte radiale du stick gauche (déplacement), 0..1. ↑ = plus de tolérance à la dérive, moins de finesse. */
 export const GAMEPAD_MOVE_DEADZONE = 0.15;
-/** Zone morte radiale du stick droit (caméra), 0..1. */
+/** Zone morte radiale du stick droit (caméra), 0..1. ↑ = plus de tolérance à la dérive, moins de finesse. */
 export const GAMEPAD_LOOK_DEADZONE = 0.12;
+/**
+ * Zones mortes EXTÉRIEURES (0..1) : la norme brute est considérée « à fond » dès 1 − valeur. Un stick usé
+ * qui plafonne à 0,92–0,96 atteint quand même la vitesse max et le boost. ↑ = « à fond » atteint plus tôt.
+ */
+export const GAMEPAD_MOVE_OUTER_DEADZONE = 0.05;
+export const GAMEPAD_LOOK_OUTER_DEADZONE = 0.08;
+/**
+ * Inclinaison d'un stick (après zone morte, 0..1) nécessaire pour que la manette devienne le périphérique
+ * actif. Distincte de la zone morte : une manette posée dont le stick dérive juste au-delà ne « vole » pas la
+ * main au clavier (glyphes, pause à Échap). ↑ = il faut un geste plus franc pour que la manette prenne la main.
+ */
+export const GAMEPAD_ACTIVITY_THRESHOLD = 0.35;
 /** Exposant de la courbe de réponse du stick droit. ↑ = plus de précision au centre, plus de vitesse en bout de course. */
 export const GAMEPAD_LOOK_CURVE = 1.8;
-/** Vitesse de rotation horizontale à fond de stick (degrés/s). */
+/** Vitesse de rotation horizontale à fond de stick (degrés/s). ↑ = demi-tours plus rapides, visée moins fine. */
 export const GAMEPAD_LOOK_YAW_SPEED_DEG = 230;
-/** Vitesse de rotation verticale à fond de stick (degrés/s). */
+/** Vitesse de rotation verticale à fond de stick (degrés/s). ↑ = caméra verticale plus vive. */
 export const GAMEPAD_LOOK_PITCH_SPEED_DEG = 150;
-/** Accélération de rotation quand le stick reste à fond : multiplicateur atteint, délai avant le boost et durée de montée (s). */
+/**
+ * Accélération de rotation quand le stick reste à fond : multiplicateur atteint (↑ = demi-tour plus rapide),
+ * délai avant le boost (↓ = boost plus tôt) et durée de montée (s, ↓ = boost plus brutal).
+ */
 export const GAMEPAD_LOOK_BOOST_MULT = 1.6;
 export const GAMEPAD_LOOK_BOOST_DELAY_SEC = 0.2;
 export const GAMEPAD_LOOK_BOOST_RAMP_SEC = 0.35;
-/** Multiplicateur de vitesse de caméra en visée (gâchette gauche). */
+/**
+ * Seuil d'inclinaison du stick droit (après zone morte, 0..1) au-delà duquel on est « en bout de course »
+ * et le boost de rotation horizontale démarre (après GAMEPAD_LOOK_BOOST_DELAY_SEC). ↓ = boost plus facile à déclencher.
+ */
+export const GAMEPAD_LOOK_BOOST_THRESHOLD = 0.95;
+/**
+ * Le boost ne se charge que si le stick est surtout HORIZONTAL : |x| ≥ valeur × norme (le boost ne
+ * s'applique qu'au lacet ; regarder en l'air à fond ne doit pas préparer un demi-tour instantané).
+ * ↑ = il faut pousser plus franchement à l'horizontale.
+ */
+export const GAMEPAD_LOOK_BOOST_MIN_HORIZONTAL = 0.7;
+/** Multiplicateur de vitesse de caméra en visée (gâchette gauche). ↓ = visée plus lente et plus précise. */
 export const GAMEPAD_AIM_LOOK_MULT = 0.55;
-/** Seuil d'enfoncement des gâchettes analogiques (0..1). */
+/** Seuil d'enfoncement des gâchettes analogiques (0..1). ↓ = tir / visée déclenchés plus tôt. */
 export const GAMEPAD_TRIGGER_THRESHOLD = 0.35;
 /** Inverser l'axe vertical de la caméra. */
 export const GAMEPAD_INVERT_Y = false;
 /** Aide à la visée (manette uniquement) : activée ? */
 export const AIM_ASSIST_ENABLED = true;
-/** Aide à la visée : demi-angle autour d'un adversaire dans lequel elle agit (degrés). */
+/** Aide à la visée : demi-angle autour d'un adversaire dans lequel elle agit (degrés). ↑ = aide plus large. */
 export const AIM_ASSIST_ANGLE_DEG = 4;
 /** Aide à la visée : ralentissement de la caméra près d'une cible (multiplicateur). ↓ = cible plus « collante ». */
 export const AIM_ASSIST_SLOWDOWN = 0.55;
-/** Aide à la visée : fraction du déplacement angulaire de la cible suivie automatiquement (0 = aucune). */
+/** Aide à la visée : fraction du déplacement angulaire de la cible suivie automatiquement (0 = aucune). ↑ = suivi plus fort. */
 export const AIM_ASSIST_TRACKING = 0.3;
+/**
+ * Aide à la visée : correction de suivi maximale (degrés/s). Garantit qu'elle ne fait jamais « sauter »
+ * la visée (pas d'accrochage brutal). ↑ = suivi plus efficace sur les cibles rapides.
+ */
+export const AIM_ASSIST_MAX_TRACK_DEG_PER_SEC = 25;
+/**
+ * Aide à la visée : inclinaison minimale d'un stick (après zone morte) pour que le suivi agisse.
+ * Sans action du joueur, la visée ne bouge jamais toute seule. ↓ = suivi actif même stick presque lâché.
+ */
+export const AIM_ASSIST_MIN_INPUT = 0.05;
 /** Vibrations (plaquage subi, tir reçu, essai, réception…). */
 export const GAMEPAD_RUMBLE = true;
+
+/** Signaux de vibration déclenchés par les événements du joueur local (voir src/input/haptics.ts). */
+export type RumbleCue = 'hitTaken' | 'tackled' | 'tackleDealt' | 'catch' | 'try' | 'tryConceded' | 'hardLanding';
+
+export interface RumbleEffect {
+  /** Durée (s). ↑ = vibration plus longue. */
+  durationSec: number;
+  /** Moteur basse fréquence (lourd), 0..1. ↑ = choc plus sourd. */
+  strong: number;
+  /** Moteur haute fréquence (léger), 0..1. ↑ = grésillement plus vif. */
+  weak: number;
+  /** Priorité : un effet en cours n'est interrompu que par un effet de priorité ≥. */
+  priority: number;
+}
+
+/** Table événement -> vibration. Mettre `strong` et `weak` à 0 pour désactiver un signal. */
+export const GAMEPAD_RUMBLE_EFFECTS: Readonly<Record<RumbleCue, Readonly<RumbleEffect>>> = {
+  /** Tir reçu : léger et bref. */
+  hitTaken: { durationSec: 0.07, strong: 0.1, weak: 0.35, priority: 1 },
+  /** Plaquage subi : fort. */
+  tackled: { durationSec: 0.45, strong: 1.0, weak: 0.6, priority: 4 },
+  /** Plaquage réussi sur un adversaire : petit retour satisfaisant. */
+  tackleDealt: { durationSec: 0.12, strong: 0.35, weak: 0.25, priority: 2 },
+  /** Réception / ramassage du ballon : court et net. */
+  catch: { durationSec: 0.09, strong: 0.45, weak: 0.2, priority: 2 },
+  /** Essai marqué par son équipe : long et festif. */
+  try: { durationSec: 0.6, strong: 0.7, weak: 0.9, priority: 5 },
+  /** Essai encaissé : sourd. */
+  tryConceded: { durationSec: 0.3, strong: 0.4, weak: 0.0, priority: 3 },
+  /** Réception d'un saut à grande vitesse verticale. */
+  hardLanding: { durationSec: 0.06, strong: 0.25, weak: 0.0, priority: 1 },
+};
+/** Vitesse verticale d'atterrissage (m/s) au-delà de laquelle « hardLanding » vibre. ↑ = seulement les grosses chutes. */
+export const RUMBLE_HARD_LANDING_SPEED = 9;

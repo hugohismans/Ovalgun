@@ -10,6 +10,7 @@
 import { abilityAccelMultiplier, abilitySpeedMultiplier } from './abilities';
 import { tryStartDive, updateDiveMovement } from './carrier';
 import {
+  AIM_ORIGIN_HEIGHT,
   AIM_SPEED_MULT,
   AIR_ACCEL,
   AIR_JUMP_VELOCITY,
@@ -43,6 +44,7 @@ import {
   SLIDE_STEER_RATE,
   SPRINT_MIN_FORWARD_COS,
   SPRINT_MIN_TILT,
+  SHOULDER_OFFSET,
   SPRINT_SPEED_MULT,
   STRAFE_SPEED_MULT,
   TICK_DT,
@@ -65,6 +67,16 @@ export const playerHeight = (p: PlayerState): number =>
   p.move === 'slide' || p.move === 'dive' || p.move === 'dive_recover' || p.status === 'down'
     ? PLAYER_LOW_HEIGHT
     : PLAYER_HEIGHT;
+
+/**
+ * Origine de visée (docs/ARCHITECTURE.md §3) : pieds + AIM_ORIGIN_HEIGHT vers le haut + SHOULDER_OFFSET
+ * vers right(yaw). Les tirs partent de ce point selon aimDir(yaw, pitch) ; la caméra épaule du client se
+ * place sur la même droite, en arrière (le tir part donc exactement vers le réticule).
+ */
+export function aimOrigin(feet: Vec3, yaw: number): Vec3 {
+  const r = right(yaw);
+  return { x: feet.x + r.x * SHOULDER_OFFSET, y: feet.y + AIM_ORIGIN_HEIGHT, z: feet.z + r.z * SHOULDER_OFFSET };
+}
 
 /** Cooldown en ticks, raccourci pendant la dernière minute. Fixé au déclenchement de l'action. */
 export const cooldownTicks = (state: MatchState, sec: number): number =>
@@ -93,7 +105,7 @@ export function sprintApplies(inp: TickInput): boolean {
 /**
  * Vitesse de course cible (m/s) pour l'entrée donnée : vitesse du rôle × direction locale
  * (avant 1, pas chassé STRAFE, arrière BACKPEDAL, interpolés) × inclinaison analogique ×
- * visée / sprint × porteur × capacités (étape 7).
+ * visée (sauf porteur) / sprint × porteur × capacités (étape 7).
  */
 export function targetRunSpeed(state: MatchState, p: PlayerState, inp: TickInput): number {
   if (inp.moveMag <= MOVE_EPS) return 0;
@@ -103,9 +115,11 @@ export function targetRunSpeed(state: MatchState, p: PlayerState, inp: TickInput
       ? STRAFE_SPEED_MULT + (1 - STRAFE_SPEED_MULT) * fwd
       : STRAFE_SPEED_MULT + (BACKPEDAL_SPEED_MULT - STRAFE_SPEED_MULT) * -fwd;
   let speed = ROLES[p.role].runSpeed * dirMult * Math.min(1, inp.moveMag / MOVE_INPUT_FULL_SPEED);
-  if (has(inp.buttons, Buttons.AIM)) speed *= AIM_SPEED_MULT;
+  // Le porteur ne vise pas (cahier des charges) : AIM est ignoré pour lui (ni ralentissement, ni sprint annulé).
+  const carrier = isCarrier(state, p);
+  if (has(inp.buttons, Buttons.AIM) && !carrier) speed *= AIM_SPEED_MULT;
   else if (sprintApplies(inp)) speed *= SPRINT_SPEED_MULT;
-  if (isCarrier(state, p)) speed *= CARRIER_SPEED_MULT;
+  if (carrier) speed *= CARRIER_SPEED_MULT;
   return speed * abilitySpeedMultiplier(state, p);
 }
 
