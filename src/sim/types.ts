@@ -359,7 +359,8 @@ export type MatchPhase = 'kickoff' | 'play' | 'try' | 'ended';
 export interface MatchState {
   /** Version du format (incrémenter si le format change). */
   version: 1;
-  config: MatchConfig;
+  /** Configuration NORMALISÉE par createMatch : tous les champs sont renseignés (aucun undefined). */
+  config: Required<MatchConfig>;
   /** Terrain (statique). */
   field: FieldLayout;
 

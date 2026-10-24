@@ -37,7 +37,10 @@ API publique (`src/sim/index.ts`) :
 createMatch(config: MatchConfig): MatchState
 step(state: MatchState, inputs: InputFrame, dt?: number): MatchState // mute en place ET renvoie le même objet
 cloneState(state: MatchState): MatchState                              // copie profonde (JSON-safe)
-NEUTRAL_INPUT, Buttons, constantes, types…
+hashState(state: MatchState): string                                   // FNV-1a sur JSON.stringify (tests, vérif. client/serveur)
+NEUTRAL_INPUT, makeInput(partial), Buttons, constantes, types…
+createField, groundHeight, supportHeight, groundNormal, faceContact      // terrain, partagé avec le rendu
+placeTeamInFormation, formationSlot                                     // placement (remises en jeu)
 ```
 
 - Tick fixe à 30 Hz (`TICK_RATE`, `TICK_DT`). `dt` existe pour la forme de l'API mais doit valoir `TICK_DT`.
@@ -49,7 +52,15 @@ NEUTRAL_INPUT, Buttons, constantes, types…
   Les cooldowns sont fixés au moment où l'action est déclenchée (multiplier par `LAST_MINUTE_COOLDOWN_MULT` si `state.lastMinute`).
 - `state.events` est vidé au début de chaque `step` et contient les événements du tick (sons, FX, HUD).
 - Ids : joueurs `0..2*teamSize-1`. Équipe 0 = ids `0..teamSize-1`, équipe 1 = la suite. En solo, le client contrôle le joueur 0.
-- Une entrée manquante pour un joueur = entrée neutre qui conserve son yaw/pitch courant.
+- Une entrée manquante pour un joueur = entrée neutre qui conserve son yaw/pitch courant. Elle ne met pas à jour
+  `lastButtons` : un bouton encore maintenu au tick suivant ne crée pas de faux front montant (pas de double saut).
+- `state.config` est la configuration **normalisée** (`Required<MatchConfig>`) : tous les champs sont renseignés.
+- Les entrées sont **assainies** par la sim (valeurs non finies ignorées, déplacement borné à [-1, 1] puis normalisé
+  si sa norme dépasse 1, bits inconnus retirés) : aucune entrée (client, bot, réseau) ne peut injecter de NaN dans l'état.
+- `dt` différent de `TICK_DT` => exception (le déterminisme repose sur le pas fixe).
+- Pas de `-0` créé dans l'état statique (il deviendrait `0` après un aller-retour JSON) : on écrit `0 - v` plutôt
+  que `-v` (formation, miroir du terrain, normale du sol) et un test le vérifie sur `createMatch`. Le test
+  d'aller-retour vérifie que le résultat d'un `step` ne dépend jamais de ce genre de détail.
 
 Ordre des opérations dans `step` (à respecter et documenter dans `match.ts`) :
 
@@ -65,7 +76,7 @@ Ordre des opérations dans `step` (à respecter et documenter dans `match.ts`) :
 9. Ballon : suit le porteur, ou physique (gravité, rebonds seedés, frottement), puis ramassage / réception / interception.
 10. Zones (ralentissement), mêlée.
 11. Règles : essai, chrono, dernière minute, fin de match.
-12. `lastButtons = buttons`.
+12. `lastButtons = buttons` (sauf entrée manquante).
 
 ## 3. Repère, angles, visée
 
@@ -142,3 +153,59 @@ Voir l'en-tête de `src/sim/vec.ts`.
 - `npm test` : vitest (déterminisme, physique, règles, bots, architecture).
 - `npm run build` : build statique dans `dist/`.
 - `npm run check` : les trois.
+
+## 7. Module de simulation (étape 2)
+
+| Fichier | Rôle |
+|---|---|
+| `match.ts` | `createMatch` (validation + normalisation de la config, joueurs, formation, ballon), `step` (ordre §2). |
+| `input.ts` | `NEUTRAL_INPUT`, `makeInput`, lecture/assainissement d'une entrée pour un tick (`TickInput`, transitoire). |
+| `player.ts` | Vitesse des joueurs : course, sprint, visée, esquive, glissade, saut (coyote, tampon, double saut), minuteries. |
+| `body.ts` | Intégration contre le terrain (sous-pas, marche, grimpe, obstacles), gravité, murs invisibles, séparation. |
+| `ball.ts` | Ballon porté / physique (gravité, traînée, rebonds seedés, roulement, murs, faces de murets). |
+| `field.ts` | Terrain : `createField`, `groundHeight`, `supportHeight`, `groundGradient`/`groundNormal`, `faceContact`. |
+| `formation.ts` | Placement des équipes (début de match, remises en jeu de l'étape 6). |
+| `serialize.ts` | `cloneState`, `hashState`. |
+| `carrier.ts` | **Étape 4** (vide) : passe, coup de pied, plongeon (`tryStartDive`, appelé quand le porteur presse SLIDE), ramassage. |
+| `combat.ts` | **Étape 5** (vide) : statut down/getting_up, tir, projectiles, stabilité. |
+| `rules.ts` | Décompte kickoff -> play ; **étape 6** (vide) : essai, remise en jeu, chrono, fin. |
+| `abilities.ts`, `scrum.ts` | **Étape 7** (vides) : capacités, zones, multiplicateurs de vitesse ; mêlée. |
+
+Décisions prises à l'étape 2 :
+
+- **Terrain** : disposition FIXE (`FIELD_FEATURES_HALF_5V5`, moitié z < 0) recopiée par rotation de 180° (équité).
+  3v3 : positions et tailles horizontales ×`FIELD_SCALE_3V3`, hauteurs inchangées. Rien dans les en-buts, ni à moins de
+  `FIELD_TRY_LINE_CLEARANCE` des lignes d'essai, ni dans le couloir central (`FIELD_CENTER_CLEARANCE`) ; les positions de
+  formation / remise en jeu sont sur du plat (tests). Repère local d'un relief : axe +Z = `(sin r, 0, cos r)`, axe +X = `(cos r, 0, -sin r)`.
+- **Hauteurs** : `groundHeight` = sol ponctuel (ballon, rendu) ; `supportHeight(r)` = sol sous un disque de rayon r
+  (empreintes de murets/rampes élargies, buttes échantillonnées au centre) pour les joueurs.
+  `groundNormal` est calculée **analytiquement** (gradient exact du relief dominant) plutôt que par différences finies :
+  pas d'artefact au bord des faces verticales ; un test la compare au gradient numérique.
+- **Joueurs** : montée automatique ≤ `MAX_STEP_HEIGHT` ; au-delà et jusqu'à `MAX_CLIMB_HEIGHT`, grimpe (`move = 'climb'`) à
+  `CLIMB_UP_SPEED` en gardant `CLIMB_HORIZONTAL_KEEP` de l'élan (sans arrêt : à grande vitesse, c'est un saut par-dessus),
+  **seulement si l'on va vers la face** (cos ≥ `CLIMB_MIN_APPROACH`) ; un muret frôlé (course parallèle) fait obstacle.
+  Au-delà de `MAX_CLIMB_HEIGHT`, obstacle. Obstacle = retour au point de départ du sous-pas, composante de vitesse vers la face
+  retirée, puis déplacement vers le point d'arrivée repoussé hors de la face (on longe le muret sans s'y coller).
+  Sous-pas ≤ `PLAYER_SUBSTEP_MAX_DIST` (pas de traversée en esquive).
+  Verticale intégrée exactement (parabole) : hauteur de saut = v²/2g. Au sol, `vel.y = 0` (pas d'effet tremplin des rampes :
+  on retombe simplement du haut).
+- **Élan** : au sol, l'excès de vitesse dans la direction voulue (sortie d'esquive, glissade, grimpe, fin de sprint) ne
+  diminue qu'à `GROUND_OVERSPEED_DECEL` (le braquage latéral reste à `GROUND_ACCEL`) ; le tick de sortie d'esquive garde
+  exactement `DODGE_SPEED × DODGE_EXIT_SPEED_KEEP`. En l'air, maintenir la direction ne freine jamais : au-delà de la vitesse
+  cible, l'entrée ne fait que réorienter la vitesse (norme conservée).
+- **Cooldowns** fixés au déclenchement (glissade comprise : le cooldown court pendant la glissade).
+  Esquive possible depuis la course ou la glissade, pas pendant une grimpe. Saut possible depuis la glissade (garde l'élan).
+  Pendant une esquive au sol, un saut est possible après `DODGE_JUMP_CANCEL_SEC` (« dash-saut » : l'esquive s'arrête avec la
+  vitesse de sortie) ; un appui plus tôt reste dans le tampon de saut (B puis A à la manette n'est jamais perdu).
+- **Ballon** : une passe ou un coup de pied qui touche le sol devient `loose`. Rebond si la vitesse d'impact dépasse
+  `BALL_MIN_BOUNCE_SPEED` (4 tirages `state.rng` : restitution, déviation, culbute, vrille), sinon roulement. Un ballon
+  qui roulait déjà au sous-pas précédent ne rebondit jamais (pied de rampe : il suit le nouveau plan, sans tirage).
+  La gravité projetée sur la pente fait descendre les pentes où `BALL_GRAVITY·sin θ > BALL_GROUND_FRICTION` (flancs des
+  buttes) ; sur une pente plus douce (rampes), un ballon arrêté reste posé. Prototype : le match démarre en `play`, ballon lâché au centre
+  (`BALL_DROP_HEIGHT`, direction tirée au sort) ; l'étape 6 le remplacera par un coup d'envoi.
+- **Manette / entrée analogique** : la sim accepte une norme de déplacement < 1 (stick peu incliné) : vitesse cible
+  proportionnelle jusqu'à `MOVE_INPUT_FULL_SPEED`, pleine vitesse au-delà. Le sprint sépare **direction** et
+  **inclinaison** : direction dans le cône avant (cos ≥ `SPRINT_MIN_FORWARD_COS`, la diagonale clavier à 45° sprinte, le
+  pas chassé non) ET stick incliné d'au moins `SPRINT_MIN_TILT` (un stick à peine poussé ne sprinte pas).
+  Le dash-saut (`DODGE_JUMP_CANCEL_SEC`) et l'absence de faux front montant sur entrée manquante visent aussi la manette.
+  Zones mortes, bascule L3, aide à la visée et vibrations restent côté client (`src/input`, étape 3).

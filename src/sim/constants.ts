@@ -14,7 +14,7 @@
  * Il est importé par la simulation, les bots et (pour la section CAMÉRA) le rendu.
  */
 
-import type { Role, TeamId } from './types';
+import type { Role, TeamId, TerrainFeature } from './types';
 
 // ============================================================================
 //  TEMPS
@@ -64,6 +64,57 @@ export const MAX_CLIMB_HEIGHT = 1.3;
 export const CLIMB_UP_SPEED = 7.5;
 /** Fraction de la vitesse horizontale conservée pendant la grimpe. ↑ = le muret casse moins l'élan. */
 export const CLIMB_HORIZONTAL_KEEP = 0.75;
+/**
+ * Grimpe : on ne grimpe un muret que si l'on va VERS sa face : cos minimal entre la vitesse et
+ * la normale entrante de la face (0,4 ≈ 66°). En deçà (on le frôle), il fait obstacle et l'on
+ * glisse le long. ↑ = il faut viser le muret plus franchement pour le grimper.
+ */
+export const CLIMB_MIN_APPROACH = 0.4;
+
+/**
+ * Disposition FIXE du relief, pour la moitié z < 0 (camp de l'équipe 0) d'un terrain 5v5.
+ * L'autre moitié est obtenue par rotation de 180° autour du centre ((x, z) -> (-x, -z),
+ * rotation + PI) : les deux camps sont strictement équivalents.
+ * En 3v3, positions et tailles horizontales sont multipliées par FIELD_SCALE_3V3 ;
+ * les HAUTEURS ne le sont pas (les murets restent franchissables mais visibles).
+ * Contraintes (vérifiées par tests/sim/field.test.ts) : rien dans les en-buts ni à moins de
+ * FIELD_TRY_LINE_CLEARANCE des lignes d'essai, rien dans le couloir central
+ * (|z| < FIELD_CENTER_CLEARANCE), hauteurs ≤ MAX_CLIMB_HEIGHT.
+ * `rotation` = yaw de l'axe local +Z (axe de la longueur), voir src/sim/field.ts.
+ */
+export const FIELD_FEATURES_HALF_5V5: readonly Readonly<TerrainFeature>[] = Object.freeze(
+  (
+    [
+      // Positions en axes ABSOLUS. Rappel : right(yaw = 0) = −X, donc x < 0 est à DROITE de
+      // l'équipe 0 (qui regarde +Z) et à gauche de l'équipe 1.
+      /** Butte côté x < 0. */
+      { kind: 'mound', x: -13, z: -21, radius: 5, height: 1.2 },
+      /** Rampe côté x > 0, qui monte vers la médiane puis retombe verticalement (on retombe du haut, pas d'effet tremplin). */
+      { kind: 'ramp', x: 13, z: -23, width: 4, length: 6, height: 1.0, rotation: 0 },
+      /** Muret en travers, devant l'en-but : on le saute ou on le contourne. */
+      { kind: 'wall', x: 0, z: -30, length: 8, thickness: 0.6, height: 0.8, rotation: Math.PI / 2 },
+      /** Muret bas en biais près du centre (côté x < 0). */
+      { kind: 'wall', x: -4, z: -14, length: 5, thickness: 0.6, height: 0.6, rotation: Math.PI / 2 + 0.45 },
+      /** Muret le long de la touche x > 0 : couloir étroit entre lui et le bord. */
+      { kind: 'wall', x: 21, z: -13, length: 6, thickness: 0.6, height: 1.0, rotation: 0 },
+    ] satisfies TerrainFeature[]
+  ).map((f) => Object.freeze(f)),
+);
+/** Distance minimale (m, ×échelle) entre un relief et une ligne d'essai. ↑ = abords des en-buts plus dégagés (sprint final sans obstacle). */
+export const FIELD_TRY_LINE_CLEARANCE = 3;
+/**
+ * Demi-profondeur (m, ×échelle) du couloir central sans relief (coup d'envoi, replacement derrière la médiane).
+ * ↑ = milieu de terrain plus ouvert, reliefs repoussés vers les en-buts.
+ */
+export const FIELD_CENTER_CLEARANCE = 9;
+
+/**
+ * Pas maximal (m) d'un sous-pas de déplacement des joueurs. Un dash à 21 m/s fait 0,7 m par tick :
+ * il est découpé en sous-pas pour ne jamais traverser un muret. ↓ = plus sûr, plus coûteux.
+ */
+export const PLAYER_SUBSTEP_MAX_DIST = 0.25;
+/** Nombre maximal de sous-pas par tick pour un joueur (sécurité contre des vitesses aberrantes). ↑ = vitesse max sans traversée plus haute, coût pire cas plus élevé. */
+export const PLAYER_MAX_SUBSTEPS = 16;
 
 // ============================================================================
 //  CORPS DES JOUEURS
@@ -91,6 +142,12 @@ export const PLAYER_PUSH_STRENGTH = 0.6;
 export const PITCH_MIN_DEG = -75;
 export const PITCH_MAX_DEG = 80;
 
+/**
+ * Formation : fraction de la largeur du terrain sur laquelle une équipe est répartie
+ * (placement initial et remises en jeu). ↑ = joueurs plus écartés.
+ */
+export const FORMATION_WIDTH_FRACTION = 0.8;
+
 // ============================================================================
 //  DÉPLACEMENT (tous les joueurs)
 // ============================================================================
@@ -99,9 +156,19 @@ export const PITCH_MAX_DEG = 80;
 export const PLAYER_GRAVITY = 26;
 /** Accélération au sol (m/s²). ↑ = démarrages et changements de direction plus secs. */
 export const GROUND_ACCEL = 75;
+/**
+ * Freinage au sol de l'EXCÈS de vitesse dans la direction voulue (m/s²) : après une esquive,
+ * une glissade, une grimpe ou un relâchement du sprint, on garde l'élan au lieu de s'arrêter net
+ * (le braquage latéral reste à GROUND_ACCEL). ↑ = l'excès de vitesse disparaît plus vite.
+ */
+export const GROUND_OVERSPEED_DECEL = 15;
 /** Décélération au sol sans entrée (m/s²). ↑ = arrêts plus nets. */
 export const GROUND_DECEL = 60;
-/** Accélération en l'air (m/s²). ↑ = plus de contrôle aérien. */
+/**
+ * Accélération en l'air (m/s²). ↑ = plus de contrôle aérien.
+ * Au-delà de la vitesse de course (élan d'esquive, de glissade…), maintenir la direction ne freine
+ * pas : l'entrée ne fait que réorienter la vitesse.
+ */
 export const AIR_ACCEL = 20;
 /** Multiplicateur de vitesse en marche arrière (relatif au regard). */
 export const BACKPEDAL_SPEED_MULT = 0.8;
@@ -111,8 +178,23 @@ export const STRAFE_SPEED_MULT = 0.92;
 export const AIM_SPEED_MULT = 0.72;
 /** Multiplicateur de vitesse en sprint (Shift maintenu). Le sprint empêche de tirer. */
 export const SPRINT_SPEED_MULT = 1.22;
-/** Le sprint ne s'applique qu'en avançant : composante avant minimale de l'entrée. */
-export const SPRINT_MIN_FORWARD = 0.3;
+/**
+ * Le sprint ne s'applique qu'en avançant : cosinus minimal de l'angle entre la direction d'entrée
+ * et « devant » (0,64 ≈ 50° : la diagonale clavier à 45° sprinte, le pas chassé non).
+ * ↑ = cône de sprint plus étroit.
+ */
+export const SPRINT_MIN_FORWARD_COS = 0.64;
+/**
+ * Manette : inclinaison minimale du stick pour sprinter (le clavier donne toujours 1).
+ * ↑ = il faut pousser le stick plus loin pour sprinter.
+ */
+export const SPRINT_MIN_TILT = 0.7;
+/**
+ * Entrée analogique (stick de manette) : inclinaison à partir de laquelle on court à pleine
+ * vitesse. En dessous, la vitesse cible est proportionnelle à l'inclinaison (marche lente).
+ * Le clavier produit toujours une inclinaison de 1. ↓ = pleine vitesse atteinte plus tôt.
+ */
+export const MOVE_INPUT_FULL_SPEED = 0.9;
 
 /** Vitesse verticale du saut (m/s). Hauteur ≈ v² / (2·gravité) ≈ 1,3 m. */
 export const JUMP_VELOCITY = 8.2;
@@ -120,7 +202,7 @@ export const JUMP_VELOCITY = 8.2;
 export const AIR_JUMP_VELOCITY = 7.6;
 /** Tolérance après avoir quitté le sol pendant laquelle on peut encore sauter (s). ↑ = plus permissif. */
 export const COYOTE_TIME_SEC = 0.1;
-/** Un appui saut juste avant l'atterrissage est mémorisé pendant cette durée (s). */
+/** Un appui saut juste avant l'atterrissage est mémorisé pendant cette durée (s). ↑ = plus permissif. */
 export const JUMP_BUFFER_SEC = 0.12;
 
 /** Esquive : vitesse du dash (m/s). Distance ≈ vitesse × durée. */
@@ -137,17 +219,23 @@ export const DODGE_EXIT_SPEED_KEEP = 0.6;
 export const DODGE_INVULN_SEC = 0;
 /** L'esquive est-elle possible en l'air ? */
 export const DODGE_IN_AIR = true;
+/**
+ * Saut pendant une esquive au sol (« dash-saut ») : autorisé après ce délai depuis le début de
+ * l'esquive (s), en gardant l'élan de sortie. Un appui plus tôt est mémorisé (tampon de saut).
+ * ↑ = le dash doit être plus avancé avant de pouvoir sauter.
+ */
+export const DODGE_JUMP_CANCEL_SEC = 0.07;
 
 /** Glissade : vitesse horizontale minimale pour pouvoir glisser (m/s). */
 export const SLIDE_MIN_SPEED = 5.5;
 /** Glissade : boost de vitesse à l'entrée (multiplicateur de la vitesse courante). */
-export const SLIDE_BOOST = 1.25;
+export const SLIDE_BOOST = 1.35;
 /** Glissade : vitesse max atteinte grâce au boost (m/s). */
-export const SLIDE_MAX_SPEED = 13;
-/** Glissade : durée (s). */
-export const SLIDE_DURATION_SEC = 0.75;
+export const SLIDE_MAX_SPEED = 14;
+/** Glissade : durée (s). ↑ = glissade plus longue (hitbox basse plus longtemps, mais fin plus lente). */
+export const SLIDE_DURATION_SEC = 0.6;
 /** Glissade : décélération pendant la glissade (m/s²). ↓ = glisse plus loin. */
-export const SLIDE_DECEL = 7;
+export const SLIDE_DECEL = 6;
 /** Glissade : capacité de braquage pendant la glissade (rad/s). */
 export const SLIDE_STEER_RATE = 1.5;
 /** Glissade : cooldown (s). */
@@ -197,12 +285,38 @@ export const BALL_RESTITUTION_JITTER = 0.3;
 export const BALL_BOUNCE_DEVIATION_DEG = 40;
 /** Fraction de vitesse horizontale conservée à chaque rebond. */
 export const BALL_BOUNCE_FRICTION = 0.8;
-/** Décélération quand le ballon roule au sol (m/s²). */
+/**
+ * Décélération quand le ballon roule au sol (m/s²). ↑ = il s'arrête plus vite.
+ * Sert aussi de seuil d'adhérence : sur une pente dont la composante de gravité (BALL_GRAVITY·sin θ)
+ * est inférieure, un ballon arrêté y reste (rampes) ; au-delà, il dévale (flancs des buttes).
+ */
 export const BALL_GROUND_FRICTION = 4;
 /** Vitesse verticale d'impact sous laquelle le ballon arrête de rebondir et roule. */
 export const BALL_MIN_BOUNCE_SPEED = 1.2;
 /** Coefficient de rebond sur les murs invisibles et les faces de murets. */
 export const BALL_WALL_RESTITUTION = 0.6;
+/** Vitesse (m/s) sous laquelle un ballon qui roule s'immobilise. ↑ = il s'arrête plus tôt. */
+export const BALL_REST_SPEED = 0.08;
+/** Pas maximal (m) d'un sous-pas du ballon (anti-traversée des murets). Doit rester < BALL_RADIUS. ↓ = collisions plus précises, plus coûteux. */
+export const BALL_SUBSTEP_MAX_DIST = 0.1;
+/** Nombre maximal de sous-pas par tick pour le ballon (sécurité). ↑ = vitesse max sans traversée plus haute, coût pire cas plus élevé. */
+export const BALL_MAX_SUBSTEPS = 32;
+/** Rotation visuelle : culbute (rad/s) donnée par m/s de vitesse d'impact à chaque rebond. ↑ = rebonds plus « fous ». */
+export const BALL_TUMBLE_PER_IMPACT = 1.6;
+/** Rotation visuelle : vrille autour de l'axe long (rad/s) par m/s de vitesse d'impact. ↑ = ballon qui vrille plus après un rebond. */
+export const BALL_SPIN_PER_IMPACT = 2.2;
+
+/** Ballon porté : décalage vers l'avant du porteur (m). ↑ = ballon tenu plus en avant. */
+export const BALL_CARRY_FORWARD = 0.3;
+/** Ballon porté : décalage vers la droite du porteur (m, côté caméra épaule pour rester visible). ↑ = ballon plus écarté du corps. */
+export const BALL_CARRY_SIDE = 0.3;
+/** Ballon porté : hauteur du centre du ballon au-dessus des pieds (m). ↑ = ballon tenu plus haut. */
+export const BALL_CARRY_HEIGHT = 1.05;
+
+/** Prototype (étape 2) : hauteur du lâcher du ballon au centre au début du match (m). ↑ = premiers rebonds plus hauts. */
+export const BALL_DROP_HEIGHT = 3;
+/** Prototype (étape 2) : vitesse horizontale initiale du ballon lâché, direction tirée au sort (m/s). ↑ = le ballon s'éloigne plus du centre. */
+export const BALL_DROP_HORIZONTAL_SPEED = 1.2;
 
 /** Rayon du cercle de ramassage au sol du ballon libre (m). Premier joueur dedans = porteur. */
 export const BALL_PICKUP_RADIUS = 1.3;

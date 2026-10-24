@@ -37,6 +37,14 @@ const FORBIDDEN: Array<[RegExp, string]> = [
   [/\bsetTimeout\b|\bsetInterval\b/, 'timers'],
   [/\bprocess\b/, 'process'],
   [/\brequire\s*\(/, 'require'],
+  // Présents dans la lib ES2022 (donc non rejetés par tsconfig.sim.json) mais dépendants de la
+  // locale / de l'environnement : ils casseraient le déterminisme client/serveur.
+  [/\bglobalThis\b/, 'globalThis'],
+  [/\bIntl\b/, 'Intl'],
+  [/\btoLocale\w*\b/, 'toLocale*'],
+  // Défense en profondeur (vitest ne compile pas via tsconfig.sim.json).
+  [/\bconsole\b/, 'console'],
+  [/\bstructuredClone\b/, 'structuredClone'],
 ];
 
 function importsOf(src: string): string[] {
