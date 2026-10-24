@@ -1,0 +1,23 @@
+{
+  // Garde-fou de la contrainte d'architecture n°1 :
+  // src/sim et src/bots doivent compiler SANS lib DOM et SANS types Node,
+  // exactement comme dans un Cloudflare Worker. Toute référence à window,
+  // document, performance, requestAnimationFrame, three, svelte… échoue ici.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022"],
+    "types": [],
+    "strict": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": ["src/sim/**/*.ts", "src/bots/**/*.ts"]
+}
