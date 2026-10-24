@@ -6,8 +6,9 @@
  * `gamepad.vibrationActuator?.playEffect('dual-rumble', …)`, en tolérant son absence (Firefox,
  * Safari, manettes sans moteurs) : une vibration ratée ne doit jamais casser la boucle de jeu.
  *
- * Événements branchés dès l'étape 3 : atterrissage brutal. Les autres (tir reçu, plaquage,
- * réception, essai) seront émis par la simulation aux étapes 4 à 6 : la table est déjà prête.
+ * Événements branchés : atterrissage brutal (étape 3) ; réception / ramassage du ballon, interception
+ * réussie, passe interceptée (étape 4 ; un coup de pied réceptionné par l'adversaire n'en est pas une).
+ * Les autres (tir reçu, plaquage, essai) seront émis par la simulation aux étapes 5 et 6 : la table est déjà prête.
  */
 
 import {
@@ -28,6 +29,8 @@ export function rumbleCueFor(e: MatchEvent, localId: number, localTeam: TeamId):
       if (e.targetId === localId) return 'tackled';
       return e.byId === localId ? 'tackleDealt' : null;
     case 'catch':
+      if (e.playerId === localId) return e.intercepted ? 'interceptionMade' : 'catch';
+      return e.intercepted && e.fromId === localId ? 'interceptionSuffered' : null;
     case 'pickup':
       return e.playerId === localId ? 'catch' : null;
     case 'scrum_won':

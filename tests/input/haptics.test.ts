@@ -11,8 +11,14 @@ describe('rumbleCueFor', () => {
     expect(rumbleCueFor({ type: 'hit', targetId: 2, sourceId: 4, amount: 6, pos: { x: 0, y: 0, z: 0 } }, 0, 0)).toBeNull();
     expect(rumbleCueFor({ type: 'tackled', targetId: 0, byId: 4 }, 0, 0)).toBe('tackled');
     expect(rumbleCueFor({ type: 'tackled', targetId: 4, byId: 0 }, 0, 0)).toBe('tackleDealt');
-    expect(rumbleCueFor({ type: 'catch', playerId: 0, intercepted: false }, 0, 0)).toBe('catch');
+    expect(rumbleCueFor({ type: 'catch', playerId: 0, fromId: 1, intercepted: false }, 0, 0)).toBe('catch');
+    expect(rumbleCueFor({ type: 'pickup', playerId: 0 }, 0, 0)).toBe('catch');
     expect(rumbleCueFor({ type: 'pickup', playerId: 1 }, 0, 0)).toBeNull();
+    // Interceptions (étape 4) : réussie par le joueur local, ou subie (sa passe / son coup de pied).
+    expect(rumbleCueFor({ type: 'catch', playerId: 0, fromId: 4, intercepted: true }, 0, 0)).toBe('interceptionMade');
+    expect(rumbleCueFor({ type: 'catch', playerId: 4, fromId: 0, intercepted: true }, 0, 0)).toBe('interceptionSuffered');
+    expect(rumbleCueFor({ type: 'catch', playerId: 1, fromId: 0, intercepted: false }, 0, 0)).toBeNull(); // passe réussie
+    expect(rumbleCueFor({ type: 'catch', playerId: 4, fromId: 2, intercepted: true }, 0, 0)).toBeNull(); // pas sa passe
     expect(rumbleCueFor({ type: 'try', team: 0, scorerId: 1 }, 0, 0)).toBe('try');
     expect(rumbleCueFor({ type: 'try', team: 1, scorerId: 4 }, 0, 0)).toBe('tryConceded');
     expect(rumbleCueFor({ type: 'land', playerId: 0, speed: RUMBLE_HARD_LANDING_SPEED + 1 }, 0, 0)).toBe('hardLanding');

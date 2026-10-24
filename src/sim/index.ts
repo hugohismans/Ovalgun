@@ -30,8 +30,25 @@ export { formationSlot, placeTeamInFormation, resetPlayerAt, type FormationSlot 
 // Entrées.
 export { NEUTRAL_INPUT, makeInput, ALL_BUTTONS, PITCH_MIN, PITCH_MAX, type TickInput } from './input';
 // Joueurs (lectures utiles au rendu / HUD / bots).
-export { aimOrigin, isCarrier, playerHeight, targetRunSpeed, wishDirection } from './player';
+export { aimOrigin, cooldownTicks, isCarrier, playerHeight, targetRunSpeed, wishDirection } from './player';
 // Ballon (position du ballon porté, partagée avec le rendu).
 export { carryPosition } from './ball';
+// Porteur (étape 4) : visée assistée et trajectoires (pures, lues par le rendu / les bots), outils de test.
+export {
+  backwardZ,
+  ballSpeedMult,
+  ballisticVelocity,
+  canCarrierAct,
+  debugGiveBall,
+  debugResetBall,
+  kickLaunch,
+  passAimDirection,
+  planPass,
+  predictBallLanding,
+  selectPassTarget,
+  type PassPlan,
+  type PassTarget,
+} from './carrier';
+export { canShoot } from './combat';
 // Sérialisation.
 export { cloneState, hashState, fnv1a } from './serialize';

@@ -37,10 +37,13 @@ describe.each([3, 5] as const)('déterminisme, équipes de %i', (teamSize) => {
     expect(JSON.stringify(again.state)).toBe(JSON.stringify(ref.state));
   });
 
-  it('les entrées scriptées exercent vraiment les systèmes (sauts, esquives, glissades, rebonds…)', () => {
-    for (const type of ['jump', 'land', 'dodge', 'slide', 'bounce'] as const) {
+  it('les entrées scriptées exercent vraiment les systèmes (sauts, esquives, glissades, rebonds, passes, coups de pied, plongeons…)', () => {
+    for (const type of ['jump', 'land', 'dodge', 'slide', 'bounce', 'pickup', 'dive', 'kick'] as const) {
       expect(ref.eventCounts[type] ?? 0, type).toBeGreaterThan(0);
     }
+    // Porteur (étape 4) : des passes PARTENT et des ballons en vol sont ATTRAPÉS (réception / interception, stats).
+    expect(ref.eventCounts.pass ?? 0, 'pass').toBeGreaterThan(0);
+    expect(ref.eventCounts.catch ?? 0, 'catch').toBeGreaterThan(0);
     // Les joueurs ont réellement bougé.
     const start = newMatch(teamSize, 42);
     const moved = ref.state.players.filter((p, i) => Math.hypot(p.pos.x - start.players[i].pos.x, p.pos.z - start.players[i].pos.z) > 3);

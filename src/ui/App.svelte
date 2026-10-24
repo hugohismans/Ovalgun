@@ -17,6 +17,9 @@
   let padIgnored = $state(false);
   let info = $state<FrameSnapshot | null>(null);
   let lastInfoAt = 0;
+  // Retour texte temporaire (étape 4, en attendant le HUD de l'étape 8) : immédiat, pas limité à 10 Hz.
+  let toast = $state<FrameSnapshot['feedback']>(null);
+  let debugTools = $state(DEBUG);
 
   onMount(() => {
     const s = new GameSession(canvas, { teamSize: 3, humanRole: 'ailier', seed: 1234, training: true, debug: DEBUG });
@@ -28,6 +31,8 @@
       if (snap.gamepadConnected !== padConnected) padConnected = snap.gamepadConnected;
       if (snap.gamepadStyle !== padStyle) padStyle = snap.gamepadStyle;
       if (snap.gamepadIgnored !== padIgnored) padIgnored = snap.gamepadIgnored;
+      if (snap.debugTools !== debugTools) debugTools = snap.debugTools;
+      if ((snap.feedback?.seq ?? -1) !== (toast?.seq ?? -1)) toast = snap.feedback;
       const now = performance.now();
       if (now - lastInfoAt > 100) {
         lastInfoAt = now;
@@ -53,6 +58,8 @@
     ['Passe · coup de pied', ['pass', 'kick']],
     ['Capacité · recharger', ['ability', 'reload']],
   ];
+  /** Outils de test (?debug / entraînement). */
+  const DEBUG_KEY_ROW: [string, Action[]] = ['Test : ballon pour moi · au centre', ['debugGiveBall', 'debugResetBall']];
   const PAD_ROWS: Array<[string, string]> = [
     ['Se déplacer · caméra', 'Stick G · Stick D'],
     ['Saut', 'jump'],
@@ -63,6 +70,7 @@
     ['Passe · coup de pied / recharger', 'pass+kick'],
     ['Capacité · pause', 'ability+pause'],
   ];
+  const DEBUG_PAD_ROW: [string, string] = ['Test : ballon pour moi · au centre', 'debugGiveBall+debugResetBall'];
 
   const keys = (actions: Action[]): string => {
     const labels = actions.map((a) => actionLabel(DEFAULT_KEYMAP, a, layout));
@@ -100,8 +108,17 @@
   <div class="debug">
     <div><b>{info.speed.toFixed(1)}</b> m/s · {MOVE_LABELS[info.move] ?? info.move}{info.onGround ? '' : ' · en l’air'}{info.sprinting ? ' · sprint' : ''}{info.carrier ? ' · porteur' : ''}</div>
     <div>esquive {info.dodgeCd > 0 ? info.dodgeCd.toFixed(1) + ' s' : 'prête'} · glissade {info.slideCd > 0 ? info.slideCd.toFixed(1) + ' s' : 'prête'}</div>
-    <div class="dim">{info.fps.toFixed(0)} img/s · tick {info.tick} · {device === 'gamepad' ? 'manette' : 'clavier/souris'}{info.assistTarget >= 0 ? ' · aide visée #' + info.assistTarget : ''}</div>
+    {#if info.carrier}
+      <div>passe → {info.passTarget >= 0 ? 'coéquipier #' + info.passTarget : 'aucune cible'} · plongeon {info.diveCd > 0 ? info.diveCd.toFixed(1) + ' s' : 'prêt'}</div>
+    {/if}
+    <div class="dim">{info.fps.toFixed(0)} img/s · tick {info.tick} · {device === 'gamepad' ? 'manette' : 'clavier/souris'}{info.assistTarget >= 0 ? ' · aide visée #' + info.assistTarget : ''}{debugTools ? (device === 'gamepad' ? ' · View : ballon · ↓ : centre' : ' · G : ballon · B : centre') : ''}</div>
   </div>
+{/if}
+
+{#if toast && !paused}
+  {#key toast.seq}
+    <div class="toast {toast.kind}">{toast.text}</div>
+  {/key}
 {/if}
 
 {#if paused}
@@ -127,11 +144,11 @@
       <table>
         <tbody>
           {#if showPad}
-            {#each PAD_ROWS as [label, spec] (label)}
+            {#each debugTools ? [...PAD_ROWS, DEBUG_PAD_ROW] : PAD_ROWS as [label, spec] (label)}
               <tr><td>{label}</td><td><kbd>{glyphs(spec)}</kbd></td></tr>
             {/each}
           {:else}
-            {#each KEY_ROWS as [label, actions] (label)}
+            {#each debugTools ? [...KEY_ROWS, DEBUG_KEY_ROW] : KEY_ROWS as [label, actions] (label)}
               <tr><td>{label}</td><td><kbd>{keys(actions)}</kbd></td></tr>
             {/each}
           {/if}
@@ -201,6 +218,40 @@
   .debug .dim {
     opacity: 0.7;
     font-weight: 500;
+  }
+  .toast {
+    position: fixed;
+    left: 50%;
+    top: 30%;
+    transform: translateX(-50%);
+    padding: 6px 16px;
+    border-radius: 10px;
+    background: #0d1030c8;
+    color: #fff;
+    font: 900 22px/1.2 system-ui, sans-serif;
+    letter-spacing: 0.5px;
+    pointer-events: none;
+    white-space: nowrap;
+    animation: toast-pop 0.18s ease-out;
+  }
+  .toast.good {
+    color: #3dffa0;
+  }
+  .toast.bad {
+    color: #ff6b84;
+  }
+  .toast.info {
+    color: #ffe12e;
+  }
+  @keyframes toast-pop {
+    from {
+      transform: translateX(-50%) scale(1.25);
+      opacity: 0;
+    }
+    to {
+      transform: translateX(-50%) scale(1);
+      opacity: 1;
+    }
   }
   .overlay {
     position: fixed;

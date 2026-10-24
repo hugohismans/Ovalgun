@@ -5,6 +5,8 @@ import {
   ALL_BUTTONS,
   Buttons,
   createMatch,
+  debugGiveBall,
+  debugResetBall,
   makeInput,
   rand,
   seedToInt,
@@ -135,11 +137,19 @@ export function scriptedInputs(seed: number, nPlayers: number, ticks: number): I
   return frames;
 }
 
-/** Interventions scriptées identiques dans toutes les exécutions : un porteur forcé puis un lâcher. */
+/**
+ * Interventions scriptées identiques dans toutes les exécutions : porteurs forcés (outil de test
+ * debugGiveBall, les entrées aléatoires font alors passer, taper et plonger), un lâcher, un coup de pied
+ * forcé, un ballon remis au centre (debugResetBall).
+ */
 export function scriptedEvents(s: MatchState, t: number): void {
-  if (t === 600) {
+  if (t >= 250 && t % 100 === 50 && t !== 1450) {
+    debugGiveBall(s, ((t - 50) / 100) % s.players.length);
+  } else if (t === 600) {
     s.ball.mode = 'carried';
     s.ball.carrierId = 1;
+  } else if (t === 1500) {
+    debugResetBall(s);
   } else if (t === 900) {
     s.ball.mode = 'loose';
     s.ball.carrierId = -1;

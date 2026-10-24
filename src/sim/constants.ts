@@ -324,12 +324,26 @@ export const BALL_DROP_HEIGHT = 3;
 /** Prototype (étape 2) : vitesse horizontale initiale du ballon lâché, direction tirée au sort (m/s). ↑ = le ballon s'éloigne plus du centre. */
 export const BALL_DROP_HORIZONTAL_SPEED = 1.2;
 
-/** Rayon du cercle de ramassage au sol du ballon libre (m). Premier joueur dedans = porteur. */
+/**
+ * Rayon du cercle de ramassage au sol du ballon libre (m), mesuré de l'AXE du joueur au centre du ballon.
+ * Premier joueur dedans = porteur (plusieurs au même tick : le plus proche, puis le plus petit id).
+ * ↑ = ballon libre plus facile à récupérer (moins de « courses après le ballon »).
+ */
 export const BALL_PICKUP_RADIUS = 1.3;
-/** Rayon horizontal pour attraper un ballon en vol (passe / coup de pied / rebond haut). */
+/**
+ * Rayon horizontal pour attraper un COUP DE PIED en vol, mesuré de l'axe du joueur à la TRAJECTOIRE du ballon
+ * pendant le tick (test balayé). Les passes ont leurs propres rayons (PASS_TARGET_CATCH_RADIUS,
+ * PASS_INTERCEPT_RADIUS). ↑ = « chandelles » plus faciles à réceptionner.
+ */
 export const BALL_CATCH_RADIUS = 1.1;
-/** Hauteur au-dessus de la tête jusqu'à laquelle on attrape un ballon en vol (m). */
+/** Hauteur au-dessus de la tête jusqu'à laquelle on attrape un ballon (m). ↑ = on attrape plus haut (sauter pour intercepter). */
 export const BALL_CATCH_REACH_ABOVE = 0.6;
+/** Profondeur sous les pieds jusqu'à laquelle on attrape / ramasse le ballon (m) : ballon en contrebas d'un muret. ↑ = plus permissif. */
+export const BALL_REACH_BELOW = 0.5;
+/** Rotation visuelle d'une passe : vrille autour de l'axe long (rad/s, « spirale »). ↑ = vrille plus rapide. */
+export const BALL_PASS_SPIN_RATE = 14;
+/** Rotation visuelle d'un coup de pied : culbute bout par-dessus bout (rad/s). ↑ = culbute plus rapide. */
+export const BALL_KICK_TUMBLE_RATE = 11;
 
 // ============================================================================
 //  LE PORTEUR
@@ -338,56 +352,148 @@ export const BALL_CATCH_REACH_ABOVE = 0.6;
 /** Multiplicateur de vitesse du porteur. ↑ = course plus grisante, défense plus dure. */
 export const CARRIER_SPEED_MULT = 1.08;
 
-/** Passe : vitesse horizontale du ballon (m/s). ↑ = passes plus tendues, moins interceptables. */
+/**
+ * Passe : vitesse horizontale moyenne du ballon (m/s) ; la durée de vol en découle (bornée ci-dessous) et la
+ * vitesse verticale est calculée pour arriver à PASS_TARGET_HEIGHT pile à cette durée. ↑ = passes plus tendues, moins interceptables.
+ */
 export const PASS_SPEED = 17;
-/** Passe : durée de vol minimale (s) — garantit la cloche sur les passes courtes. */
+/** Passe : durée de vol minimale (s) — garantit la cloche sur les passes courtes. ↑ = passes courtes plus lobées (plus lentes). */
 export const PASS_MIN_FLIGHT_SEC = 0.35;
-/** Passe : durée de vol maximale (s). */
+/** Passe : durée de vol maximale (s). ↑ = passes longues plus hautes et plus lentes (plus interceptables). */
 export const PASS_MAX_FLIGHT_SEC = 1.1;
-/** Passe : portée maximale de la visée assistée (m). */
+/** Passe : portée maximale de la visée assistée (m). ↑ = on peut viser des coéquipiers plus lointains. */
 export const PASS_MAX_RANGE = 24;
-/** Passe : distance idéale pour la visée assistée (m). */
+/** Passe : distance idéale pour la visée assistée (m). ↑ = la visée préfère les coéquipiers plus éloignés. */
 export const PASS_IDEAL_RANGE = 9;
-/** Passe : anticipation de la course du receveur (0 = vise sa position actuelle, 1 = position prédite). */
+/** Passe : anticipation de la course du receveur (0 = vise sa position actuelle, 1 = position prédite). ↑ = vise plus loin devant le receveur. */
 export const PASS_LEAD = 1.0;
-/** Passe : hauteur de réception visée au-dessus des pieds du receveur (m). */
+/**
+ * Passe : vitesse (m/s) du receveur prise en compte au plus par l'anticipation. Sa vitesse INSTANTANÉE peut être
+ * bien plus haute pendant une esquive (21 m/s), une sortie d'esquive ou une glissade, qui ne durent qu'un
+ * instant : sans plafond, la passe partait 20 m trop loin. ≈ sprint de l'ailier (8,8 × 1,22 ≈ 10,7 m/s).
+ * ↑ = mieux pour un receveur qui sprinte vraiment plus vite (capacité), pire pour celui qui esquive au départ.
+ */
+export const PASS_LEAD_MAX_SPEED = 11;
+/**
+ * Passe : rayon de réception (m) du receveur VISÉ (ball.passTargetId), de son axe à la trajectoire du ballon
+ * (test balayé). Plus large que celui des intercepteurs : la passe assistée pardonne un receveur qui ralentit
+ * ou coupe un peu au départ. ↑ = passes plus faciles à recevoir.
+ */
+export const PASS_TARGET_CATCH_RADIUS = 1.6;
+/**
+ * Passe : rayon (m) dans lequel un ADVERSAIRE intercepte une passe (de son axe à la trajectoire du ballon).
+ * Les coéquipiers du passeur autres que le receveur visé n'attrapent jamais une passe en vol (un soutien collé
+ * au porteur ne « vole » pas la passe destinée à un autre). Garder > PLAYER_RADIUS. ↑ = interceptions plus fréquentes.
+ */
+export const PASS_INTERCEPT_RADIUS = 0.8;
+/** Passe : hauteur de réception visée au-dessus des pieds du receveur (m). ↑ = ballon reçu plus haut. */
 export const PASS_TARGET_HEIGHT = 1.2;
 /**
  * Passe : demi-angle du cône arrière (degrés). 90 = cône de 180° (cahier des charges).
  * Le cône est relatif au TERRAIN (règle du rugby : vers son propre en-but), pas au regard.
  */
 export const PASS_CONE_HALF_ANGLE_DEG = 90;
-/** Passe : poids de l'alignement avec le regard du porteur dans le choix du receveur (on « regarde » à gauche pour passer à gauche). */
+/**
+ * Passe : poids de l'alignement avec le regard du porteur dans le choix du receveur (on « regarde » à gauche
+ * pour passer à gauche, voir PASS_AIM_LATERAL_GAIN). ↑ = le regard décide davantage du receveur.
+ */
 export const PASS_WEIGHT_AIM = 1.0;
-/** Passe : poids de la distance (préférence pour PASS_IDEAL_RANGE). */
+/** Passe : poids de la distance (préférence pour PASS_IDEAL_RANGE). ↑ = préfère davantage le coéquipier à bonne distance. */
 export const PASS_WEIGHT_DISTANCE = 0.6;
-/** Passe : poids du démarquage (adversaires proches du receveur ou de la trajectoire). */
+/** Passe : poids du démarquage (adversaires proches du receveur ou de la trajectoire). ↑ = évite davantage les passes risquées. */
 export const PASS_WEIGHT_OPENNESS = 0.8;
-/** Passe : le passeur ne peut pas rattraper sa propre passe pendant (s). */
+/**
+ * Passe : le regard est « replié » dans le demi-plan arrière (composante latérale gardée, composante avant
+ * retournée vers son en-but), et sa composante latérale est multipliée par ce gain : on n'a pas besoin de
+ * tourner beaucoup la caméra (donc sa course) pour choisir le côté. 1 = miroir exact du regard.
+ * ↑ = un petit coup d'œil sur le côté suffit à changer de receveur.
+ */
+export const PASS_AIM_LATERAL_GAIN = 2.5;
+/**
+ * Passe : distance (m) en deçà de laquelle un adversaire menace la passe (proche du receveur ou du segment
+ * de passe) ; la menace croît linéairement jusqu'à 1 au contact. ↑ = la visée assistée évite les adversaires de plus loin.
+ */
+export const PASS_OPENNESS_RADIUS = 4;
+/**
+ * Passe : bonus de note du receveur retenu par la visée assistée au tick précédent (hystérésis) : la cible ne
+ * clignote pas entre deux soutiens symétriques au moindre pixel de souris. ↑ = cible plus « collante »
+ * (il faut tourner davantage le regard pour en changer).
+ */
+export const PASS_TARGET_STICKY_BONUS = 0.15;
+/**
+ * Passe : le ballon part de la poitrine du porteur (BALL_CARRY_HEIGHT), décalé de cette distance (m) VERS le
+ * receveur — pas de la position du ballon porté (devant-droite) : un défenseur qui fait face au porteur
+ * n'intercepte pas une passe qui part dans son dos ; seul un adversaire sur la trajectoire le peut.
+ * Garder > PLAYER_RADIUS. ↑ = le ballon sort plus loin du corps.
+ */
+export const PASS_RELEASE_OFFSET = 0.6;
+/** Passe : le passeur ne peut pas rattraper sa propre passe pendant (s). ↑ = plus longtemps sans pouvoir reprendre le ballon. */
 export const PASS_PICKUP_BLOCK_SEC = 0.4;
 
-/** Coup de pied : vitesse initiale (m/s). Portée ≈ v²·sin(2θ)/g ≈ 40 m. */
+/**
+ * Coup de pied : vitesse initiale (m/s) sur le terrain 5v5, multipliée par √(field.scale) (portée ∝ v², donc
+ * proportionnelle à la taille du terrain : ≈ 25 m/s ×0,84 en 3v3). Portée ≈ v²·sin(2θ)/g ≈ 37 m en 5v5, ≈ 26 m
+ * en 3v3 (tireur immobile). ↑ = coups de pied plus longs.
+ */
 export const KICK_SPEED = 25;
-/** Coup de pied : angle d'élévation de base (degrés). */
-export const KICK_ELEVATION_DEG = 38;
-/** Coup de pied : influence du pitch de visée sur l'élévation (0 = aucune). */
+/**
+ * Coup de pied : angle d'élévation de base (degrés). Haut (« chandelle ») : le ballon passe vite au-dessus des
+ * bras des défenseurs proches et reste longtemps en l'air (tout le monde court). ↓ = coup de pied plus tendu,
+ * plus facile à contrer.
+ */
+export const KICK_ELEVATION_DEG = 48;
+/** Coup de pied : influence du pitch de visée sur l'élévation (0 = aucune). ↑ = regarder en l'air relève davantage la cloche. */
 export const KICK_PITCH_INFLUENCE = 0.5;
-/** Coup de pied : bornes de l'élévation (degrés). */
+/** Coup de pied : bornes de l'élévation (degrés). ↑ (min) = coup de pied rasant impossible ; ↑ (max) = chandelles plus verticales. */
 export const KICK_ELEVATION_MIN_DEG = 15;
 export const KICK_ELEVATION_MAX_DEG = 65;
-/** Coup de pied : le tireur ne peut pas reprendre le ballon pendant (s). */
+/** Coup de pied : le tireur ne peut pas reprendre le ballon pendant (s). ↑ = « chip and chase » plus difficile. */
 export const KICK_PICKUP_BLOCK_SEC = 0.7;
+/** Coup de pied : départ du ballon devant les pieds (m). ↑ = le ballon part plus loin du corps (contre plus facile pour un défenseur collé). */
+export const KICK_START_FORWARD = 0.6;
+/** Coup de pied : hauteur de départ du ballon au-dessus du sol (m). ↑ = le ballon part plus haut (plus vite hors de portée des bras). */
+export const KICK_START_HEIGHT = 0.35;
+/**
+ * Coup de pied : fraction de la vitesse horizontale du tireur ajoutée au ballon (0 = aucune). Taper en
+ * pleine course envoie plus loin. ↑ = la course compte davantage.
+ */
+export const KICK_INHERIT_VELOCITY = 0.3;
+/**
+ * Coup de pied : pendant cette durée après le coup de pied (s), seul un ADVERSAIRE à moins de
+ * KICK_CHARGE_DOWN_RADIUS du tireur peut attraper le ballon (un « contre » au contact) ; personne d'autre,
+ * coéquipiers compris (un soutien collé ne transforme pas le coup de pied en remise en main).
+ * ↑ = fenêtre de contre plus longue (et réception au départ impossible plus longtemps).
+ */
+export const KICK_CHARGE_DOWN_SEC = 0.15;
+/** Coup de pied : distance (m) au tireur en deçà de laquelle un adversaire peut contrer. ↑ = contre possible de plus loin. */
+export const KICK_CHARGE_DOWN_RADIUS = 1.5;
 
-/** Plongeon : vitesse du dash avant (m/s). */
-export const DIVE_SPEED = 14;
-/** Plongeon : durée du dash (s). */
+/** Plongeon : vitesse du dash avant (m/s). Distance ≈ vitesse × durée (≈ 6 m). ↑ = plongeon plus long. */
+export const DIVE_SPEED = 17;
+/** Plongeon : durée du dash (s). ↑ = plongeon plus long. */
 export const DIVE_DURATION_SEC = 0.35;
-/** Plongeon : invulnérabilité (s). Cahier des charges : 0,3 s. */
+/** Plongeon : invulnérabilité (s), depuis le tick du plongeon. Cahier des charges : 0,3 s. ↑ = plus longtemps intouchable. */
 export const DIVE_INVULN_SEC = 0.3;
-/** Plongeon : temps passé au sol après le dash, quasi immobile (s). ↑ = plongeon plus risqué. */
+/**
+ * Plongeon : temps passé au sol après le dash, en freinant (s). Compté seulement au sol ; une grimpe de muret
+ * pendant le plongeon y mène aussi. ↑ = plongeon plus risqué.
+ */
 export const DIVE_RECOVER_SEC = 0.35;
-/** Plongeon : cooldown (s). */
+/** Plongeon : freinage pendant la récupération au sol (m/s²). ↑ = arrêt plus sec après le plongeon. */
+export const DIVE_RECOVER_DECEL = 40;
+/** Plongeon : cooldown (s). ↑ = plongeon plus rare (moins utilisable comme simple accélération). */
 export const DIVE_COOLDOWN_SEC = 2.0;
+/**
+ * Plongeon : on plonge dans le sens de l'entrée de déplacement si elle pointe vers l'avant (cos de l'angle
+ * entre l'entrée et le regard ≥ cette valeur, 0,3 ≈ 72°), sinon droit devant (le regard).
+ * ↑ = il faut pousser plus franchement vers l'avant pour plonger en biais.
+ */
+export const DIVE_INPUT_MIN_FORWARD_COS = 0.3;
+/**
+ * Plongeon possible en l'air (saut puis plongeon : « essai en vol »). En l'air, la récupération attend
+ * l'atterrissage, sans contrôle (l'élan est gardé). false = plongeon seulement au sol.
+ */
+export const DIVE_IN_AIR = true;
 
 // ============================================================================
 //  ARMES ET CAPACITÉS PAR RÔLE
@@ -764,7 +870,16 @@ export const AIM_ASSIST_MIN_INPUT = 0.05;
 export const GAMEPAD_RUMBLE = true;
 
 /** Signaux de vibration déclenchés par les événements du joueur local (voir src/input/haptics.ts). */
-export type RumbleCue = 'hitTaken' | 'tackled' | 'tackleDealt' | 'catch' | 'try' | 'tryConceded' | 'hardLanding';
+export type RumbleCue =
+  | 'hitTaken'
+  | 'tackled'
+  | 'tackleDealt'
+  | 'catch'
+  | 'interceptionMade'
+  | 'interceptionSuffered'
+  | 'try'
+  | 'tryConceded'
+  | 'hardLanding';
 
 export interface RumbleEffect {
   /** Durée (s). ↑ = vibration plus longue. */
@@ -787,6 +902,10 @@ export const GAMEPAD_RUMBLE_EFFECTS: Readonly<Record<RumbleCue, Readonly<RumbleE
   tackleDealt: { durationSec: 0.12, strong: 0.35, weak: 0.25, priority: 2 },
   /** Réception / ramassage du ballon : court et net. */
   catch: { durationSec: 0.09, strong: 0.45, weak: 0.2, priority: 2 },
+  /** Interception réussie (on attrape une passe adverse) : plus marqué qu'une réception. */
+  interceptionMade: { durationSec: 0.16, strong: 0.6, weak: 0.5, priority: 3 },
+  /** Sa propre passe interceptée par un adversaire : choc sourd. */
+  interceptionSuffered: { durationSec: 0.22, strong: 0.55, weak: 0.0, priority: 3 },
   /** Essai marqué par son équipe : long et festif. */
   try: { durationSec: 0.6, strong: 0.7, weak: 0.9, priority: 5 },
   /** Essai encaissé : sourd. */

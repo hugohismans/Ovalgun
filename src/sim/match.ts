@@ -8,11 +8,11 @@
  *   2. Phase : décompte kickoff -> play ; décompte try -> remise en jeu        (rules.ts, étape 6 pour 'try')
  *   3. Entrées : par joueur (ordre des ids), entrée assainie, fronts montants, yaw/pitch
  *   4. Minuteries : cooldowns, invulnérabilité…  ; statut down/getting_up, recharge (combat.ts, étape 5)
- *   5. Actions : capacité (abilities.ts, étape 7), porteur (carrier.ts, étape 4), tir (combat.ts, étape 5)
- *   6. Déplacement (player.ts / body.ts), puis séparation entre joueurs
+ *   5. Actions : capacité (abilities.ts, étape 7), porteur : passe / coup de pied (carrier.ts), tir (combat.ts, étape 5)
+ *   6. Déplacement (player.ts / body.ts ; plongeon du porteur : carrier.ts), puis séparation entre joueurs
  *   7. Projectiles                                                            (combat.ts, étape 5)
  *   8. Stabilité : plaquages, régénération                                    (combat.ts, étape 5)
- *   9. Ballon : porteur ou physique (ball.ts), puis ramassage / réception     (carrier.ts, étape 4)
+ *   9. Ballon : porteur ou physique (ball.ts), puis ramassage / réception / interception (carrier.ts)
  *  10. Zones (abilities.ts) et mêlée (scrum.ts)                               (étape 7)
  *  11. Règles : essai, chrono, dernière minute, fin                           (rules.ts, étape 6)
  *  12. lastButtons = buttons (sauf entrée manquante : pas de faux front montant au tick suivant)
@@ -125,6 +125,8 @@ function createBall(): BallState {
     carrierId: -1,
     throwerId: -1,
     passTargetId: -1,
+    aimTargetId: -1,
+    flightTicks: 0,
     lastTeam: -1,
     looseTicks: 0,
     spin: 0,
@@ -209,9 +211,11 @@ export function step(state: MatchState, inputs: InputFrame, dt: number = TICK_DT
   // 7. 8.
   updateProjectiles(state);
   updateStability(state);
-  // 9.
+  // 9. (position et mode du ballon avant sa physique : réception balayée sur le segment parcouru)
+  const ballFrom = { x: state.ball.pos.x, y: state.ball.pos.y, z: state.ball.pos.z };
+  const ballFromMode = state.ball.mode;
   updateBall(state);
-  updateBallPickup(state);
+  updateBallPickup(state, ballFrom, ballFromMode);
   // 10.
   updateZones(state);
   updateScrum(state);

@@ -48,6 +48,10 @@ createField, groundHeight, supportHeight, groundNormal, faceContact      // terr
 aimOrigin(feet, yaw)                                                    // origine de visée (§3), partagée avec la caméra
 carryPosition(feet, yaw, out?)                                          // position du ballon porté, partagée avec le rendu
 placeTeamInFormation, formationSlot                                     // placement (remises en jeu)
+selectPassTarget(state, carrierId, yaw) -> PassTarget | null            // visée assistée (PURE : le rendu l'appelle à chaque frame)
+passAimDirection(team, yaw), planPass, kickLaunch, predictBallLanding,  // trajectoires du porteur (PURES : rendu, bots)
+ballisticVelocity, ballSpeedMult, backwardZ, canShoot, canCarrierAct
+debugGiveBall(state, id), debugResetBall(state)                         // OUTILS DE TEST, entre deux step (?debug / entraînement)
 ```
 
 - Tick fixe à 30 Hz (`TICK_RATE`, `TICK_DT`). `dt` existe pour la forme de l'API mais doit valoir `TICK_DT`.
@@ -80,7 +84,8 @@ Ordre des opérations dans `step` (à respecter et documenter dans `match.ts`) :
 6. Déplacement : esquive / glissade / plongeon / saut / course, gravité, terrain (marche, grimpe), murs invisibles, séparation entre joueurs.
 7. Projectiles : déplacement balayé, collisions joueurs / boucliers / terrain -> dégâts, explosions, knockback.
 8. Stabilité : plaquages (statut down, lâcher du ballon), régénération.
-9. Ballon : suit le porteur, ou physique (gravité, rebonds seedés, frottement), puis ramassage / réception / interception.
+9. Ballon : suit le porteur, ou physique (gravité, rebonds seedés, frottement), puis ramassage / réception / interception
+   (`updateBallPickup(state, from, fromMode)` reçoit la position et le mode du ballon AVANT sa physique : test balayé).
 10. Zones (ralentissement), mêlée.
 11. Règles : essai, chrono, dernière minute, fin de match.
 12. `lastButtons = buttons` (sauf entrée manquante).
@@ -132,8 +137,10 @@ Voir l'en-tête de `src/sim/vec.ts`.
 - **Cône de passe** : relatif au **terrain** (règle du rugby : uniquement vers son propre en-but), demi-angle 90° = 180°.
   La visée assistée choisit le coéquipier du cône le mieux noté : alignement avec le regard (regarder à gauche => passe à gauche),
   distance proche de `PASS_IDEAL_RANGE`, démarquage. Aucun coéquipier valide => pas de passe, événement `pass_denied`.
-- **Passe** : en cloche vers la position anticipée du receveur ; tout joueur (coéquipier OU adversaire) à portée de la
-  trajectoire attrape le ballon (interception). Le passeur ne peut pas rattraper pendant `PASS_PICKUP_BLOCK_SEC`.
+- **Passe** : en cloche vers la position anticipée du receveur, jamais en avant ; le receveur visé, ou un adversaire qui
+  traverse la trajectoire (interception), attrape le ballon — pas un autre coéquipier. Le passeur ne peut pas rattraper
+  pendant `PASS_PICKUP_BLOCK_SEC`.
+  Détails et décisions de l'étape 4 : §9.
 - **Essai** : le porteur franchit la ligne d'essai adverse (pas besoin d'aplatir). Le plongeon sert à franchir les derniers mètres invulnérable.
 - **Remise en jeu** : l'équipe qui a encaissé est placée `KICKOFF_RECEIVE_OFFSET` devant sa ligne d'essai, ballon donné au joueur le plus central ;
   l'autre équipe derrière la médiane (`KICKOFF_DEFEND_OFFSET`). Joueurs figés `KICKOFF_FREEZE_SEC`. Coup d'envoi initial : `FIRST_KICKOFF_TEAM`.
@@ -180,7 +187,8 @@ Voir l'en-tête de `src/sim/vec.ts`.
 | `field.ts` | Terrain : `createField`, `groundHeight`, `supportHeight`, `groundGradient`/`groundNormal`, `faceContact`. |
 | `formation.ts` | Placement des équipes (début de match, remises en jeu de l'étape 6). |
 | `serialize.ts` | `cloneState`, `hashState`. |
-| `carrier.ts` | **Étape 4** (vide) : passe, coup de pied, plongeon (`tryStartDive`, appelé quand le porteur presse SLIDE), ramassage. |
+| `carrier.ts` | **Étape 4** : passe, coup de pied, plongeon (`tryStartDive`, appelé quand le porteur presse SLIDE), ramassage, réception (§9). |
+| `playerStatus.ts` | `isCarrier`, `playerHeight`, `cooldownTicks` (partagés par player.ts et carrier.ts sans import circulaire ; ré-exportés par player.ts). |
 | `combat.ts` | **Étape 5** (vide) : statut down/getting_up, tir, projectiles, stabilité. |
 | `rules.ts` | Décompte kickoff -> play ; **étape 6** (vide) : essai, remise en jeu, chrono, fin. |
 | `abilities.ts`, `scrum.ts` | **Étape 7** (vides) : capacités, zones, multiplicateurs de vitesse ; mêlée. |
@@ -286,3 +294,110 @@ Décisions prises à l'étape 3 :
   rayon de pied plus petit (pour l'appui seulement) est à décider avec la grimpe, pas changé à l'étape 3.
 - **Mode debug** (`?debug`) : pas de pause ni d'overlay au démarrage, clavier/clics acceptés sans pointer lock,
   `window.__ovalgun = { session }` (Playwright).
+
+## 9. Le porteur (étape 4)
+
+| Fichier | Rôle |
+|---|---|
+| `sim/carrier.ts` | Visée assistée (`selectPassTarget`, `passAimDirection`), plan de passe (`planPass`, `ballisticVelocity`), coup de pied (`kickLaunch`, `predictBallLanding`), actions du porteur (`updateCarrierActions`), plongeon (`tryStartDive`, `updateDiveMovement`), ramassage / réception / interception (`updateBallPickup`), outils de test. |
+| `sim/combat.ts` | `canShoot` (étape 4 : actif et non porteur ; l'étape 5 complétera). |
+| `render/PassIndicatorView.ts` | Indicateurs du porteur local : flèche au-dessus du receveur, chevron au sol pointé vers lui, éventail du cône (vert / rouge), trait au sol, point de chute du coup de pied. |
+| `render/FxView.ts` | Anneaux flat des événements (`fxForEvent` pur, table `FX` dans palette.ts), pool préalloué. |
+| `game/feedback.ts` | Retours texte temporaires (« Aucun coéquipier derrière », « Interception ! »), table pure. |
+
+Décisions prises à l'étape 4 :
+
+- **Ramassage du ballon libre** (« premier dans le cercle ») : joueur `active`, `pickupBlockTicks == 0`, distance horizontale
+  de son AXE au centre du ballon ≤ `BALL_PICKUP_RADIUS`, ballon entre pieds − `BALL_REACH_BELOW` et
+  `playerHeight + BALL_CATCH_REACH_ABOVE` (on saute pour un rebond haut ; en glissade / plongeon la portée est plus basse).
+  Testé sur la position du ballon en fin de tick (un ballon libre va lentement). Plusieurs candidats : le plus proche, puis
+  le plus petit id. `down` / `getting_up` ne ramassent pas.
+- **Réception / interception en vol** : si le ballon était en `pass` / `kick` au DÉBUT du tick, test **balayé exact** sur le
+  segment parcouru pendant le tick (trinôme horizontal ∩ intervalle de hauteur) contre un cylindre autour de l'axe de
+  chaque joueur qui PEUT l'attraper (position de fin de tick) : aucun « tunnel » à 0,9 m/tick. Le premier sur la
+  trajectoire l'emporte (plus petit t, puis distance au point d'entrée, puis id). Même si le ballon a touché le sol
+  pendant ce tick (il est alors `loose`), le segment en vol compte d'abord ; sinon la règle du cercle s'applique aussitôt.
+  Qui peut attraper, et avec quel rayon (`catchRadius`, décision de la correction de l'étape 4) :
+  - **passe** : le receveur visé (`ball.passTargetId`) à `PASS_TARGET_CATCH_RADIUS` (1,6 m : la passe assistée pardonne un
+    receveur qui ralentit un peu) ; un adversaire du passeur à `PASS_INTERCEPT_RADIUS` (0,8 m : il faut vraiment être sur
+    la trajectoire, pas seulement sur le flanc du passeur) ; les AUTRES coéquipiers du passeur jamais (un soutien collé au
+    porteur ne vole pas la passe destinée à la cible affichée) ;
+  - **coup de pied** : pendant les `secToTicks(KICK_CHARGE_DOWN_SEC)` premiers ticks de vol (`ball.flightTicks`), seul un
+    adversaire à moins de `KICK_CHARGE_DOWN_RADIUS` du tireur peut l'attraper (**contre** au contact) — ni un coéquipier
+    collé, ni un défenseur à 3 m ; ensuite tout le monde à `BALL_CATCH_RADIUS` ;
+  - lanceur inconnu (état forgé, outil de test) : tout le monde à `BALL_CATCH_RADIUS`.
+  `catch` porte `fromId` (lanceur) et `intercepted` = **passe** attrapée par un adversaire du passeur. Un coup de pied
+  réceptionné par l'adversaire est le jeu normal (pas de vibration / texte « interception », pas de stat).
+  Stats : `interceptions` du receveur à chaque interception de passe ; `passes` du passeur à chaque passe RÉUSSIE (reçue par
+  un coéquipier) — pas au lancer. `ball.flightTicks` (ticks de vol, 0 hors vol) est tenu par `updateBallPickup`.
+- **Visée assistée** : cône relatif au terrain (§4). Le regard est **replié** dans le demi-plan arrière : on garde sa
+  composante latérale (X), multipliée par `PASS_AIM_LATERAL_GAIN`, et on remplace sa composante sur l'axe du terrain par
+  sa valeur absolue orientée vers son en-but. Regarder à gauche (de son point de vue) => viser à gauche, pour les deux
+  équipes ; un petit coup d'œil suffit (le porteur court selon sa caméra : il ne doit pas avoir à la tourner beaucoup).
+  Note = `PASS_WEIGHT_AIM`·(1 + cos écart)/2 + `PASS_WEIGHT_DISTANCE`·(pic à `PASS_IDEAL_RANGE`, 0 au contact et à
+  `PASS_MAX_RANGE`) + `PASS_WEIGHT_OPENNESS`·openness. openness = **produit** sur les adversaires actifs de (1 − menace),
+  menace = 1 − d/`PASS_OPENNESS_RADIUS` (≥ 0), d = distance au segment porteur–receveur ; un adversaire **derrière le
+  passeur** par rapport à la direction de la passe (projection < 0) ne menace pas. Avec le max d'origine, un plaqueur au
+  contact du porteur donnait la même menace à tous les receveurs et masquait le marquage (la visée choisissait alors le
+  receveur marqué) ; le produit garde aussi l'effet de deux menaces distinctes. Égalité : plus petit id. Coéquipier
+  exactement à plat : permis.
+  **Hystérésis** : la cible retenue au tick précédent (`ball.aimTargetId`, écrite par `updateCarrierActions` à chaque tick
+  où le porteur peut agir, remise à −1 à chaque changement de possession) reçoit `PASS_TARGET_STICKY_BONUS`. Le rendu lit
+  le même état : sim et affichage restent d'accord, et la cible ne clignote plus entre deux soutiens symétriques au
+  moindre pixel de souris. Limite : un soutien exactement à plat (au bord du cône) peut encore apparaître / disparaître
+  pour quelques centimètres (le cône reste strict).
+- **Passe** : départ à la **poitrine** du porteur (`BALL_CARRY_HEIGHT`), décalé de `PASS_RELEASE_OFFSET` vers le receveur — et
+  non de la position du ballon porté (devant-droite) : sinon un défenseur qui fait face au porteur à ~1,5 m interceptait
+  toutes les passes sans jamais traverser la trajectoire (trouvé en vérification visuelle, test dédié). Durée de vol T =
+  racine positive de |D + `PASS_LEAD`·V·T| = s·T (s = `PASS_SPEED` × dernière minute), bornée à
+  [`PASS_MIN_FLIGHT_SEC`, `PASS_MAX_FLIGHT_SEC`] ; V = vitesse horizontale du receveur **plafonnée à `PASS_LEAD_MAX_SPEED`**
+  (sa vitesse instantanée pendant une esquive, 21 m/s > `PASS_SPEED`, envoyait le ballon 20 m trop loin) ; point visé =
+  position anticipée, `PASS_TARGET_HEIGHT` au-dessus du sol (`supportHeight`).
+  **Jamais en avant** : la composante du ballon vers l'en-but adverse ne dépasse pas celle de la vitesse du porteur (0 s'il
+  est arrêté ou recule) ; sinon le point visé est ramené sur cette limite. Passe « à plat » permise en course (règle du
+  rugby, relative au passeur) ; un receveur qui, derrière, sprinte au-delà de la ligne du passeur arrêté ne reçoit pas une
+  passe qui avance de 4 m (il doit « revenir » chercher le ballon, sinon il le manque).
+  Limite connue : l'anticipation suppose que le receveur garde sa course. S'il s'arrête net ou coupe à 90° au départ d'une
+  passe courte (anticipation ~3 m), il la manque même avec le rayon élargi ; `PASS_LEAD` < 1 corrigerait ce cas mais ferait
+  manquer les passes longues aux receveurs qui courent droit (le cas courant). Les bots (étape 6) garderont leur ligne
+  quand `ball.passTargetId` les désigne. Vitesse initiale = solution EXACTE de dv/dt = −k·v − g (traînée `BALL_AIR_DRAG`, gravité `BALL_GRAVITY`) :
+  l'intégrateur de ball.ts arrive à moins de 3 cm des mains d'un receveur qui court en ligne droite (tests 3v3 / 5v5).
+  Passe et coup de pied sur **front montant**, interdits pendant `dive` / `dive_recover` (appui ignoré), permis en course,
+  en l'air, en esquive, en glissade, en grimpe. PASS prioritaire : passe partie => KICK du même tick ignoré ; passe refusée
+  (`pass_denied`, ballon conservé) => le KICK s'applique.
+- **Coup de pied** : départ `KICK_START_FORWARD` devant les pieds, `KICK_START_HEIGHT` au-dessus du sol ; élévation
+  `KICK_ELEVATION_DEG` (48° : une chandelle qui passe vite au-dessus des bras) + pitch·`KICK_PITCH_INFLUENCE` bornée ; vitesse
+  `KICK_SPEED` × **√`field.scale`** (portée ∝ v², donc proportionnelle à la taille du terrain : ≈ 36 m en 5v5, ≈ 26 m en 3v3
+  à l'arrêt, au lieu d'un dégagement systématique dans l'en-but du 3v3) × dernière minute, + `KICK_INHERIT_VELOCITY` × vitesse
+  horizontale du tireur. Tireur bloqué `KICK_PICKUP_BLOCK_SEC` (il peut ensuite rattraper son propre coup de pied :
+  « chip and chase »). **Contre** : seulement un adversaire à moins de `KICK_CHARGE_DOWN_RADIUS` du tireur pendant
+  `KICK_CHARGE_DOWN_SEC` (avant la correction, tout défenseur jusqu'à 4,5 m devant attrapait le coup de pied au départ).
+- **Plongeon** (porteur + SLIDE) : depuis `run`, `slide` ou `dodge` (il interrompt l'esquive), pas en grimpe ; en l'air si
+  `DIVE_IN_AIR` (vrai : « essai en vol »). Direction : l'entrée de déplacement si elle pointe vers l'avant
+  (cos avec le regard ≥ `DIVE_INPUT_MIN_FORWARD_COS`), sinon le regard. Dash `DIVE_SPEED` pendant `secToTicks(DIVE_DURATION_SEC)`
+  ticks sans braquage, invulnérable exactement `secToTicks(DIVE_INVULN_SEC)` ticks dès le tick du plongeon, hitbox basse,
+  puis `dive_recover` : au sol, freinage `DIVE_RECOVER_DECEL` pendant `DIVE_RECOVER_SEC` (l'entrée est ignorée) ; en l'air, le
+  minuteur attend l'atterrissage, sans contrôle (élan gardé). Cooldown `DIVE_COOLDOWN_SEC` (× dernière minute). Ni saut, ni
+  esquive, ni passe pendant le plongeon. Une grimpe de muret interrompt le dash (on franchit le muret) mais la
+  récupération au sol suit quand même : `startClimb` mémorise `secToTicks(DIVE_RECOVER_SEC)` dans `moveTicks` (inutilisé
+  pendant une grimpe) et la fin de grimpe enchaîne sur `dive_recover` (plonger contre un muret n'est pas un dash gratuit).
+  Réglage (correction) : `DIVE_SPEED` 17 m/s (dash ≈ 6 m), on sort de la récupération à ~4 m/s : sur 1 s, un plongeon
+  couvre un peu plus qu'un sprint de pilier, à peu près autant qu'un sprint d'ailier, en restant un engagement (0,35 s au
+  sol, vulnérable après 0,3 s). Le porteur garde le ballon.
+- **Recevoir en glissant / en esquivant** : on attrape normalement (joueur actif) ; le mouvement en cours continue jusqu'à
+  son terme (glissade : hitbox basse, braquage limité ; esquive : dash). Le nouveau porteur peut enchaîner un plongeon
+  depuis la glissade ou l'esquive.
+- **Outils de test** : `debugGiveBall(state, id)` (ballon porté immédiatement, sans événement, refusé pour un joueur non
+  actif) et `debugResetBall(state)` (ballon libre immobile à `BALL_DROP_HEIGHT` au-dessus du centre, aucun tirage, blocages
+  de ramassage levés). Purs et déterministes ; le client les appelle **entre deux ticks** (avant la copie `prev`, donc sans
+  traînée interpolée), uniquement en `?debug` ou en entraînement : **G** / **View** (manette) = ballon pour moi, **B** / **croix ↓**
+  (manette) = ballon au centre. Ils ne produisent aucun bit `Buttons` (actions `debugGiveBall` / `debugResetBall` de la keymap et du mapping manette).
+- **Rendu** : la cible de passe est recalculée à chaque frame avec le yaw COURANT de la caméra. Le receveur étant presque
+  toujours derrière le porteur (hors champ de la caméra épaule), l'indicateur principal est un **chevron au sol** au bord de
+  l'éventail du cône (entre la caméra et le porteur, donc toujours à l'écran), en plus de la flèche au-dessus du receveur
+  (visible quand il est dans le champ) et d'un trait au sol. Éventail vert = cible, rouge = aucune. Point de chute du coup
+  de pied : `predictBallLanding` (relief, sans murets), recalé sur la position interpolée du porteur. Tous ces indicateurs
+  sont masqués quand la sim ignorerait PASS / KICK (`canCarrierAct`, exporté par la sim : plongeon, récupération au sol) :
+  l'écran ne promet jamais une passe qui ne partira pas. Coque blanche pulsante pendant `invulnTicks > 0`. Effets : `Renderer.handleEvents` appelé par la session après chaque step.
+- **Vibrations** : réception / ramassage (`catch`), interception réussie (`interceptionMade`), sa passe interceptée
+  (`interceptionSuffered`). Un coup de pied réceptionné par l'adversaire n'est pas une interception.

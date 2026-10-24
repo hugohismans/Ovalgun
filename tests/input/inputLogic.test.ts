@@ -3,7 +3,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { composeInput, keyboardMove, mergeMove, PressLatch, TapHoldState, type InputParts } from '../../src/input/inputLogic';
-import { actionBit } from '../../src/input/keymap';
+import { actionBit, actionsForKey, DEFAULT_KEYMAP } from '../../src/input/keymap';
 import { SPRINT_HOLD_DELAY_SEC } from '../../src/sim/constants';
 import { Buttons } from '../../src/sim/types';
 
@@ -172,5 +172,31 @@ describe('déplacement clavier et fusion', () => {
     // À égalité : le périphérique actif.
     expect(mergeMove({ x: 1, y: 0 }, { x: 0, y: 1 }, true)).toEqual({ x: 0, y: 1 });
     expect(mergeMove({ x: 1, y: 0 }, { x: 0, y: 1 }, false)).toEqual({ x: 1, y: 0 });
+  });
+});
+
+describe('actions du porteur au clavier (étape 4)', () => {
+  it('E = PASS, F = KICK, C = SLIDE (plongeon du porteur) : un appui bref entre deux ticks est émis au tick suivant', () => {
+    const base = { shift: { tap: false, hold: false }, gamepadButtons: 0, gamepadMove: { x: 0, y: 0 }, gamepadActive: false, yaw: 0, pitch: 0 };
+    for (const [code, bit] of [
+      ['KeyE', Buttons.PASS],
+      ['KeyF', Buttons.KICK],
+      ['KeyC', Buttons.SLIDE],
+    ] as const) {
+      const latch = new PressLatch();
+      const actions = actionsForKey(DEFAULT_KEYMAP, code);
+      latch.setHeld(actions);
+      latch.setHeld(0); // relâchée avant le tick
+      expect(composeInput({ ...base, keyboardActions: latch.sample() }).buttons, code).toBe(bit);
+      expect(composeInput({ ...base, keyboardActions: latch.sample() }).buttons).toBe(0);
+    }
+  });
+
+  it('G / B (outils de test) n’émettent aucun bit vers la sim', () => {
+    const base = { shift: { tap: false, hold: false }, gamepadButtons: 0, gamepadMove: { x: 0, y: 0 }, gamepadActive: false, yaw: 0, pitch: 0 };
+    expect(actionsForKey(DEFAULT_KEYMAP, 'KeyG')).toBe(actionBit('debugGiveBall'));
+    expect(actionsForKey(DEFAULT_KEYMAP, 'KeyB')).toBe(actionBit('debugResetBall'));
+    const k = actionBit('debugGiveBall') | actionBit('debugResetBall');
+    expect(composeInput({ ...base, keyboardActions: k }).buttons).toBe(0);
   });
 });

@@ -3,7 +3,8 @@
  * orientée selon le yaw, arme côté droit (inclinée selon le pitch), signe distinctif du rôle sur la
  * tête, posture basse (capsule écrasée à la hauteur de la hitbox de la sim, PLAYER_LOW_HEIGHT, à peine
  * inclinée) en glissade / plongeon / au sol, ombre portée au sol,
- * anneau sous le joueur humain, losange au-dessus du porteur visible à travers le relief.
+ * anneau sous le joueur humain, losange au-dessus du porteur visible à travers le relief, coque blanche
+ * pulsante pendant l'invulnérabilité (plongeon : on voit d'un coup d'œil que le porteur est intouchable).
  *
  * Géométries et matériaux partagés (PlayerAssets) : aucune allocation par frame.
  */
@@ -71,6 +72,8 @@ export class PlayerAssets {
     polygonOffsetFactor: -4,
     polygonOffsetUnits: -8,
   });
+  /** Coque d'invulnérabilité (plongeon, relevé) : blanche, translucide, pulsante. */
+  readonly invulnMat = new THREE.MeshBasicMaterial({ color: PALETTE.invuln, transparent: true, opacity: STYLE.invulnOpacity, depthWrite: false });
   /** Losange du porteur : pas de test de profondeur => visible à travers les obstacles. */
   readonly markerMat = new THREE.MeshBasicMaterial({ color: PALETTE.carrierMarker, depthTest: false, depthWrite: false, transparent: true });
   readonly markerOutlineMat = new THREE.MeshBasicMaterial({
@@ -113,6 +116,7 @@ export class PlayerAssets {
       this.ringMat,
       this.markerMat,
       this.markerOutlineMat,
+      this.invulnMat,
     ];
     for (const m of mats) m.dispose();
     this.gradient.dispose();
@@ -157,6 +161,8 @@ export class PlayerView {
   private readonly pose = new THREE.Group();
   private readonly weapon = new THREE.Group();
   private readonly shadow: THREE.Mesh;
+  private readonly invulnShell: THREE.Mesh;
+  private readonly invulnMat: THREE.MeshBasicMaterial;
   private lean = 0;
   private low = 0;
 
@@ -208,6 +214,14 @@ export class PlayerView {
     signOutline.scale.setScalar(1.2);
     this.pose.add(sign, signOutline);
 
+    // Coque d'invulnérabilité (suit la posture : écrasée en plongeon comme la hitbox).
+    this.invulnMat = assets.invulnMat;
+    this.invulnShell = new THREE.Mesh(assets.capsule, assets.invulnMat);
+    this.invulnShell.scale.setScalar(STYLE.invulnScale);
+    this.invulnShell.renderOrder = 2;
+    this.invulnShell.visible = false;
+    this.pose.add(this.invulnShell);
+
     // Ombre et anneau du joueur humain.
     this.shadow = new THREE.Mesh(assets.shadow, assets.shadowMat);
     this.shadow.renderOrder = 1;
@@ -248,6 +262,10 @@ export class PlayerView {
     // L'arme reste pointée vers l'avant (contre-rotation de la posture) et suit le pitch debout.
     this.weapon.rotation.x = -this.lean - f.pitch * (1 - k);
     this.weapon.visible = !f.carrier; // le porteur ne tire pas : le ballon prend la place de l'arme
+    this.invulnShell.visible = p.invulnTicks > 0;
+    if (this.invulnShell.visible) {
+      this.invulnMat.opacity = STYLE.invulnOpacity + STYLE.invulnPulse * Math.sin(timeSec * STYLE.invulnPulseRate);
+    }
 
     // Ombre au sol : plus petite et plus claire quand le joueur est en l'air.
     const air = Math.max(0, f.feet.y - f.ground);

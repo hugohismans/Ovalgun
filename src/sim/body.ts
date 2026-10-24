@@ -17,6 +17,7 @@ import {
   CLIMB_HORIZONTAL_KEEP,
   CLIMB_MIN_APPROACH,
   CLIMB_UP_SPEED,
+  DIVE_RECOVER_SEC,
   MAX_CLIMB_HEIGHT,
   MAX_STEP_HEIGHT,
   PLAYER_GRAVITY,
@@ -29,6 +30,7 @@ import {
   TICK_DT,
 } from './constants';
 import { faceContact, supportHeight } from './field';
+import { secToTicks } from './time';
 import type { FieldLayout, MatchState, PlayerState } from './types';
 
 /** Marge numérique (m) ajoutée quand on repousse un joueur hors d'une face (pas une valeur de gameplay). */
@@ -63,9 +65,15 @@ function land(state: MatchState, p: PlayerState, groundY: number): void {
   state.events.push({ type: 'land', playerId: p.id, speed: impact > 0 ? impact : 0 });
 }
 
+/**
+ * Début de grimpe. Depuis un plongeon ('dive' / 'dive_recover'), le dash s'arrête mais la récupération au sol
+ * n'est pas perdue : `moveTicks` (inutilisé pendant la grimpe) mémorise secToTicks(DIVE_RECOVER_SEC) et la fin
+ * de la grimpe enchaîne sur 'dive_recover' (plonger contre un muret n'est pas un dash gratuit).
+ */
 function startClimb(state: MatchState, p: PlayerState, targetY: number): void {
+  const fromDive = p.move === 'dive' || p.move === 'dive_recover';
   p.move = 'climb';
-  p.moveTicks = 0;
+  p.moveTicks = fromDive ? secToTicks(DIVE_RECOVER_SEC) : 0;
   p.climbTargetY = targetY;
   p.vel.x *= CLIMB_HORIZONTAL_KEEP;
   p.vel.z *= CLIMB_HORIZONTAL_KEEP;
@@ -154,7 +162,7 @@ function verticalStep(state: MatchState, p: PlayerState, h: number): void {
     p.pos.y += CLIMB_UP_SPEED * h;
     if (p.pos.y >= p.climbTargetY) {
       p.pos.y = p.climbTargetY;
-      p.move = 'run';
+      p.move = p.moveTicks > 0 ? 'dive_recover' : 'run'; // grimpe entamée en plongeon : récupération au sol
       p.vel.y = 0;
       const sup = supportHeight(field, p.pos.x, p.pos.z, PLAYER_RADIUS);
       if (p.pos.y - sup <= MAX_STEP_HEIGHT) {

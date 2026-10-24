@@ -351,3 +351,61 @@ describe('GamepadInput (fausse manette)', () => {
     expect(g.sampleButtons()).toBe(0);
   });
 });
+
+describe('actions du porteur et outils de test à la manette (étape 4)', () => {
+  it('RB = PASS, Y = KICK (+ RELOAD), X = SLIDE (plongeon du porteur) : appuis brefs verrouillés jusqu’au tick', () => {
+    for (const [index, bit] of [
+      [5, Buttons.PASS],
+      [3, Buttons.KICK],
+      [2, Buttons.SLIDE],
+    ] as const) {
+      const g = new GamepadInput();
+      const p = fakePad();
+      g.update(p);
+      expect(g.sampleButtons()).toBe(0);
+      // Appui et relâchement entre deux ticks (deux frames) : vu au tick suivant, une seule fois.
+      press(p, index, true);
+      g.update(p);
+      press(p, index, false);
+      g.update(p);
+      expect(g.sampleButtons() & bit, `bouton ${index}`).toBe(bit);
+      expect(g.sampleButtons() & bit).toBe(0);
+    }
+    expect(padActionsToButtons(readPadActions(DEFAULT_GAMEPAD_MAP, btns([3]), 0.35))).toBe(Buttons.KICK | Buttons.RELOAD);
+  });
+
+  it('View = « ballon pour moi » (outil de test) : une demande par appui, aucun bit envoyé à la sim', () => {
+    const g = new GamepadInput();
+    const p = fakePad();
+    g.update(p);
+    press(p, 8, true);
+    g.update(p);
+    expect(g.sampleButtons()).toBe(0);
+    expect(g.consumeDebugGiveBall()).toBe(true);
+    expect(g.consumeDebugGiveBall()).toBe(false);
+    g.update(p); // toujours enfoncé : pas de nouvelle demande
+    expect(g.consumeDebugGiveBall()).toBe(false);
+    expect(padActionGlyph(DEFAULT_GAMEPAD_MAP, 'debugGiveBall', 'xbox')).toBe('View');
+  });
+
+  it('croix ↓ = « ballon au centre » (outil de test) : une demande par appui, aucun bit envoyé à la sim', () => {
+    const g = new GamepadInput();
+    const p = fakePad();
+    g.update(p);
+    press(p, 13, true);
+    g.update(p);
+    expect(g.sampleButtons()).toBe(0);
+    expect(g.consumeDebugResetBall()).toBe(true);
+    expect(g.consumeDebugResetBall()).toBe(false);
+    expect(g.consumeDebugGiveBall()).toBe(false);
+    g.update(p); // toujours enfoncé : pas de nouvelle demande
+    expect(g.consumeDebugResetBall()).toBe(false);
+    press(p, 13, false);
+    g.update(p);
+    press(p, 13, true);
+    g.update(p);
+    expect(g.consumeDebugResetBall()).toBe(true);
+    expect(padActionGlyph(DEFAULT_GAMEPAD_MAP, 'debugResetBall', 'xbox')).toBe('↓');
+    expect(padActionGlyph(DEFAULT_GAMEPAD_MAP, 'debugResetBall', 'playstation')).toBe('↓');
+  });
+});

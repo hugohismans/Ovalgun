@@ -30,10 +30,7 @@ import {
   GROUND_OVERSPEED_DECEL,
   JUMP_BUFFER_SEC,
   JUMP_VELOCITY,
-  LAST_MINUTE_COOLDOWN_MULT,
   MOVE_INPUT_FULL_SPEED,
-  PLAYER_HEIGHT,
-  PLAYER_LOW_HEIGHT,
   ROLES,
   SLIDE_BOOST,
   SLIDE_COOLDOWN_SEC,
@@ -51,6 +48,7 @@ import {
 } from './constants';
 import { integrateBody } from './body';
 import { has, type TickInput } from './input';
+import { cooldownTicks, isCarrier, playerHeight } from './playerStatus';
 import { secToTicks } from './time';
 import { Buttons, type MatchState, type PlayerState, type Vec3 } from './types';
 import { forward, right } from './vec';
@@ -58,15 +56,8 @@ import { forward, right } from './vec';
 /** Norme d'entrée sous laquelle on considère qu'il n'y a pas d'intention de déplacement. */
 const MOVE_EPS = 1e-3;
 
-/** Vrai si ce joueur porte le ballon. */
-export const isCarrier = (state: MatchState, p: PlayerState): boolean =>
-  state.ball.mode === 'carried' && state.ball.carrierId === p.id;
-
-/** Hauteur courante de la capsule (basse en glissade / plongeon / au sol) — lue par les projectiles (étape 5). */
-export const playerHeight = (p: PlayerState): number =>
-  p.move === 'slide' || p.move === 'dive' || p.move === 'dive_recover' || p.status === 'down'
-    ? PLAYER_LOW_HEIGHT
-    : PLAYER_HEIGHT;
+// Lectures partagées avec carrier.ts (définies dans playerStatus.ts pour éviter un import circulaire).
+export { cooldownTicks, isCarrier, playerHeight };
 
 /**
  * Origine de visée (docs/ARCHITECTURE.md §3) : pieds + AIM_ORIGIN_HEIGHT vers le haut + SHOULDER_OFFSET
@@ -77,10 +68,6 @@ export function aimOrigin(feet: Vec3, yaw: number): Vec3 {
   const r = right(yaw);
   return { x: feet.x + r.x * SHOULDER_OFFSET, y: feet.y + AIM_ORIGIN_HEIGHT, z: feet.z + r.z * SHOULDER_OFFSET };
 }
-
-/** Cooldown en ticks, raccourci pendant la dernière minute. Fixé au déclenchement de l'action. */
-export const cooldownTicks = (state: MatchState, sec: number): number =>
-  secToTicks(state.lastMinute ? sec * LAST_MINUTE_COOLDOWN_MULT : sec);
 
 /** Direction monde (horizontale, unitaire ou nulle) correspondant à l'entrée locale. */
 export function wishDirection(yaw: number, moveX: number, moveY: number): Vec3 {

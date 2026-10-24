@@ -13,7 +13,10 @@
 
 import { Buttons } from '../sim';
 
-/** Actions manette. `sprintToggle` (L3) et `pause` (Start) sont traitées à part par GamepadInput. */
+/**
+ * Actions manette. `sprintToggle` (L3), `pause` (Start), `debugGiveBall` (View) et `debugResetBall` (croix ↓)
+ * — outils de test — sont traitées à part par GamepadInput.
+ */
 export type GamepadAction =
   | 'jump'
   | 'dodge'
@@ -25,7 +28,9 @@ export type GamepadAction =
   | 'fire'
   | 'aim'
   | 'sprintToggle'
-  | 'pause';
+  | 'pause'
+  | 'debugGiveBall'
+  | 'debugResetBall';
 
 export const GAMEPAD_ACTIONS: readonly GamepadAction[] = [
   'jump',
@@ -39,6 +44,8 @@ export const GAMEPAD_ACTIONS: readonly GamepadAction[] = [
   'aim',
   'sprintToggle',
   'pause',
+  'debugGiveBall',
+  'debugResetBall',
 ];
 
 /** Bit d'une action manette dans un masque d'actions manette. */
@@ -57,6 +64,8 @@ export const GAMEPAD_ACTION_BUTTONS: Readonly<Record<GamepadAction, number>> = {
   aim: Buttons.AIM,
   sprintToggle: 0, // SPRINT en bascule, géré par SprintToggle
   pause: 0,
+  debugGiveBall: 0, // outil de test (?debug / entraînement), traité par la session
+  debugResetBall: 0, // idem
 };
 
 /** Liaison d'un bouton physique. `analog` : gâchette lue via sa valeur (seuil GAMEPAD_TRIGGER_THRESHOLD). */
@@ -87,8 +96,10 @@ export const DEFAULT_GAMEPAD_MAP: GamepadMap = {
     { index: 5, actions: ['pass'] }, // RB / R1
     { index: 6, actions: ['aim'], analog: true }, // LT / L2
     { index: 7, actions: ['fire'], analog: true }, // RT / R2
+    { index: 8, actions: ['debugGiveBall'] }, // View / Share : « ballon pour moi » (?debug / entraînement)
     { index: 9, actions: ['pause'] }, // Menu / Options
     { index: 10, actions: ['sprintToggle'] }, // L3
+    { index: 13, actions: ['debugResetBall'] }, // croix ↓ : « ballon au centre » (?debug / entraînement)
   ],
   moveAxes: { x: 0, y: 1 },
   lookAxes: { x: 2, y: 3 },

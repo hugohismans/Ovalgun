@@ -50,6 +50,14 @@ const MOUSE_ACTIVITY_PX = 4;
 
 const BIT_DODGE_SPRINT = actionBit('dodgeSprint');
 const BIT_AIM = actionBit('aim');
+const BIT_DEBUG_GIVE = actionBit('debugGiveBall');
+const BIT_DEBUG_RESET = actionBit('debugResetBall');
+
+/** Demandes des outils de test (G / B au clavier, View / croix ↓ à la manette) depuis le dernier appel. */
+export interface DebugRequests {
+  giveBall: boolean;
+  resetBall: boolean;
+}
 
 export class InputManager {
   /** Orientation courante (rad), partagée souris / manette, lue par la caméra à chaque frame. */
@@ -80,6 +88,8 @@ export class InputManager {
   private readonly latch = new PressLatch();
   private readonly shift = new TapHoldState();
   private readonly listeners: Array<[EventTarget, string, EventListener]> = [];
+  /** Actions des outils de test pressées depuis le dernier `consumeDebugRequests` (masque actionBit). */
+  private debugPressed = 0;
   private lastPad: GamepadLike | null = null;
 
   constructor(
@@ -163,6 +173,7 @@ export class InputManager {
     e.preventDefault(); // Espace (défilement), flèches…
     this.setDevice('keyboard');
     if (e.repeat || this.heldKeys.has(e.code)) return;
+    this.debugPressed |= actions & (BIT_DEBUG_GIVE | BIT_DEBUG_RESET);
     this.heldKeys.set(e.code, actions);
     if ((actions & BIT_DODGE_SPRINT) !== 0) this.shift.press(nowSec());
     this.recomputeHeld();
@@ -210,6 +221,7 @@ export class InputManager {
 
   /** Relâche clavier/souris (sans toucher à la manette). */
   private releaseKeyboard(): void {
+    this.debugPressed = 0;
     this.heldKeys.clear();
     this.heldMouse.clear();
     this.latch.reset();
@@ -292,6 +304,18 @@ export class InputManager {
   /** Vrai une fois après Start (pause / reprise). */
   consumePauseRequest(): boolean {
     return this.gamepad.consumePause();
+  }
+
+  /**
+   * Outils de test (G / View = ballon pour moi, B / croix ↓ = ballon au centre),
+   * pressés depuis le dernier appel. La session ne les applique qu'en ?debug ou en entraînement.
+   */
+  consumeDebugRequests(): DebugRequests {
+    const k = this.debugPressed;
+    this.debugPressed = 0;
+    const padGive = this.gamepad.consumeDebugGiveBall();
+    const padReset = this.gamepad.consumeDebugResetBall();
+    return { giveBall: padGive || (k & BIT_DEBUG_GIVE) !== 0, resetBall: padReset || (k & BIT_DEBUG_RESET) !== 0 };
   }
 
   /** Vrai une fois après A / Croix. */

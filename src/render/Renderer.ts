@@ -2,14 +2,31 @@
  * Rendu Three.js du match. Lit deux MatchState (précédent / courant) et interpole avec alpha ;
  * n'écrit JAMAIS dans l'état. Style flat coloré : ciel en dégradé vif, lumières hémisphérique +
  * directionnelle, brouillard léger, couleurs saturées (palette.ts).
+ * Étape 4 : indicateurs du porteur local (cible de la passe assistée recalculée à chaque frame avec le yaw
+ * courant, cône de passe, point de chute du coup de pied) et effets des événements (`handleEvents`).
  */
 
 import * as THREE from 'three';
-import { carryPosition, groundHeight, ROLES, type MatchState, type Vec3 } from '../sim';
+import {
+  canCarrierAct,
+  carryPosition,
+  groundHeight,
+  kickLaunch,
+  passAimDirection,
+  playerHeight,
+  predictBallLanding,
+  ROLES,
+  selectPassTarget,
+  type MatchEvent,
+  type MatchState,
+  type Vec3,
+} from '../sim';
 import { BallView } from './BallView';
 import { FieldView } from './FieldView';
+import { FxView } from './FxView';
 import { lerpPos, lerpYaw } from './interpolate';
 import { PALETTE, STYLE } from './palette';
+import { PassIndicatorView, type PassIndicatorFrame } from './PassIndicatorView';
 import { PlayerAssets, PlayerView, type PlayerFrame } from './PlayerView';
 import { ShoulderCamera } from './ShoulderCamera';
 
@@ -121,7 +138,24 @@ export class Renderer {
   private backdrop: THREE.Group | null = null;
   private players: PlayerView[] = [];
   private readonly ball = new BallView();
+  private readonly passIndicator = new PassIndicatorView();
+  private readonly fx = new FxView();
   private readonly sky = createSky();
+  /** Cible de la passe assistée affichée à la dernière frame (-1 : aucune, ou le joueur local ne porte pas). */
+  passTargetId = -1;
+  /** Pieds interpolés de chaque joueur pour la frame courante (indicateurs). */
+  private interpFeet: Vec3[] = [];
+  private readonly kickLandingShifted: Vec3 = { x: 0, y: 0, z: 0 };
+  private readonly passFrame: PassIndicatorFrame = {
+    visible: false,
+    team: 0,
+    carrierFeet: { x: 0, y: 0, z: 0 },
+    carrierGround: 0,
+    aim: { x: 0, z: -1 },
+    targetFeet: null,
+    targetHeight: 0,
+    kickLanding: null,
+  };
   // Objets de travail réutilisés à chaque frame.
   private readonly feet: Vec3 = { x: 0, y: 0, z: 0 };
   private readonly ballPos: Vec3 = { x: 0, y: 0, z: 0 };
@@ -141,7 +175,7 @@ export class Renderer {
     const sun = new THREE.DirectionalLight(PALETTE.sun, STYLE.sunIntensity);
     sun.position.set(18, 30, -10);
     this.scene.add(sun);
-    this.scene.add(this.ball.group);
+    this.scene.add(this.ball.group, this.passIndicator.group, this.fx.group);
     this.resize();
   }
 
@@ -157,6 +191,7 @@ export class Renderer {
       this.scene.add(v.root, v.groundGroup, v.marker);
       return v;
     });
+    this.interpFeet = state.players.map(() => ({ x: 0, y: 0, z: 0 }));
   }
 
   private clearMatch(): void {
@@ -203,6 +238,12 @@ export class Renderer {
       this.frame.ground = groundHeight(field, this.feet.x, this.feet.z);
       this.frame.carrier = pc.id === carrierId;
       v.update(pc, this.frame, dt, timeSec);
+      const cache = this.interpFeet[i];
+      if (cache !== undefined) {
+        cache.x = this.feet.x;
+        cache.y = this.feet.y;
+        cache.z = this.feet.z;
+      }
       if (local) {
         this.localFeet.x = this.feet.x;
         this.localFeet.y = this.feet.y;
@@ -241,13 +282,59 @@ export class Renderer {
     const ballGround = groundHeight(field, this.ballPos.x, this.ballPos.z);
     this.ball.update(curr.ball, prev.ball, a, this.ballPos, carrierYaw, ballGround, this.shoulder.camera.position, timeSec);
 
+    this.updatePassIndicator(curr, view, carrierId, timeSec);
+    this.fx.update(timeSec, this.shoulder.camera);
+
     this.sky.position.copy(this.shoulder.camera.position);
     this.renderer.render(this.scene, this.shoulder.camera);
+  }
+
+  /**
+   * Indicateurs du porteur local : cible de la passe assistée (selectPassTarget de la sim, avec le yaw
+   * COURANT de la caméra : la cible suit le regard à chaque frame), cône, point de chute du coup de pied.
+   * Masqués quand la sim ignorerait PASS / KICK (canCarrierAct : plongeon, récupération au sol) : l'écran ne
+   * promet jamais une passe qui ne partira pas.
+   */
+  private updatePassIndicator(curr: MatchState, view: ViewInput, carrierId: number, timeSec: number): void {
+    const f = this.passFrame;
+    const me = curr.players[view.localId];
+    f.visible = me !== undefined && me.id === carrierId && canCarrierAct(me);
+    this.passTargetId = -1;
+    if (me !== undefined && f.visible) {
+      const target = selectPassTarget(curr, me.id, view.yaw);
+      this.passTargetId = target?.targetId ?? -1;
+      const tp = target === null ? undefined : curr.players[target.targetId];
+      f.team = me.team;
+      f.carrierFeet = this.localFeet;
+      f.carrierGround = groundHeight(curr.field, this.localFeet.x, this.localFeet.z);
+      f.aim = passAimDirection(me.team, view.yaw);
+      f.targetFeet = tp === undefined ? null : (this.interpFeet[tp.id] ?? tp.pos);
+      f.targetHeight = tp === undefined ? 0 : playerHeight(tp);
+      // Point de chute : lancement depuis l'état courant, décalé de l'écart d'interpolation du porteur (pas de saccade à 30 Hz).
+      const launch = kickLaunch(curr, me.id, view.yaw, view.pitch);
+      if (launch !== null) {
+        const land = predictBallLanding(curr.field, launch.pos, launch.vel);
+        this.kickLandingShifted.x = land.x + this.localFeet.x - me.pos.x;
+        this.kickLandingShifted.z = land.z + this.localFeet.z - me.pos.z;
+        this.kickLandingShifted.y = groundHeight(curr.field, this.kickLandingShifted.x, this.kickLandingShifted.z);
+        f.kickLanding = this.kickLandingShifted;
+      } else {
+        f.kickLanding = null;
+      }
+    }
+    this.passIndicator.update(f, timeSec);
+  }
+
+  /** Effets des événements d'un tick (appelé par la session après chaque step, avec l'état juste après). */
+  handleEvents(events: readonly MatchEvent[], state: MatchState, timeSec: number): void {
+    for (const e of events) this.fx.handle(e, state, timeSec);
   }
 
   dispose(): void {
     this.clearMatch();
     this.ball.dispose();
+    this.passIndicator.dispose();
+    this.fx.dispose();
     this.assets.dispose();
     this.sky.geometry.dispose();
     (this.sky.material as THREE.Material).dispose();

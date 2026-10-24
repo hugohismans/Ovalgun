@@ -117,9 +117,7 @@ La partie démarre en mode entraînement (chrono figé) : 3v3, tu joues l'ailier
    La manette vibre lors d'un atterrissage brutal. Les autres vibrations arriveront avec les plaquages et les essais.
 4. **Mode debug** : ajouter `?debug` à l'URL (ex. `http://localhost:5173/?debug`). Pas d'overlay ni de pause, le clavier
    marche sans capturer la souris, et la session est exposée dans la console (`__ovalgun.session.state`).
-   Pour essayer la caméra porteur avant l'étape 4, coller dans la console :
-   `__ovalgun.session.state.ball.mode = 'carried'; __ovalgun.session.state.ball.carrierId = 0;`
-   (le ramassage du ballon libre n'arrive qu'à l'étape 4 ; recharger la page pour revenir au départ).
+   Depuis l'étape 4, **G** donne le ballon au joueur (et **B** le remet au centre) : voir ci-dessous.
 
 ### Ce qu'on doit voir / ressentir
 
@@ -172,3 +170,117 @@ La partie démarre en mode entraînement (chrono figé) : 3v3, tu joues l'ailier
 
 Réglages purement visuels (couleurs, contours, traînée, taille d'affichage du ballon, inclinaison des postures basses,
 brouillard, tribunes) : `src/render/palette.ts`.
+
+## Étape 4 — porteur : passe arrière assistée, coup de pied, plongeon, ramassage
+
+On peut enfin jouer avec le ballon. Toujours en entraînement 3v3, ailier, sans bots (les autres joueurs restent
+immobiles : ce sont des plots, coéquipiers orange et adversaires bleus).
+
+### Comment tester
+
+1. **Tests automatiques** : `npm test`, ou seulement le porteur : `npx vitest run tests/sim/carrier.test.ts`
+   (ramassage, réception balayée sans « tunnel », visée assistée pour les deux équipes avec hystérésis et démarquage, passe
+   qui arrive dans les mains d'un receveur qui court en 3v3 et 5v5, passe jamais en avant, coéquipier collé qui ne vole pas
+   la passe, receveur qui esquive au départ, interception, coup de pied et contre, portée adaptée au 3v3, plongeon et
+   muret, dernière minute, outils de test). Le test de déterminisme fait passer, attraper, taper et plonger des porteurs.
+   Côté client : `npx vitest run tests/input tests/render tests/game`. Tout le projet : `npm run check`.
+2. **Lancer** : `npm run dev`, ouvrir l'URL affichée (ajouter `?debug` pour jouer sans pointer lock et avoir les lignes de
+   debug : vitesse, mode de mouvement, cible de passe, cooldowns).
+3. **Outils de test** (en `?debug` et en entraînement, donc dans la partie actuelle) :
+   - **G** (clavier) ou **View / Share** (manette) : le ballon pour toi, tout de suite ;
+   - **B** (clavier) ou **croix ↓** (manette) : le ballon au centre, lâché de 3 m. Va le ramasser en courant dedans
+     (cercle jaune), au clavier comme au stick.
+4. **Actions du porteur** :
+   - **Clavier** : **E** passe, **F** coup de pied, **C** plongeon (quand tu portes le ballon ; sinon C reste la glissade).
+     La caméra (souris) choisit le côté de la passe et la hauteur du coup de pied.
+   - **Manette** : **RB / R1** passe, **Y / △** coup de pied, **X / □** plongeon ; le stick droit choisit le côté de la
+     passe et la hauteur du coup de pied.
+5. **Scénario conseillé** (à faire une fois au clavier, une fois à la manette) :
+   - G / View, avance de quelques mètres pour laisser tes deux coéquipiers derrière toi, puis tourne légèrement la caméra
+     à gauche et à droite : la cible change de côté, sans clignoter au moindre mouvement. Passe (E / RB). Recommence en
+     courant : en course, la passe peut partir « à plat ».
+   - **Interception** : place-toi pour qu'un plot bleu soit entre toi et ton coéquipier (derrière toi), sur la ligne de
+     passe. Un plot bleu collé sur ton flanc, à l'opposé de la passe, ne l'intercepte pas.
+   - **Refus** : porte le ballon derrière tes coéquipiers et passe : « Aucun coéquipier derrière ».
+   - **Coup de pied** : F / Y en regardant devant, puis un peu vers le haut (le point de chute recule et monte en cloche).
+     Colle-toi à un plot bleu (moins de 1,5 m) et tape : il contre. À 3 m, il ne contre plus.
+   - **Plongeon** : en courant, C / X. Essaie aussi contre un muret : tu le franchis, puis tu restes au sol.
+   - **Ramassage** : B / croix ↓, puis cours dans le cercle jaune.
+6. Pour simuler la dernière minute dans la console (`?debug`) : `__ovalgun.session.state.lastMinute = true`.
+
+### Ce qu'on doit voir / ressentir
+
+- **Ramassage** : le premier qui entre dans le cercle jaune prend le ballon (anneau jaune au sol, vibration courte). On
+  peut sauter pour attraper un rebond haut. Un joueur au sol ne ramasse rien.
+- **Indicateur de passe** (seulement quand tu portes le ballon ET que la passe est possible) :
+  - un **éventail** au sol derrière toi = le cône de passe. Il est fixé au terrain : il montre toujours ton propre en-but,
+    même si tu te retournes. **Vert** = une passe partirait, **rouge** = aucun coéquipier valide ;
+  - un **chevron vert** au sol, au bord de l'éventail, pointe vers le coéquipier qui recevrait la passe. Ton receveur est
+    presque toujours derrière toi, donc hors de l'écran : c'est le chevron qui le montre ;
+  - une **flèche verte** tourne au-dessus de sa tête, visible à travers les murets, quand il est dans le champ ;
+  - un trait fin part de toi vers lui, et un repère montre la direction de ton regard « replié » vers l'arrière ;
+  - tout disparaît pendant le plongeon et le temps passé au sol après : la passe ne partirait pas.
+- **Choix du receveur** : regarder un peu à gauche = passe à gauche. Il n'est pas nécessaire de tourner beaucoup la
+  caméra. La cible est « collante » : il faut un vrai coup d'œil pour en changer, pas un pixel de souris. Si le regard ne
+  départage pas, la visée préfère le coéquipier à environ 9 m et évite ceux marqués par un adversaire (un plaqueur collé
+  à toi ne compte pas : il est derrière la passe). Un coéquipier devant toi n'est jamais choisi. Une passe à plat est permise.
+- **Passe** : en cloche, elle part de ta poitrine et arrive dans les mains du receveur s'il garde sa course (le ballon vise
+  là où il sera ; une esquive au moment de la passe ne l'envoie plus 20 m trop loin). Le receveur visé a un rayon de
+  réception large (1,6 m) ; s'il s'arrête net ou coupe à angle droit au départ d'une passe courte, il la manque encore
+  (limite connue). Le ballon **n'avance jamais** plus vite que toi : arrêté, une passe à un coéquipier qui sprinte devant ta
+  ligne part à plat et il la manque. Seuls le receveur visé et les adversaires peuvent l'attraper : un coéquipier collé à
+  toi ne la vole pas. Un adversaire sur la trajectoire (à moins de 0,8 m) l'intercepte : « Interception ! » (vibration plus
+  marquée) pour celui qui attrape, « Ballon intercepté » pour le passeur. Tu ne peux pas rattraper ta propre passe.
+- **Coup de pied** : une chandelle (48°) qui part loin devant : environ 36 m sans courir en 5v5, 26 m en 3v3 (un peu plus
+  en courant). Regarder plus haut donne plus de cloche. Un anneau et une fine balise blanche montrent le point de chute
+  prévu pendant que tu portes. Au départ, seul un adversaire collé à toi (moins de 1,5 m) peut le **contrer** ; ensuite,
+  personne ne porte le ballon en vol : coéquipiers et adversaires peuvent l'attraper (réceptionné par l'adversaire, ce
+  n'est pas une « interception » : pas de vibration ni de texte). Toi, tu ne peux pas pendant 0,7 s, puis tu peux le
+  rattraper (« chip and chase »). Après le premier rebond, il redevient libre (cercle jaune).
+- **Plongeon** : un dash bas d'environ 6 m dans le sens du regard, ou en diagonale si tu pousses vers l'avant-côté. Le
+  joueur s'aplatit et une coque blanche clignote : il est intouchable pendant 0,3 s. Ensuite, il glisse au sol en freinant
+  pendant 0,35 s et repart en course à ~4 m/s. Sur une seconde, ça couvre à peu près la distance d'un sprint : c'est un
+  outil pour aplatir ou passer un défenseur, pas une accélération gratuite. Cooldown 2 s. On peut plonger depuis un saut
+  (« essai en vol ») : l'élan est gardé jusqu'au sol. Plonger contre un muret le fait franchir, puis on reste au sol quand
+  même. On garde le ballon. L'essai dans l'en-but arrive à l'étape 6.
+- **Recevoir en glissant** : la glissade continue avec le ballon, et on peut enchaîner directement un plongeon.
+- **Effets** : anneaux flat pour le ramassage (jaune), la réception (blanc), l'interception (rouge), le coup de pied
+  (onde au sol), le plongeon (cyan), la passe et la passe refusée.
+
+### Constantes utiles pour ajuster le feeling
+
+| Constante | Effet | Valeur actuelle | Piste de réglage |
+|---|---|---|---|
+| `PASS_SPEED` | Vitesse horizontale moyenne de la passe (m/s) | 17 | 19 à 20 pour des passes plus tendues, plus dures à intercepter |
+| `PASS_MIN_FLIGHT_SEC` / `PASS_MAX_FLIGHT_SEC` | Durée de vol minimale (cloche des passes courtes) et maximale | 0,35 / 1,1 s | Monter le minimum (0,45) pour des passes courtes plus lobées |
+| `PASS_TARGET_HEIGHT` | Hauteur de réception visée au-dessus du sol | 1,2 m | Garder entre 1 et 1,5 (dans les mains) |
+| `PASS_LEAD` | Anticipation de la course du receveur | 1 | 0,8 si les receveurs changent souvent de direction (mais les passes longues en ligne droite arrivent alors derrière eux) |
+| `PASS_LEAD_MAX_SPEED` | Vitesse du receveur prise en compte au plus par l'anticipation | 11 m/s | Monter si une capacité de sprint (étape 7) dépasse cette vitesse |
+| `PASS_TARGET_CATCH_RADIUS` | Rayon de réception du receveur visé | 1,6 m | 2 pour des passes très pardonnantes ; 1,2 pour exiger une course propre |
+| `PASS_INTERCEPT_RADIUS` | Rayon d'interception d'un adversaire sur la trajectoire | 0,8 m | 1 à 1,1 pour des interceptions plus fréquentes ; garder > `PLAYER_RADIUS` (0,45) |
+| `PASS_MAX_RANGE` / `PASS_IDEAL_RANGE` | Portée de la visée assistée et distance préférée | 24 / 9 m | Baisser la distance idéale (7) pour des passes plus courtes et sûres |
+| `PASS_AIM_LATERAL_GAIN` | Sensibilité du choix gauche / droite au regard | 2,5 | 3 à 4 si l'on doit trop tourner la caméra ; 1,5 si la cible saute trop |
+| `PASS_TARGET_STICKY_BONUS` | Bonus de la cible actuelle (hystérésis) | 0,15 | 0,25 si la cible clignote encore ; 0,05 si elle est trop dure à changer |
+| `PASS_WEIGHT_AIM` / `_DISTANCE` / `_OPENNESS` | Poids du regard, de la distance et du démarquage | 1 / 0,6 / 0,8 | Monter le regard pour plus de contrôle, le démarquage pour plus d'assistance |
+| `PASS_OPENNESS_RADIUS` | Distance d'un adversaire qui rend une passe risquée | 4 m | Monter (5 à 6) pour éviter davantage les passes dangereuses |
+| `PASS_RELEASE_OFFSET` | Décalage du point de départ de la passe vers le receveur | 0,6 m | Garder au-dessus de `PLAYER_RADIUS` (0,45) |
+| `PASS_PICKUP_BLOCK_SEC` | Le passeur ne peut pas reprendre le ballon pendant | 0,4 s | Rarement à toucher |
+| `BALL_PICKUP_RADIUS` | Rayon du cercle de ramassage du ballon libre | 1,3 m | 1,5 pour moins de courses ratées après le ballon |
+| `BALL_CATCH_RADIUS` | Rayon de réception d'un coup de pied en vol | 1,1 m | Monter pour des chandelles plus faciles à réceptionner |
+| `BALL_CATCH_REACH_ABOVE` / `BALL_REACH_BELOW` | Portée au-dessus de la tête / sous les pieds | 0,6 / 0,5 m | Monter la première pour récompenser le saut |
+| `KICK_SPEED` / `KICK_ELEVATION_DEG` | Puissance (× √ échelle du terrain) et angle du coup de pied (portée ≈ v²·sin 2θ / g) | 25 m/s / 48° | ~36 m en 5v5 et ~26 m en 3v3 à l'arrêt ; baisser l'angle (40°) pour un coup de pied plus tendu, plus facile à contrer |
+| `KICK_CHARGE_DOWN_SEC` / `KICK_CHARGE_DOWN_RADIUS` | Fenêtre et distance du contre au départ du coup de pied | 0,15 s / 1,5 m | Monter la distance (2) pour des contres plus fréquents |
+| `KICK_PITCH_INFLUENCE` / `KICK_ELEVATION_MIN_DEG` / `_MAX_DEG` | Effet du regard vertical sur l'angle, et bornes | 0,5 / 15° / 65° | 0 pour un coup de pied toujours identique |
+| `KICK_INHERIT_VELOCITY` | Part de ta vitesse ajoutée au ballon | 0,3 | 0 pour une portée indépendante de la course, 0,5 pour récompenser l'élan |
+| `KICK_PICKUP_BLOCK_SEC` | Le tireur ne peut pas reprendre le ballon pendant | 0,7 s | Baisser pour faciliter le « chip and chase » |
+| `DIVE_SPEED` / `DIVE_DURATION_SEC` | Vitesse et durée du dash du plongeon (distance ≈ produit) | 17 m/s / 0,35 s | Garder la distance entre 5 et 7 m |
+| `DIVE_INVULN_SEC` | Invulnérabilité du plongeon | 0,3 s | Cahier des charges : 0,3 s |
+| `DIVE_RECOVER_SEC` / `DIVE_RECOVER_DECEL` | Temps au sol après le plongeon et freinage | 0,35 s / 40 m/s² | 0,25 s pour un plongeon plus fluide ; 0,45 s pour le rendre plus risqué |
+| `DIVE_COOLDOWN_SEC` | Cooldown du plongeon | 2 s | 1,5 s pour un porteur plus insaisissable |
+| `DIVE_INPUT_MIN_FORWARD_COS` | Plonger en biais : entrée assez tournée vers l'avant | 0,3 (≈ 72°) | 0,6 pour plonger presque toujours droit devant |
+| `DIVE_IN_AIR` | Plongeon possible en l'air (« essai en vol ») | oui | `false` si les plongeons aériens portent trop loin |
+| `LAST_MINUTE_BALL_SPEED_MULT` | Ballon plus rapide (passes, coups de pied) en dernière minute | 1,12 | — |
+| `GAMEPAD_RUMBLE_EFFECTS.catch` / `.interceptionMade` / `.interceptionSuffered` | Vibrations de réception et d'interception | — | Mettre `strong` et `weak` à 0 pour couper |
+
+Réglages purement visuels (indicateur de passe, chevron, point de chute, coque d'invulnérabilité, effets) :
+`src/render/palette.ts` (`PALETTE`, `STYLE`, `FX`).

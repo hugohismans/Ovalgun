@@ -10,7 +10,11 @@
  *    qui garde leur visée.
  *  - Pause : pointer lock perdu au clavier (sauf ?debug), Start à la manette, manette active débranchée
  *    (sauf ?debug).
- *  - `onFrame(snapshot)` pour l'UI (vitesse, mode de mouvement, cooldowns…).
+ *  - `onFrame(snapshot)` pour l'UI (vitesse, mode de mouvement, cooldowns, cible de passe, retour texte…).
+ *  - Après chaque step : événements -> vibrations (haptics), effets visuels (renderer.handleEvents), retours
+ *    texte temporaires (feedback.ts).
+ *  - Outils de test (?debug ou entraînement seulement) : G / View = ballon pour moi, B = ballon au centre,
+ *    appliqués ENTRE deux ticks via debugGiveBall / debugResetBall de la sim (jamais d'écriture directe dans l'état).
  */
 
 import {
@@ -18,6 +22,8 @@ import {
   Buttons,
   cloneState,
   createMatch,
+  debugGiveBall,
+  debugResetBall,
   isCarrier,
   makeInput,
   playerHeight,
@@ -36,6 +42,7 @@ import type { InputProvider } from '../bots';
 import type { AssistCandidate } from '../input/aimAssist';
 import type { GamepadStyle } from '../input/gamepadMap';
 import { Haptics } from '../input/haptics';
+import { FEEDBACK_SEC, feedbackFor, type Feedback } from './feedback';
 import { InputManager, type InputDevice } from '../input/InputManager';
 import { lerpPos } from '../render/interpolate';
 import { Renderer } from '../render/Renderer';
@@ -81,6 +88,12 @@ export interface FrameSnapshot {
   fps: number;
   /** Cible de l'aide à la visée (-1 : aucune). */
   assistTarget: number;
+  /** Cible de la passe assistée affichée (-1 : aucune ou pas porteur). */
+  passTarget: number;
+  /** Retour texte temporaire en cours (null : aucun) ; `seq` change à chaque nouveau message. */
+  feedback: (Feedback & { seq: number }) | null;
+  /** Outils de test disponibles (?debug ou entraînement). */
+  debugTools: boolean;
 }
 
 export class GameSession {
@@ -97,6 +110,13 @@ export class GameSession {
 
   paused: boolean;
   private readonly debug: boolean;
+  /** Outils de test (ballon pour moi / au centre) : seulement en ?debug ou en entraînement. */
+  readonly debugTools: boolean;
+  private pendingGiveBall = false;
+  private pendingResetBall = false;
+  private feedback: Feedback | null = null;
+  private feedbackUntil = 0;
+  private feedbackSeq = 0;
   private raf = 0;
   private running = false;
   private lastTime = -1;
@@ -108,6 +128,7 @@ export class GameSession {
 
   constructor(canvas: HTMLCanvasElement, options: SessionOptions) {
     this.debug = options.debug ?? false;
+    this.debugTools = this.debug || (options.training ?? false);
     this.state = createMatch({
       teamSize: options.teamSize,
       seed: options.seed,
@@ -180,6 +201,12 @@ export class GameSession {
     const me = this.state.players[this.humanId];
     this.input.setCarrier(isCarrier(this.state, me));
 
+    const dbg = this.input.consumeDebugRequests();
+    if (this.debugTools && !this.paused) {
+      this.pendingGiveBall ||= dbg.giveBall;
+      this.pendingResetBall ||= dbg.resetBall;
+    }
+
     if (!this.paused) {
       this.input.frame(dt, this.assistQuery());
       const n = this.loopStep.advance(dt);
@@ -198,8 +225,9 @@ export class GameSession {
     this.onFrame?.(this.snapshot());
   };
 
-  /** Un tick de simulation : entrées de tous les joueurs, puis step. */
+  /** Un tick de simulation : outils de test en attente, entrées de tous les joueurs, puis step. */
   private tick(nowSec: number): void {
+    this.applyDebugTools(nowSec);
     this.prev = cloneState(this.state);
     const frame: Record<number, PlayerInput> = {};
     for (const p of this.state.players) {
@@ -212,7 +240,35 @@ export class GameSession {
     }
     step(this.state, frame as InputFrame);
     const me = this.state.players[this.humanId];
-    this.haptics.handleEvents(this.state.events, me.id, me.team, nowSec, this.input.activeDevice === 'gamepad' ? this.input.activeGamepad : null);
+    const events = this.state.events;
+    this.haptics.handleEvents(events, me.id, me.team, nowSec, this.input.activeDevice === 'gamepad' ? this.input.activeGamepad : null);
+    this.renderer.handleEvents(events, this.state, nowSec);
+    for (const e of events) {
+      const fb = feedbackFor(e, this.state, this.humanId);
+      if (fb !== null) this.showFeedback(fb, nowSec);
+    }
+  }
+
+  /**
+   * Outils de test (avant la copie `prev` du tick : le ballon « saute » sans traînée interpolée).
+   * Passent par les fonctions pures de la sim (debugGiveBall / debugResetBall), déterministes.
+   */
+  private applyDebugTools(nowSec: number): void {
+    if (this.pendingResetBall) {
+      debugResetBall(this.state);
+      this.showFeedback({ text: 'Ballon au centre', kind: 'info' }, nowSec);
+    }
+    if (this.pendingGiveBall && debugGiveBall(this.state, this.humanId)) {
+      this.showFeedback({ text: 'Ballon pour toi', kind: 'info' }, nowSec);
+    }
+    this.pendingGiveBall = false;
+    this.pendingResetBall = false;
+  }
+
+  private showFeedback(fb: Feedback, nowSec: number): void {
+    this.feedback = fb;
+    this.feedbackUntil = nowSec + FEEDBACK_SEC;
+    this.feedbackSeq++;
   }
 
   /** Contexte de l'aide à la visée (positions interpolées), ou null quand elle ne s'applique pas. */
@@ -269,6 +325,9 @@ export class GameSession {
       role: me.role,
       fps: this.fps,
       assistTarget: this.input.lastAssist.targetId,
+      passTarget: this.renderer.passTargetId,
+      feedback: this.feedback !== null && this.lastTime < this.feedbackUntil ? { ...this.feedback, seq: this.feedbackSeq } : null,
+      debugTools: this.debugTools,
     };
   }
 

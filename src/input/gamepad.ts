@@ -165,6 +165,8 @@ export interface GamepadLike {
 }
 
 const PAUSE_BIT = padActionBit('pause');
+const DEBUG_GIVE_BALL_BIT = padActionBit('debugGiveBall');
+const DEBUG_RESET_BALL_BIT = padActionBit('debugResetBall');
 const SPRINT_BIT = padActionBit('sprintToggle');
 const AIM_BIT = padActionBit('aim');
 const FIRE_BIT = padActionBit('fire');
@@ -195,6 +197,8 @@ export class GamepadInput {
   private prevConfirm = false;
   private pauseRequested = false;
   private confirmRequested = false;
+  private debugGiveBallRequested = false;
+  private debugResetBallRequested = false;
 
   constructor(private readonly map: GamepadMap = DEFAULT_GAMEPAD_MAP) {}
 
@@ -238,6 +242,8 @@ export class GamepadInput {
     this.prevActions = actions;
     this.heldActions = actions;
     if ((pressed & PAUSE_BIT) !== 0) this.pauseRequested = true;
+    if ((pressed & DEBUG_GIVE_BALL_BIT) !== 0) this.debugGiveBallRequested = true;
+    if ((pressed & DEBUG_RESET_BALL_BIT) !== 0) this.debugResetBallRequested = true;
     const confirm = pad.buttons[this.map.confirmButton]?.pressed ?? false;
     if (confirm && !this.prevConfirm) this.confirmRequested = true;
     this.prevConfirm = confirm;
@@ -288,6 +294,20 @@ export class GamepadInput {
     return r;
   }
 
+  /** Vrai une fois après un appui sur View / Share (outil de test « ballon pour moi », ?debug / entraînement). */
+  consumeDebugGiveBall(): boolean {
+    const r = this.debugGiveBallRequested;
+    this.debugGiveBallRequested = false;
+    return r;
+  }
+
+  /** Vrai une fois après un appui sur la croix ↓ (outil de test « ballon au centre », ?debug / entraînement). */
+  consumeDebugResetBall(): boolean {
+    const r = this.debugResetBallRequested;
+    this.debugResetBallRequested = false;
+    return r;
+  }
+
   /** Vrai une fois après un appui sur A / Croix (valider l'overlay). */
   consumeConfirm(): boolean {
     const r = this.confirmRequested;
@@ -304,6 +324,8 @@ export class GamepadInput {
     this.look = { x: 0, y: 0, mag: 0 };
     this.pauseRequested = false;
     this.confirmRequested = false;
+    this.debugGiveBallRequested = false;
+    this.debugResetBallRequested = false;
   }
 }
 

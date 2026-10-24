@@ -256,6 +256,13 @@ export interface BallState {
   throwerId: number;
   /** Destinataire visé par la passe en cours, -1 sinon. */
   passTargetId: number;
+  /**
+   * Ballon porté : receveur retenu par la visée assistée du porteur au dernier tick (hystérésis de la cible,
+   * PASS_TARGET_STICKY_BONUS), -1 sinon. Ignoré quand le ballon n'est pas porté.
+   */
+  aimTargetId: number;
+  /** Ticks écoulés depuis la passe / le coup de pied en cours (0 sinon) : fenêtre de contre du coup de pied. */
+  flightTicks: number;
   /** Dernière équipe à avoir eu la possession, -1 si aucune. */
   lastTeam: TeamId | -1;
   /** Ticks consécutifs passés libre (loose) — sert à déclencher la mêlée. */
@@ -327,10 +334,12 @@ export type MatchEvent =
   | { type: 'climb'; playerId: number }
   | { type: 'reload'; playerId: number }
   | { type: 'ability'; playerId: number; role: Role }
+  /** Ballon libre ramassé (cercle au sol). */
   | { type: 'pickup'; playerId: number }
   | { type: 'pass'; fromId: number; toId: number }
   | { type: 'pass_denied'; playerId: number }
-  | { type: 'catch'; playerId: number; intercepted: boolean }
+  /** Ballon attrapé en vol. `fromId` = passeur / tireur (-1 si inconnu) ; `intercepted` = équipe du receveur ≠ équipe du lanceur. */
+  | { type: 'catch'; playerId: number; fromId: number; intercepted: boolean }
   | { type: 'kick'; playerId: number }
   | { type: 'drop'; playerId: number }
   | { type: 'bounce'; pos: Vec3; speed: number }

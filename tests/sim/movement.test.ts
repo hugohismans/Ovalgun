@@ -378,12 +378,14 @@ describe('glissade', () => {
     }
   });
 
-  it('le porteur ne glisse pas (SLIDE = plongeon, étape 4)', () => {
+  it('le porteur ne glisse pas : SLIDE = plongeon (étape 4)', () => {
     const s = soloMatch('ailier');
     s.ball.mode = 'carried';
     s.ball.carrierId = 0;
     run(s, 30, (t) => only0({ moveY: 1, buttons: t === 29 ? Buttons.SLIDE : 0 }));
-    expect(s.players[0].move).toBe('run');
+    expect(s.players[0].move).toBe('dive');
+    expect(s.events.map((e) => e.type)).toContain('dive');
+    expect(s.events.map((e) => e.type)).not.toContain('slide');
   });
 });
 

@@ -8,8 +8,17 @@
  *   - updateStability    : plaquage (jauge vide -> 'down', lâcher du ballon), régénération après REGEN_DELAY_SEC.
  */
 
-import type { MatchState } from './types';
+import type { MatchState, PlayerState } from './types';
 import type { TickInput } from './input';
+import { isCarrier } from './playerStatus';
+
+/**
+ * Le joueur peut-il tirer ? Étape 4 : actif et NON porteur (le porteur ne tire jamais, cahier des charges).
+ * L'étape 5 complétera ici (sprint, bouclier levé, rechargement…) et l'utilisera dans updateShooting.
+ */
+export function canShoot(state: MatchState, p: PlayerState): boolean {
+  return p.status === 'active' && !isCarrier(state, p);
+}
 
 /** Étape 5 — minuteries de statut (down / getting_up) et de rechargement. Vide pour l'instant. */
 export function updateStatusTimers(_state: MatchState): void {

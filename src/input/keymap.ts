@@ -25,7 +25,9 @@ export type Action =
   | 'ability'
   | 'fire'
   | 'aim'
-  | 'reload';
+  | 'reload'
+  | 'debugGiveBall'
+  | 'debugResetBall';
 
 /** Toutes les actions, dans un ordre fixe (index = bit dans les masques internes de l'InputManager). */
 export const ACTIONS: readonly Action[] = [
@@ -42,6 +44,8 @@ export const ACTIONS: readonly Action[] = [
   'fire',
   'aim',
   'reload',
+  'debugGiveBall',
+  'debugResetBall',
 ];
 
 /** Bit d'une action dans un masque d'actions. */
@@ -74,6 +78,9 @@ export const DEFAULT_KEYMAP: Keymap = {
   fire: [mouse(0)],
   aim: [mouse(2)],
   reload: [key('KeyR')],
+  // Outils de test (mode ?debug / entraînement uniquement) : pas de bit `Buttons`, la session les traite.
+  debugGiveBall: [key('KeyG')],
+  debugResetBall: [key('KeyB')],
 };
 
 /**
@@ -134,6 +141,8 @@ export const ACTION_LABELS: Readonly<Record<Action, string>> = {
   fire: 'Tir',
   aim: 'Visée',
   reload: 'Recharger',
+  debugGiveBall: 'Ballon pour moi (test)',
+  debugResetBall: 'Ballon au centre (test)',
 };
 
 /** Libellés AZERTY (disposition par défaut supposée) des codes physiques. */
