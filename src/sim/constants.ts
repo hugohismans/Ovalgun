@@ -542,3 +542,45 @@ export const CAMERA_BLEND_RATE = 10;
 /** Sensibilité souris (radians par pixel) et multiplicateur en visée. */
 export const MOUSE_SENSITIVITY = 0.0022;
 export const MOUSE_AIM_SENSITIVITY_MULT = 0.6;
+
+// ============================================================================
+//  CLAVIER (lu uniquement par src/input)
+// ============================================================================
+
+/** Shift : durée de maintien au-delà de laquelle l'appui devient un sprint (s). Un appui plus bref = esquive seule. */
+export const SPRINT_HOLD_DELAY_SEC = 0.15;
+
+// ============================================================================
+//  MANETTE (lu uniquement par src/input — Gamepad API, disposition « standard »)
+// ============================================================================
+
+/** Zone morte radiale du stick gauche (déplacement), 0..1. */
+export const GAMEPAD_MOVE_DEADZONE = 0.15;
+/** Zone morte radiale du stick droit (caméra), 0..1. */
+export const GAMEPAD_LOOK_DEADZONE = 0.12;
+/** Exposant de la courbe de réponse du stick droit. ↑ = plus de précision au centre, plus de vitesse en bout de course. */
+export const GAMEPAD_LOOK_CURVE = 1.8;
+/** Vitesse de rotation horizontale à fond de stick (degrés/s). */
+export const GAMEPAD_LOOK_YAW_SPEED_DEG = 230;
+/** Vitesse de rotation verticale à fond de stick (degrés/s). */
+export const GAMEPAD_LOOK_PITCH_SPEED_DEG = 150;
+/** Accélération de rotation quand le stick reste à fond : multiplicateur atteint, délai avant le boost et durée de montée (s). */
+export const GAMEPAD_LOOK_BOOST_MULT = 1.6;
+export const GAMEPAD_LOOK_BOOST_DELAY_SEC = 0.2;
+export const GAMEPAD_LOOK_BOOST_RAMP_SEC = 0.35;
+/** Multiplicateur de vitesse de caméra en visée (gâchette gauche). */
+export const GAMEPAD_AIM_LOOK_MULT = 0.55;
+/** Seuil d'enfoncement des gâchettes analogiques (0..1). */
+export const GAMEPAD_TRIGGER_THRESHOLD = 0.35;
+/** Inverser l'axe vertical de la caméra. */
+export const GAMEPAD_INVERT_Y = false;
+/** Aide à la visée (manette uniquement) : activée ? */
+export const AIM_ASSIST_ENABLED = true;
+/** Aide à la visée : demi-angle autour d'un adversaire dans lequel elle agit (degrés). */
+export const AIM_ASSIST_ANGLE_DEG = 4;
+/** Aide à la visée : ralentissement de la caméra près d'une cible (multiplicateur). ↓ = cible plus « collante ». */
+export const AIM_ASSIST_SLOWDOWN = 0.55;
+/** Aide à la visée : fraction du déplacement angulaire de la cible suivie automatiquement (0 = aucune). */
+export const AIM_ASSIST_TRACKING = 0.3;
+/** Vibrations (plaquage subi, tir reçu, essai, réception…). */
+export const GAMEPAD_RUMBLE = true;

@@ -11,7 +11,8 @@ src/
            Tourne telle quelle dans un Cloudflare Worker. Compilée par tsconfig.sim.json (lib ES2022 seule).
   bots/    Producteurs de PlayerInput. PURS aussi (même contrainte que sim). Lisent MatchState, ne le modifient jamais.
   render/  Three.js. Lit deux MatchState (précédent / courant) et interpole. Ne modifie jamais l'état.
-  input/   Clavier/souris (pointer lock) -> un PlayerInput par tick. Remapping via keymap.ts.
+  input/   Clavier/souris (pointer lock) ET manette (Gamepad API) -> un PlayerInput par tick.
+           Remapping via keymap.ts / gamepadMap.ts (données, pas de touches en dur).
   game/    Colle côté client : boucle à pas fixe, assemblage des entrées (humain + bots), appel de step(), alimentation du rendu et du HUD.
   ui/      Svelte 5 (runes) : menu, HUD, overlays.
 tests/     Vitest (environnement node) : simulation, bots, architecture.
@@ -85,7 +86,26 @@ Voir l'en-tête de `src/sim/vec.ts`.
 - **Touches** : on lit `KeyboardEvent.code` (position physique) pour que ZQSD/A sur AZERTY = WASD/Q sur QWERTY.
   Défaut : avancer `KeyW`(Z), gauche `KeyA`(Q), reculer `KeyS`, droite `KeyD`, saut `Space`, esquive/sprint `ShiftLeft`,
   glissade/plongeon `KeyC`, passe `KeyE`, coup de pied `KeyF`, capacité `KeyQ`(A), tir clic gauche, visée clic droit,
-  rechargement `KeyR`. Jamais de Ctrl (Ctrl+W ferme l'onglet).
+  rechargement `KeyR` (bouton `RELOAD`). Jamais de Ctrl (Ctrl+W ferme l'onglet).
+- **Manette** (Gamepad API, disposition « standard » Xbox/PlayStation), mapping par défaut :
+  | Contrôle | Action |
+  |---|---|
+  | Stick gauche | déplacement (zone morte radiale `GAMEPAD_MOVE_DEADZONE`) |
+  | Clic stick gauche (L3) | sprint (bascule ; s'annule quand le stick revient au centre, en visée ou au tir) |
+  | Stick droit | caméra (courbe `GAMEPAD_LOOK_CURVE`, vitesses `GAMEPAD_LOOK_*`, boost en bout de course) |
+  | A / Croix | saut |
+  | B / Rond | esquive |
+  | X / Carré | glissade ; plongeon pour le porteur |
+  | Y / Triangle | coup de pied (porteur) + rechargement (les deux bits sont émis ; la sim ignore celui qui ne s'applique pas) |
+  | RB / R1 | passe (porteur) |
+  | LB / L1 | capacité |
+  | RT / R2 | tir |
+  | LT / L2 | visée |
+  | Start / Options | pause |
+  Clavier/souris et manette sont fusionnés en un seul `PlayerInput` (boutons en OU, yaw/pitch communs) ; le « périphérique actif »
+  (dernier utilisé) pilote les aides affichées (glyphes) et la pause (avec la manette, perdre le pointer lock ne met pas en pause).
+  Aide à la visée manette côté client uniquement (`AIM_ASSIST_*` : ralentissement près d'un adversaire + léger suivi) — elle ne fait
+  que produire yaw/pitch, la sim n'en sait rien. Vibrations sur les événements du joueur local (`GAMEPAD_RUMBLE`).
 - **Cône de passe** : relatif au **terrain** (règle du rugby : uniquement vers son propre en-but), demi-angle 90° = 180°.
   La visée assistée choisit le coéquipier du cône le mieux noté : alignement avec le regard (regarder à gauche => passe à gauche),
   distance proche de `PASS_IDEAL_RANGE`, démarquage. Aucun coéquipier valide => pas de passe, événement `pass_denied`.

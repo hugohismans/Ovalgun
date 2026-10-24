@@ -47,6 +47,8 @@ export const Buttons = {
   KICK: 1 << 7,
   /** Capacité de rôle. */
   ABILITY: 1 << 8,
+  /** Rechargement manuel (le rechargement est aussi automatique chargeur vide). */
+  RELOAD: 1 << 9,
 } as const;
 
 export type ButtonName = keyof typeof Buttons;
