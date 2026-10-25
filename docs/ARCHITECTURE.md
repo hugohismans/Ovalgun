@@ -142,6 +142,9 @@ Voir l'en-tête de `src/sim/vec.ts`.
   connaisse la caméra. (Si la caméra est rapprochée par une collision, elle reste sur cette droite.)
   Seule exception (passe finale, §18) : le PORTEUR local, qui ne tire pas, a un pivot de caméra monté de
   `CAMERA_CARRY_RAISE` (même direction) ; la montée retombe à exactement 0 quand il n'a plus le ballon.
+  Réglage « Hauteur » de la caméra (§25) : le pivot est décalé verticalement et le regard CONVERGE vers le point de la
+  droite de tir situé à `CAMERA_CONVERGE_DISTANCE` (réticule exact à cette distance, écart faible ailleurs). Hauteur 0
+  (défaut) : invariant exact ; FOV et distance réglés ne touchent pas l'invariant.
 
 ## 4. Interprétations du cahier des charges (décisions)
 
@@ -1246,7 +1249,8 @@ Décisions :
 - **Répétition** à la manette : `MENU_NAV_REPEAT_DELAY_SEC` / `MENU_NAV_REPEAT_SEC`, seuil du stick `MENU_NAV_STICK_THRESHOLD`
   (constants.ts, section MENUS ET RÉGLAGES DU JOUEUR) ; boutons de navigation en données (`DEFAULT_MENU_PAD_MAP`, gamepadMap.ts).
 - **Réglages** (localStorage `ovalgun.settings.v1`) : sensibilité souris et caméra manette (multiplicateurs de `MOUSE_SENSITIVITY` /
-  `GAMEPAD_LOOK_*_SPEED_DEG`, bornes et pas `SETTINGS_SENSITIVITY_*`), inversion Y (manette), aide à la visée, vibrations, volume réservé ;
+  `GAMEPAD_LOOK_*_SPEED_DEG`, bornes et pas `SETTINGS_SENSITIVITY_*`), inversion Y (manette), aide à la visée, vibrations, volume
+  (complétés au §25 : caméra, sensibilité en visée, inversion souris) ;
   appliqués à chaud (`GameSession.applySettings` -> `InputManager.applySettings`, `Haptics.enabled`). Choix du menu (`ovalgun.setup.v1`) :
   taille, rôle, difficulté, entraînement ; l'URL prime (debug). Valeurs relues validées (`sanitizeSettings`, `sanitizeSetup`).
 - **Mini-flèche du ballon** : position affichée du ballon en repère caméra (après le rendu) -> `offscreenArrow` : projection devant la caméra ;
@@ -1803,3 +1807,21 @@ Décisions :
 - **Limites connues** : la foule ne réagit qu'à l'excitation (pas de couleur de l'équipe qui marque) ; les écrans géants
   affichent un logo fixe (pas le score) ; les sauts de la foule ne bougent pas ses normales ; vu de l'extérieur (jamais
   en jeu), l'arrière des tribunes est un simple mur.
+
+## 25. Réglages de caméra et de visée
+
+- **Données** (`game/settings.ts`, validées par `sanitizeSettings` : un ancien réglage mémorisé reçoit les défauts) :
+  `fov` (FOV vertical de base, `SETTINGS_FOV_*`, défaut `CAMERA_FOV`), `cameraDistance` (multiplicateur des trois
+  `CAMERA_DISTANCE*`, `SETTINGS_CAMERA_DISTANCE_*`), `cameraHeight` (m, signée, `SETTINGS_CAMERA_HEIGHT_*`), `speedFov`
+  (bonus de FOV lié à la vitesse), `aimSensitivity` (multiplicateur en visée, souris par-dessus `MOUSE_AIM_SENSITIVITY_MULT`
+  et manette par-dessus `GAMEPAD_AIM_LOOK_MULT`, `SETTINGS_AIM_SENSITIVITY_*`), `invertMouseY`. Bornes et pas dans
+  constants.ts (section MENUS ET RÉGLAGES DU JOUEUR).
+- **Application** : `GameSession.applySettings` -> `InputManager.applySettings` (sensibilités, inversions) et
+  `Renderer.setCameraPrefs` -> `ShoulderCamera.prefs` (`CameraPrefs` de cameraMath.ts). `cameraTargets(mode, prefs)` :
+  distance × multiplicateur, FOV porteur / visée décalés du même écart que le FOV de base, bonus de vitesse coupable.
+  `shoulderPose(…, raise, height)` : `height` lissée comme la distance ; regard `look` convergent (§3), `dir` reste la
+  direction de tir (estompage des joueurs, prédiction de la grenade inchangés). Rien ne passe par la sim ni le réseau.
+- **UI** : `SettingsPanel.svelte` par rubriques (Souris, Manette, Caméra, Son), un seul extrait `slider` piloté par une
+  table de bornes / formats ; le panneau est borné à la hauteur de l'écran (`Panel.svelte`) et défile.
+- **Tests** : `tests/game/settings.test.ts` (bornes, pas, défauts, jamais −0), `tests/render/camera.test.ts` (prefs dans
+  `cameraTargets`, convergence du regard, hauteur 0 = invariant exact).

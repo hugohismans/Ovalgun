@@ -116,8 +116,14 @@ suit le regard vertical.
 ## Réglages
 
 Panneau « Réglages » (depuis le menu ou la pause), appliqué tout de suite et mémorisé (`ovalgun.settings.v1`) :
-sensibilité souris, sensibilité caméra manette, inversion de l'axe vertical (manette), aide à la visée (manette),
-vibrations ; le volume est réservé (pas encore de son). Les réglages de gameplay (vitesses, cooldowns, dégâts, bots…) sont
+- **Souris** : sensibilité, sensibilité en visée (souris et manette, relative à la normale), inversion de l'axe vertical ;
+- **Manette** : sensibilité caméra, inversion de l'axe vertical, aide à la visée, vibrations ;
+- **Caméra** : champ de vision (vertical, équivalent horizontal 16:9 affiché ; porteur et visée suivent), distance
+  (multiplicateur), hauteur (le regard converge vers la droite de tir à 20 m : réticule juste), effet de vitesse (FOV qui
+  s'élargit au sprint) ;
+- **Son** : volume général, musique du menu.
+
+ Les réglages de gameplay (vitesses, cooldowns, dégâts, bots…) sont
 des constantes de développement : [`src/sim/constants.ts`](src/sim/constants.ts) (voir l'aide-mémoire de
 [`docs/TESTING.md`](docs/TESTING.md#aide-mémoire--réglage-du-feeling)).
 

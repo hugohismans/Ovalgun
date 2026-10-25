@@ -69,14 +69,20 @@ const BIT_DEBUG_RESET = actionBit('debugResetBall');
 export interface InputSettings {
   mouseSensitivity: number;
   padSensitivity: number;
+  /** Multiplicateur supplémentaire en visée (souris et manette) ; 1 = MOUSE_AIM_SENSITIVITY_MULT / GAMEPAD_AIM_LOOK_MULT seuls. */
+  aimSensitivity: number;
+  /** Inversion de l'axe vertical : manette / souris. */
   invertY: boolean;
+  invertMouseY: boolean;
   aimAssist: boolean;
 }
 
 export const DEFAULT_INPUT_SETTINGS: Readonly<InputSettings> = {
   mouseSensitivity: 1,
   padSensitivity: 1,
+  aimSensitivity: 1,
   invertY: GAMEPAD_INVERT_Y,
+  invertMouseY: false,
   aimAssist: AIM_ASSIST_ENABLED,
 };
 
@@ -285,9 +291,9 @@ export class InputManager {
       return;
     }
     if (Math.abs(dx) + Math.abs(dy) >= MOUSE_ACTIVITY_PX) this.setDevice('keyboard');
-    const sens = MOUSE_SENSITIVITY * this.settings.mouseSensitivity * (this.aiming ? MOUSE_AIM_SENSITIVITY_MULT : 1);
+    const sens = MOUSE_SENSITIVITY * this.settings.mouseSensitivity * (this.aiming ? MOUSE_AIM_SENSITIVITY_MULT * this.settings.aimSensitivity : 1);
     this.yaw = wrapAngle(this.yaw - dx * sens);
-    this.pitch = clamp(this.pitch - dy * sens, PITCH_MIN, PITCH_MAX);
+    this.pitch = clamp(this.pitch - dy * sens * (this.settings.invertMouseY ? -1 : 1), PITCH_MIN, PITCH_MAX);
   }
 
   private onLockChange(): void {
@@ -385,7 +391,7 @@ export class InputManager {
     }
     this.lastAssist = assist;
     const { yawRate, pitchRate } = this.gamepad.lookRates(dt, assist.slowdown, this.settings.invertY);
-    const k = this.settings.padSensitivity;
+    const k = this.settings.padSensitivity * (this.gamepad.aiming ? this.settings.aimSensitivity : 1);
     this.yaw = wrapAngle(this.yaw + yawRate * k * dt + assist.yawCorrection);
     this.pitch = clamp(this.pitch + pitchRate * k * dt + assist.pitchCorrection, PITCH_MIN, PITCH_MAX);
   }

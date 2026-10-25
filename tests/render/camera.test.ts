@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { blendToward, cameraTargets, shoulderPose } from '../../src/render/cameraMath';
+import { blendToward, cameraTargets, DEFAULT_CAMERA_PREFS, shoulderPose } from '../../src/render/cameraMath';
 import { lerpPos, lerpYaw } from '../../src/render/interpolate';
 import { ShoulderCamera } from '../../src/render/ShoulderCamera';
 import {
@@ -13,6 +13,7 @@ import {
   CAMERA_DISTANCE_AIM,
   CAMERA_DISTANCE_CARRY,
   CAMERA_CARRY_RAISE,
+  CAMERA_CONVERGE_DISTANCE,
   CAMERA_FOV,
   CAMERA_FOV_AIM,
   CAMERA_FOV_CARRY,
@@ -112,6 +113,40 @@ describe('caméra épaule', () => {
     expect(cameraTargets({ ...MODE, speed: 12 }).fov).toBeGreaterThan(CAMERA_FOV);
     expect(CAMERA_DISTANCE_AIM).toBeLessThan(CAMERA_DISTANCE);
     expect(CAMERA_DISTANCE_CARRY).toBeGreaterThan(CAMERA_DISTANCE);
+  });
+
+  it('réglages du joueur : FOV de base (porteur / visée décalés), distance multipliée, effet de vitesse coupable', () => {
+    const prefs = { ...DEFAULT_CAMERA_PREFS, fov: 90, distanceScale: 1.5, speedFov: false };
+    expect(cameraTargets(MODE, prefs)).toEqual({ distance: CAMERA_DISTANCE * 1.5, fov: 90, raise: 0 });
+    expect(cameraTargets({ ...MODE, aiming: true }, prefs).fov).toBe(CAMERA_FOV_AIM + 90 - CAMERA_FOV);
+    expect(cameraTargets({ ...MODE, carrier: true }, prefs).distance).toBeCloseTo(CAMERA_DISTANCE_CARRY * 1.5, 12);
+    expect(cameraTargets({ ...MODE, speed: DODGE_SPEED }, prefs).fov).toBe(90);
+    expect(cameraTargets(MODE, DEFAULT_CAMERA_PREFS)).toEqual(cameraTargets(MODE));
+  });
+
+  it('hauteur réglée : caméra décalée, regard convergent vers la droite de tir à CAMERA_CONVERGE_DISTANCE', () => {
+    const feet = { x: 2, y: 0, z: 1 };
+    for (const [yaw, pitch, h, raise] of [
+      [0, 0, 0.6, 0],
+      [1.1, -0.3, -0.3, 0],
+      [-2, 0.4, 1, CAMERA_CARRY_RAISE],
+    ]) {
+      const p = shoulderPose(flat, feet, yaw, pitch, CAMERA_DISTANCE, raise, h);
+      const o = aimOrigin(feet, yaw);
+      const d = aimDir(yaw, pitch);
+      expect(p.raise).toBeCloseTo(raise + h, 12);
+      // Le pivot (origine + montée) reste sur la droite caméra -> arrière.
+      expect(p.pos.y + d.y * p.distance).toBeCloseTo(o.y + raise + h, 9);
+      // Le regard passe par le point de convergence (montée du porteur comprise).
+      const t = { x: o.x + d.x * CAMERA_CONVERGE_DISTANCE, y: o.y + raise + d.y * CAMERA_CONVERGE_DISTANCE, z: o.z + d.z * CAMERA_CONVERGE_DISTANCE };
+      const k = Math.hypot(t.x - p.pos.x, t.y - p.pos.y, t.z - p.pos.z);
+      expect(p.pos.x + p.look.x * k).toBeCloseTo(t.x, 9);
+      expect(p.pos.y + p.look.y * k).toBeCloseTo(t.y, 9);
+      expect(p.pos.z + p.look.z * k).toBeCloseTo(t.z, 9);
+      expect(Math.hypot(p.look.x, p.look.y, p.look.z)).toBeCloseTo(1, 12);
+    }
+    // Hauteur 0 : regard = direction de tir exactement (§3).
+    expect(shoulderPose(flat, feet, 0.4, 0.2, CAMERA_DISTANCE).look).toEqual(aimDir(0.4, 0.2));
   });
 
   it('bonus de FOV lié à la vitesse plafonné (pas de pulsation de +14° à chaque esquive)', () => {

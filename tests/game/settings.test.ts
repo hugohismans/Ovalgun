@@ -4,7 +4,14 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS, sanitizeSettings, snapToStep } from '../../src/game/settings';
 import { debugFlagsFromParams, DEFAULT_SETUP, sanitizeSetup, setupFromParams } from '../../src/game/launch';
-import { SETTINGS_SENSITIVITY_MAX, SETTINGS_SENSITIVITY_MIN } from '../../src/sim';
+import {
+  CAMERA_FOV,
+  SETTINGS_AIM_SENSITIVITY_MAX,
+  SETTINGS_CAMERA_DISTANCE_MIN,
+  SETTINGS_FOV_MAX,
+  SETTINGS_SENSITIVITY_MAX,
+  SETTINGS_SENSITIVITY_MIN,
+} from '../../src/sim';
 
 describe('sanitizeSettings', () => {
   it('valeurs par défaut pour n’importe quoi', () => {
@@ -22,6 +29,20 @@ describe('sanitizeSettings', () => {
     expect(sanitizeSettings({ mouseSensitivity: 1.23 }).mouseSensitivity).toBe(1.25);
     expect(sanitizeSettings({ mouseSensitivity: Number.NaN }).mouseSensitivity).toBe(1);
     expect(JSON.parse(JSON.stringify(s))).toEqual(s);
+  });
+
+  it('caméra et visée : bornes, pas, booléens ; anciens réglages complétés par les défauts', () => {
+    const s = sanitizeSettings({ fov: 140, cameraDistance: 0.1, cameraHeight: 0.33, aimSensitivity: 9, invertMouseY: true, speedFov: 'non' });
+    expect(s.fov).toBe(SETTINGS_FOV_MAX);
+    expect(s.cameraDistance).toBe(SETTINGS_CAMERA_DISTANCE_MIN);
+    expect(s.cameraHeight).toBe(0.35);
+    expect(s.aimSensitivity).toBe(SETTINGS_AIM_SENSITIVITY_MAX);
+    expect(s.invertMouseY).toBe(true);
+    expect(s.speedFov).toBe(true);
+    expect(sanitizeSettings({ fov: 71.6 }).fov).toBe(72);
+    expect(Object.is(sanitizeSettings({ cameraHeight: -0.0001 }).cameraHeight, 0)).toBe(true);
+    const old = sanitizeSettings({ mouseSensitivity: 2, volume: 0.5 });
+    expect(old).toMatchObject({ fov: CAMERA_FOV, cameraDistance: 1, cameraHeight: 0, aimSensitivity: 1, invertMouseY: false, speedFov: true });
   });
 
   it('snapToStep : pas depuis le minimum, sans erreur d’arrondi visible', () => {

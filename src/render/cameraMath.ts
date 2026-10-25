@@ -14,6 +14,11 @@
  *    le relief, jusqu'à 0,67 m) ;
  *  - `raise` (porteur local, CAMERA_CARRY_RAISE) : pivot monté de `raise` à la verticale de l'origine de visée, même
  *    direction. Le porteur ne tire pas ; avec raise = 0 (tous les autres cas), l'invariant du réticule est intact.
+ *
+ * Réglages du joueur (CameraPrefs) : FOV de base, multiplicateur de distance (la caméra reste sur la droite de tir) et
+ * hauteur `height` ajoutée au pivot. Avec une hauteur ≠ 0, la caméra n'est plus sur la droite de tir : elle regarde le
+ * point de cette droite situé à CAMERA_CONVERGE_DISTANCE devant l'origine de visée (convergence), où le réticule est
+ * exact. Hauteur 0 (défaut) : regard = aimDir, invariant exact.
  */
 
 import {
@@ -21,6 +26,7 @@ import {
   aimOrigin,
   CAMERA_BLEND_RATE,
   CAMERA_CARRY_RAISE,
+  CAMERA_CONVERGE_DISTANCE,
   CAMERA_DISTANCE,
   CAMERA_DISTANCE_AIM,
   CAMERA_DISTANCE_CARRY,
@@ -39,13 +45,15 @@ import {
 export interface ShoulderPose {
   /** Origine de visée (point de départ des tirs). */
   origin: Vec3;
-  /** Direction de visée unitaire (= direction de la caméra). */
+  /** Direction de visée unitaire. */
   dir: Vec3;
+  /** Direction du regard de la caméra (unitaire) : = dir sauf hauteur de caméra réglée (convergence). */
+  look: Vec3;
   /** Position de la caméra. */
   pos: Vec3;
   /** Distance effective (après collision), mesurée depuis le pivot (origine de visée + `raise`). */
   distance: number;
-  /** Hauteur ajoutée au pivot (m, porteur local) ; 0 : caméra exactement sur la droite de tir. */
+  /** Hauteur ajoutée au pivot (m : porteur local + réglage) ; 0 : caméra exactement sur la droite de tir. */
   raise: number;
 }
 
@@ -57,12 +65,14 @@ const COLLISION_SAMPLE = 0.1;
 
 /**
  * Position de la caméra épaule pour des pieds / une orientation / une distance voulue. `raise` (m, ≥ 0) : pivot monté
- * à la verticale de l'origine de visée (porteur local) ; 0 = caméra sur la droite de tir (§3).
+ * à la verticale de l'origine de visée (porteur local), même direction ; `height` (m, réglage du joueur, signé) : pivot
+ * décalé verticalement, regard convergent (voir l'en-tête). Les deux à 0 : caméra sur la droite de tir (§3).
  */
-export function shoulderPose(field: FieldLayout, feet: Vec3, yaw: number, pitch: number, wantedDistance: number, raise = 0): ShoulderPose {
+export function shoulderPose(field: FieldLayout, feet: Vec3, yaw: number, pitch: number, wantedDistance: number, raise = 0, height = 0): ShoulderPose {
   const origin = aimOrigin(feet, yaw);
   const dir = aimDir(yaw, pitch);
-  const lift = Math.max(0, raise);
+  const carry = Math.max(0, raise);
+  const lift = carry + height;
   const px = origin.x;
   const py = origin.y + lift;
   const pz = origin.z;
@@ -84,8 +94,31 @@ export function shoulderPose(field: FieldLayout, feet: Vec3, yaw: number, pitch:
     }
   }
   const pos = { x: px - dir.x * d, y: py - dir.y * d, z: pz - dir.z * d };
-  return { origin, dir, pos, distance: d, raise: lift };
+  let look = dir;
+  if (height !== 0) {
+    // Convergence : regard vers le point de la droite de tir (montée du porteur comprise) à CAMERA_CONVERGE_DISTANCE.
+    const lx = origin.x + dir.x * CAMERA_CONVERGE_DISTANCE - pos.x;
+    const ly = origin.y + carry + dir.y * CAMERA_CONVERGE_DISTANCE - pos.y;
+    const lz = origin.z + dir.z * CAMERA_CONVERGE_DISTANCE - pos.z;
+    const len = Math.hypot(lx, ly, lz);
+    look = { x: lx / len, y: ly / len, z: lz / len };
+  }
+  return { origin, dir, look, pos, distance: d, raise: lift };
 }
+
+/** Réglages de caméra du joueur (PlayerSettings, appliqués par la session au rendu). */
+export interface CameraPrefs {
+  /** FOV vertical de base (degrés) : remplace CAMERA_FOV, porteur et visée décalés d'autant. */
+  fov: number;
+  /** Multiplicateur des distances CAMERA_DISTANCE* (la caméra reste sur la droite de tir). */
+  distanceScale: number;
+  /** Hauteur ajoutée au pivot (m, signée ; regard convergent). */
+  height: number;
+  /** Bonus de FOV lié à la vitesse (CAMERA_FOV_SPEED_GAIN). */
+  speedFov: boolean;
+}
+
+export const DEFAULT_CAMERA_PREFS: Readonly<CameraPrefs> = Object.freeze({ fov: CAMERA_FOV, distanceScale: 1, height: 0, speedFov: true });
 
 /** Situation du joueur local qui pilote distance et FOV. */
 export interface CameraMode {
@@ -97,15 +130,15 @@ export interface CameraMode {
 }
 
 /**
- * Distance et FOV visés pour une situation (avant lissage). Le port du ballon PRIME sur la visée
+ * Distance et FOV visés pour une situation (avant lissage), réglages du joueur appliqués (`prefs`). Le port du ballon PRIME sur la visée
  * (cahier des charges : « plus reculée quand on porte le ballon (on ne vise pas) »). Bonus de FOV lié
  * à la vitesse plafonné à CAMERA_FOV_SPEED_MAX_BONUS (pas de pulsation à chaque esquive).
  */
-export function cameraTargets(mode: CameraMode): { distance: number; fov: number; raise: number } {
+export function cameraTargets(mode: CameraMode, prefs: Readonly<CameraPrefs> = DEFAULT_CAMERA_PREFS): { distance: number; fov: number; raise: number } {
   const aiming = mode.aiming && !mode.carrier;
-  const distance = mode.carrier ? CAMERA_DISTANCE_CARRY : aiming ? CAMERA_DISTANCE_AIM : CAMERA_DISTANCE;
-  const base = mode.carrier ? CAMERA_FOV_CARRY : aiming ? CAMERA_FOV_AIM : CAMERA_FOV;
-  const speedBonus = Math.min(CAMERA_FOV_SPEED_MAX_BONUS, CAMERA_FOV_SPEED_GAIN * Math.max(0, mode.speed - mode.runSpeed));
+  const distance = (mode.carrier ? CAMERA_DISTANCE_CARRY : aiming ? CAMERA_DISTANCE_AIM : CAMERA_DISTANCE) * prefs.distanceScale;
+  const base = (mode.carrier ? CAMERA_FOV_CARRY : aiming ? CAMERA_FOV_AIM : CAMERA_FOV) + prefs.fov - CAMERA_FOV;
+  const speedBonus = prefs.speedFov ? Math.min(CAMERA_FOV_SPEED_MAX_BONUS, CAMERA_FOV_SPEED_GAIN * Math.max(0, mode.speed - mode.runSpeed)) : 0;
   const fov = base + (aiming ? 0 : speedBonus);
   // Passe finale : le porteur voit par-dessus son propre corps (CAMERA_CARRY_RAISE).
   const raise = mode.carrier ? CAMERA_CARRY_RAISE : 0;

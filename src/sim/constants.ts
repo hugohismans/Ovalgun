@@ -1583,6 +1583,13 @@ export const CAMERA_CARRY_RAISE = 1.0;
  * ↓ (plus négatif) = plus de terrain et de coéquipiers à l'écran au départ, moins de profondeur.
  */
 export const KICKOFF_PITCH_DEG = -8;
+/**
+ * Hauteur de caméra choisie dans les réglages (≠ 0) : la caméra regarde le point de la droite de tir situé à cette
+ * distance (m) devant l'origine de visée. Le réticule y est EXACT (convergence) ; plus près ou plus loin, l'écart reste
+ * faible (≈ 0,2 m à 8 m pour +0,5 m de hauteur). Hauteur 0 (défaut) : caméra exactement sur la droite de tir (§3).
+ * ↑ = réticule exact plus loin (tirs longs), un peu moins juste au contact.
+ */
+export const CAMERA_CONVERGE_DISTANCE = 20;
 /** Sensibilité souris (radians par pixel) et multiplicateur en visée. ↑ = caméra plus rapide pour un même geste. */
 export const MOUSE_SENSITIVITY = 0.0022;
 export const MOUSE_AIM_SENSITIVITY_MULT = 0.6;
@@ -1785,3 +1792,26 @@ export const MENU_NAV_REPEAT_SEC = 0.11;
 export const SETTINGS_SENSITIVITY_MIN = 0.25;
 export const SETTINGS_SENSITIVITY_MAX = 3;
 export const SETTINGS_SENSITIVITY_STEP = 0.05;
+/**
+ * Sensibilité en visée (réglages) : multiplicateur appliqué EN PLUS pendant la visée (souris : par-dessus
+ * MOUSE_AIM_SENSITIVITY_MULT ; manette : par-dessus GAMEPAD_AIM_LOOK_MULT). 1 = valeurs de ce fichier. Bornes et pas.
+ */
+export const SETTINGS_AIM_SENSITIVITY_MIN = 0.25;
+export const SETTINGS_AIM_SENSITIVITY_MAX = 2;
+/**
+ * Champ de vision vertical de base choisi dans les réglages (degrés) : CAMERA_FOV remplacé, porteur et visée décalés
+ * d'autant (CAMERA_FOV_CARRY, CAMERA_FOV_AIM). Bornes et pas. ↑ MAX = vue plus large possible (bords plus déformés).
+ */
+export const SETTINGS_FOV_MIN = 60;
+export const SETTINGS_FOV_MAX = 100;
+export const SETTINGS_FOV_STEP = 1;
+/** Distance de caméra (réglages) : multiplicateur des trois distances CAMERA_DISTANCE*. Bornes et pas. */
+export const SETTINGS_CAMERA_DISTANCE_MIN = 0.6;
+export const SETTINGS_CAMERA_DISTANCE_MAX = 1.8;
+/**
+ * Hauteur de caméra (réglages, m) ajoutée au pivot de la caméra (origine de visée), avec convergence du regard
+ * (CAMERA_CONVERGE_DISTANCE). Bornes et pas. Négatif = caméra plus basse que l'épaule.
+ */
+export const SETTINGS_CAMERA_HEIGHT_MIN = -0.4;
+export const SETTINGS_CAMERA_HEIGHT_MAX = 1.2;
+export const SETTINGS_CAMERA_STEP = 0.05;

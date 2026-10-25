@@ -486,9 +486,17 @@ export class GameSession {
     this.restart();
   }
 
-  /** Étape 8 : applique les réglages du joueur, à chaud (sensibilités, inversion Y, aide à la visée, vibrations). */
+  /** Étape 8 : applique les réglages du joueur, à chaud (entrées, caméra, vibrations, volumes). */
   applySettings(s: Readonly<PlayerSettings>): void {
-    this.input.applySettings({ mouseSensitivity: s.mouseSensitivity, padSensitivity: s.padSensitivity, invertY: s.invertY, aimAssist: s.aimAssist });
+    this.input.applySettings({
+      mouseSensitivity: s.mouseSensitivity,
+      padSensitivity: s.padSensitivity,
+      aimSensitivity: s.aimSensitivity,
+      invertY: s.invertY,
+      invertMouseY: s.invertMouseY,
+      aimAssist: s.aimAssist,
+    });
+    this.renderer.setCameraPrefs({ fov: s.fov, distanceScale: s.cameraDistance, height: s.cameraHeight, speedFov: s.speedFov });
     this.haptics.enabled = s.rumble;
     this.audio.setVolume(s.volume);
     this.audio.setMusicVolume(s.musicVolume);

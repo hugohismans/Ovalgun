@@ -54,6 +54,7 @@ import { PassIndicatorView, type PassIndicatorFrame } from './PassIndicatorView'
 import { characterLibrary } from './characters/CharacterLibrary';
 import { PlayerAssets, PlayerView, type PlayerFrame } from './PlayerView';
 import { ShoulderCamera } from './ShoulderCamera';
+import type { CameraPrefs } from './cameraMath';
 import { SpectatorCamera } from './SpectatorCamera';
 import { ScrumView } from './ScrumView';
 import { ZoneView, type AimPreviewFrame } from './ZoneView';
@@ -216,6 +217,11 @@ export class Renderer {
   }
 
   /** Préférence système « animations réduites » : halo d'invulnérabilité sans pulsation. */
+  /** Réglages de caméra du joueur (FOV, distance, hauteur, effet de vitesse), appliqués à chaud. */
+  setCameraPrefs(prefs: Readonly<CameraPrefs>): void {
+    this.shoulder.prefs = { ...prefs };
+  }
+
   setReducedMotion(reduced: boolean): void {
     this.assets.reducedMotion = reduced;
     this.environment.setReducedMotion(reduced);

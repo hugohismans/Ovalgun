@@ -61,7 +61,7 @@
     flex-direction: column;
     gap: 0.9rem;
     width: min(32rem, 100%);
-    max-height: 100%;
+    max-height: calc(100dvh - 2rem);
     padding: 1.2rem 1.4rem 1rem;
     box-sizing: border-box;
     border-radius: var(--r-lg);
