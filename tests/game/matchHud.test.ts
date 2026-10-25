@@ -5,7 +5,19 @@
 import { describe, expect, it } from 'vitest';
 import { formatClock, MatchHud, TEAM_NAMES } from '../../src/game/matchHud';
 import { STYLE } from '../../src/render/palette';
-import { createMatch, FIRST_KICKOFF_FREEZE_SEC, secToTicks, step, TICK_RATE, TRY_POINTS, type MatchState } from '../../src/sim';
+import {
+  BALL_RADIUS,
+  createMatch,
+  FIRST_KICKOFF_FREEZE_SEC,
+  SCRUM_CAPTURE_SEC,
+  secToTicks,
+  setupKickoff,
+  startPlayNow,
+  step,
+  TICK_RATE,
+  TRY_POINTS,
+  type MatchState,
+} from '../../src/sim';
 
 const match = (): MatchState => createMatch({ teamSize: 3, seed: 1, roles: [['ailier', 'demi', 'pilier'], ['ailier', 'demi', 'pilier']] });
 
@@ -87,5 +99,78 @@ describe('MatchHud', () => {
   it('entraînement : drapeau transmis', () => {
     const s = createMatch({ teamSize: 3, seed: 1, roles: [['ailier', 'demi', 'pilier'], ['ailier', 'demi', 'pilier']], training: true });
     expect(new MatchHud().frame(s, 0, 0).training).toBe(true);
+  });
+});
+
+describe('MatchHud : mêlée (étape 7)', () => {
+  /** Match en jeu, ballon libre au centre depuis presque SCRUM_LOOSE_SEC, 2 contre 2 autour (le joueur 0 dedans). */
+  function scrumReady(): MatchState {
+    const s = match();
+    startPlayNow(s);
+    const b = s.ball;
+    b.mode = 'loose';
+    b.carrierId = -1;
+    b.pos = { x: 0, y: BALL_RADIUS, z: 0 };
+    b.vel = { x: 0, y: 0, z: 0 };
+    b.looseTicks = 89;
+    const at: Record<number, [number, number]> = { 0: [-2.5, -2], 1: [2.5, -2], 3: [-2.5, 2], 4: [2.5, 2], 2: [-15, -12], 5: [15, 12] };
+    for (const p of s.players) {
+      const [x, z] = at[p.id];
+      p.pos = { x, y: 0, z };
+      p.vel = { x: 0, y: 0, z: 0 };
+    }
+    s.field.features = [];
+    return s;
+  }
+
+  it('« MÊLÉE ! », décompte, temps restant, prolongation, puis « Mêlée gagnée par … »', () => {
+    const s = scrumReady();
+    const hud = new MatchHud();
+    expect(hud.frame(s, 0, 0).scrum).toBeNull();
+    step(s, {});
+    let t = 1;
+    hud.handleEvents(s.events, s, t);
+    let f = hud.frame(s, 0, t);
+    expect(f.scrumCall).toBe(true);
+    expect(f.scrum).not.toBeNull();
+    expect(f.scrum!.counts).toEqual([2, 2]);
+    expect(f.scrum!.leader).toBe(-1);
+    expect(f.scrum!.overtime).toBe(false);
+    expect(f.scrum!.secLeft).toBeCloseTo(SCRUM_CAPTURE_SEC, 6);
+    expect(f.scrum!.inZone).toBe(true);
+    expect(hud.frame(s, 0, t + STYLE.scrumCallSec + 0.01).scrumCall).toBe(false);
+    // L'équipe 1 fait entrer un troisième joueur : elle mène.
+    s.players[5].pos = { x: 0, y: 0, z: 3 };
+    for (let i = 0; i < 10; i++) step(s, {});
+    f = hud.frame(s, 0, t);
+    expect(f.scrum!.leader).toBe(1);
+    expect(f.scrum!.progress).toBeGreaterThan(0);
+    // Résolution.
+    for (let i = 0; i < secToTicks(SCRUM_CAPTURE_SEC) && s.scrum !== null; i++) {
+      step(s, {});
+      t += 1 / TICK_RATE;
+      hud.handleEvents(s.events, s, t);
+    }
+    f = hud.frame(s, 0, t);
+    expect(f.scrum).toBeNull();
+    expect(f.scrumResult).toEqual({ team: 1, teamName: TEAM_NAMES[1], ours: false, mine: false });
+    expect(hud.frame(s, 0, t + STYLE.scrumResultSec + 0.01).scrumResult).toBeNull();
+  });
+
+  it('prolongation signalée ; remise en jeu : plus de bannière de mêlée', () => {
+    const s = scrumReady();
+    const hud = new MatchHud();
+    for (let i = 0; i <= secToTicks(SCRUM_CAPTURE_SEC); i++) step(s, {});
+    expect(s.scrum).not.toBeNull();
+    const f = hud.frame(s, 0, 0);
+    expect(f.scrum!.overtime).toBe(true);
+    hud.handleEvents([{ type: 'scrum_won', team: 0, playerId: 0 }], s, 1);
+    expect(hud.frame(s, 0, 1).scrumResult?.mine).toBe(true);
+    setupKickoff(s, 1);
+    hud.handleEvents(s.events, s, 1.1);
+    const k = hud.frame(s, 0, 1.1);
+    expect(k.scrum).toBeNull();
+    expect(k.scrumResult).toBeNull();
+    expect(k.scrumCall).toBe(false);
   });
 });

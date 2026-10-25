@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { GameSession, DEFAULT_BOT_DIFFICULTY, type BotDifficulty, type FrameSnapshot, type TeamSize } from '../game/session';
+  import { parseRole } from '../game/roles';
   import { TEAM_COLORS } from '../game/matchHud';
   import { actionLabel, ACTION_LABELS, DEFAULT_KEYMAP, loadLayoutLabels, type Action, type LayoutLabels } from '../input/keymap';
   import { DEFAULT_GAMEPAD_MAP, padActionGlyph, type GamepadAction } from '../input/gamepadMap';
@@ -20,6 +21,8 @@
   const AUTOPILOT = DEBUG && PARAMS.has('autopilot');
   // Taille d'équipe (en attendant le menu de l'étape 8) : ?size=5 pour du 5v5.
   const TEAM_SIZE: TeamSize = PARAMS.get('size') === '5' ? 5 : 3;
+  // Rôle du joueur humain (étape 7, en attendant le menu de l'étape 8) : ?role=pilier|ailier|demi (défaut ailier).
+  const ROLE = parseRole(PARAMS.get('role'), 'ailier');
 
   let canvas: HTMLCanvasElement;
   let session: GameSession | null = null;
@@ -40,7 +43,7 @@
   onMount(() => {
     const s = new GameSession(canvas, {
       teamSize: TEAM_SIZE,
-      humanRole: 'ailier',
+      humanRole: ROLE,
       seed: 1234,
       training: TRAINING,
       debug: DEBUG,
@@ -172,6 +175,8 @@
         Coup d’envoi : {m.teamNames[m.kickoffTeam]}{m.kickoffTeam === m.localTeam ? ' (ton équipe)' : ''}
       </span>
     </div>
+  {:else if m.scrumCall}
+    <div class="banner scrum">MÊLÉE !<span class="hint">entre dans la zone · plaque les adversaires dedans</span></div>
   {:else if m.playCall}
     <div class="countdown"><span class="num go">JOUEZ !</span></div>
   {/if}
@@ -181,6 +186,32 @@
       <span class="big">ESSAI !</span>
       <span class="who">{t.teamName} · {t.mine ? 'toi !' : t.scorerLabel}</span>
       <span class="sc"><b style:color={TEAM_COLORS[0]}>{t.score[0]}</b> – <b style:color={TEAM_COLORS[1]}>{t.score[1]}</b></span>
+    </div>
+  {/if}
+  {#if m.scrum}
+    {@const sc = m.scrum}
+    {@const total = sc.counts[0] + sc.counts[1]}
+    <div class="scrumhud" class:ot={sc.overtime} class:lm={m.lastMinute && !m.training} style:--t0={TEAM_COLORS[0]} style:--t1={TEAM_COLORS[1]}>
+      <span class="lbl">{sc.overtime ? 'PROLONGATION' : 'MÊLÉE'}</span>
+      <div class="cnt">
+        <b class="t0">{sc.counts[0]}</b>
+        <div class="split"><i style:width={pct(total > 0 ? sc.counts[0] / total : 0.5)}></i></div>
+        <b class="t1">{sc.counts[1]}</b>
+      </div>
+      <div class="time"><i style:width={pct(1 - sc.progress)}></i></div>
+      <span class="sub">
+        {sc.overtime ? 'premier qui mène · ' : ''}{sc.secLeft.toFixed(1)} s{sc.inZone ? ' · tu comptes' : ''}
+      </span>
+    </div>
+  {/if}
+  {#if m.scrumResult}
+    {@const r = m.scrumResult}
+    <div class="banner scrumres" style:--tc={r.team === -1 ? '#ffffff' : TEAM_COLORS[r.team]}>
+      {#if r.team === -1}
+        Mêlée : ballon rendu
+      {:else}
+        Mêlée gagnée par <b>{r.teamName}</b>{r.mine ? ' · ballon pour toi !' : r.ours ? ' (ton équipe)' : ''}
+      {/if}
     </div>
   {/if}
 {/if}
@@ -259,10 +290,12 @@
       <div class="chip" class:active={hud.abilityActiveSec > 0} class:ready={hud.abilityImplemented && hud.abilityActiveSec <= 0 && hud.abilityCd <= 0.05}>
         <span class="lbl">{hud.abilityLabel}</span>
         {#if !hud.abilityImplemented}
-          <span class="dim">étape 7</span>
+          <span class="dim">indisponible</span>
         {:else if hud.abilityActiveSec > 0}
           <b>{hud.abilityActiveSec.toFixed(1)} s</b>
           <span class="bar small"><span class="fill" style:width={pct(hud.abilityActiveSec / hud.abilityDurationSec)}></span></span>
+          {#if hud.abilityHint}<span class="dim">{hud.abilityHint}</span>{/if}
+          {#if hud.abilityCd > 0.05}<span class="dim">· {cd(hud.abilityCd)}</span>{/if}
         {:else}
           <b>{cd(hud.abilityCd)}</b>
           {#if hud.abilityCd > 0.05}<span class="bar small cool"><span class="fill" style:width={pct(1 - hud.abilityCd / hud.abilityCooldownSec)}></span></span>{/if}
@@ -734,7 +767,18 @@
     pointer-events: none;
     color: #fff;
     text-align: center;
-    animation: count-pop 0.3s ease-out;
+    animation: banner-pop 0.3s ease-out;
+  }
+  /* Comme count-pop, mais en gardant le centrage horizontal des bannières (translateX). */
+  @keyframes banner-pop {
+    from {
+      transform: translateX(-50%) scale(1.6);
+      opacity: 0;
+    }
+    to {
+      transform: translateX(-50%) scale(1);
+      opacity: 1;
+    }
   }
   .banner.lm {
     top: 40%;
@@ -765,6 +809,119 @@
   }
   .banner.try .sc {
     font: 900 30px/1.2 system-ui, sans-serif;
+  }
+  .scrumhud {
+    position: fixed;
+    left: 50%;
+    top: 56px;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    min-width: 190px;
+    padding: 5px 12px 6px;
+    border-radius: 12px;
+    background: #0d1030c8;
+    box-shadow: inset 0 0 0 2px #ffffff40;
+    color: #fff;
+    font: 800 13px/1.2 system-ui, sans-serif;
+    pointer-events: none;
+  }
+  .scrumhud.lm {
+    top: 80px;
+  }
+  .scrumhud.ot {
+    box-shadow: inset 0 0 0 2px #ffd23e;
+    animation: low-pulse 0.35s ease-in-out infinite alternate;
+  }
+  .scrumhud .lbl {
+    font: 900 13px/1 system-ui, sans-serif;
+    letter-spacing: 2px;
+  }
+  .scrumhud.ot .lbl {
+    color: #ffd23e;
+  }
+  .scrumhud .cnt {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+  }
+  .scrumhud .cnt b {
+    min-width: 16px;
+    text-align: center;
+    font: 900 20px/1 system-ui, sans-serif;
+  }
+  .scrumhud .cnt .t0 {
+    color: var(--t0);
+  }
+  .scrumhud .cnt .t1 {
+    color: var(--t1);
+  }
+  .scrumhud .split {
+    flex: 1;
+    height: 10px;
+    border-radius: 5px;
+    background: var(--t1);
+    overflow: hidden;
+  }
+  .scrumhud .split i {
+    display: block;
+    height: 100%;
+    background: var(--t0);
+    border-right: 2px solid #0d1030;
+    transition: width 0.15s;
+  }
+  .scrumhud .time {
+    width: 100%;
+    height: 4px;
+    border-radius: 2px;
+    background: #ffffff26;
+    overflow: hidden;
+  }
+  .scrumhud .time i {
+    display: block;
+    height: 100%;
+    background: #fff;
+  }
+  .scrumhud.ot .time i {
+    background: #ffd23e;
+  }
+  .scrumhud .sub {
+    font: 700 11px/1.2 system-ui, sans-serif;
+    opacity: 0.85;
+  }
+  .banner.scrum {
+    top: 30%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    font: 900 64px/1 system-ui, sans-serif;
+    color: #ffd23e;
+    text-shadow:
+      0 4px 0 #0d1030,
+      0 0 18px #0d1030aa;
+  }
+  .banner.scrum .hint {
+    padding: 3px 12px;
+    border-radius: 10px;
+    background: #0d1030c8;
+    color: #fff;
+    font: 800 15px/1.3 system-ui, sans-serif;
+    text-shadow: none;
+  }
+  .banner.scrumres {
+    top: 30%;
+    padding: 8px 22px;
+    border-radius: 14px;
+    background: #0d1030d8;
+    box-shadow: inset 0 0 0 3px var(--tc);
+    font: 900 26px/1.2 system-ui, sans-serif;
+  }
+  .banner.scrumres b {
+    color: var(--tc);
   }
   .overlay.end {
     cursor: default;

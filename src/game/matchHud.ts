@@ -1,14 +1,16 @@
 /**
  * Boucle de match côté HUD (étape 6, minimal : le HUD complet est l'étape 8), PUR et testé (le temps est passé en
  * paramètre) : score et chrono (mm:ss), compte à rebours du coup d'envoi (« 3, 2, 1, JOUEZ ! »), bannière d'essai,
- * indicateur « DERNIÈRE MINUTE », écran de fin (score final, statistiques par joueur).
+ * indicateur « DERNIÈRE MINUTE », écran de fin (score final, statistiques par joueur) ; étape 7 : mêlée (« MÊLÉE ! »,
+ * décompte, temps restant, prolongation, « Mêlée gagnée par … »).
  *
  * La session lui transmet les événements de chaque tick (`handleEvents`) et lit un instantané par frame (`frame`).
  * Durées d'affichage : STYLE (render/palette.ts), valeurs purement visuelles.
  */
 
-import { ROLES, TICK_RATE, type MatchEvent, type MatchPhase, type MatchState, type Role, type TeamId } from '../sim';
+import { inScrumZone, ROLES, TICK_RATE, type MatchEvent, type MatchPhase, type MatchState, type Role, type TeamId } from '../sim';
 import { PALETTE, STYLE } from '../render/palette';
+import { scrumGauge } from '../render/ScrumView';
 
 /** Noms affichés des équipes (couleurs du rendu : équipe 0 orange, équipe 1 bleu). */
 export const TEAM_NAMES: readonly [string, string] = ['Orange', 'Bleu'];
@@ -64,6 +66,31 @@ export interface FinalResult {
   canReplay: boolean;
 }
 
+/** Mêlée en cours (étape 7) : décompte, équipe qui mène, prolongation, temps restant de la phase en cours. */
+export interface ScrumHud {
+  counts: [number, number];
+  /** Équipe qui mène au décompte, −1 à égalité. */
+  leader: TeamId | -1;
+  overtime: boolean;
+  /** Temps restant de la phase en cours (capture, ou prolongation qui peut finir plus tôt), s. */
+  secLeft: number;
+  /** Avancement de la phase en cours, 0..1. */
+  progress: number;
+  /** Le joueur local compte dans la zone (actif, dedans). */
+  inZone: boolean;
+}
+
+/** Résultat de la dernière mêlée (bannière quelques secondes après la résolution). */
+export interface ScrumResult {
+  /** Équipe gagnante, −1 : personne (ballon rendu libre). */
+  team: TeamId | -1;
+  teamName: string;
+  /** L'équipe du joueur local a gagné. */
+  ours: boolean;
+  /** Le joueur local reçoit le ballon. */
+  mine: boolean;
+}
+
 export interface MatchHudFrame {
   phase: MatchPhase;
   score: [number, number];
@@ -83,6 +110,10 @@ export interface MatchHudFrame {
   playCall: boolean;
   tryBanner: TryBanner | null;
   final: FinalResult | null;
+  /** Étape 7 : mêlée en cours (null : aucune), « MÊLÉE ! » au déclenchement, résultat après la résolution. */
+  scrum: ScrumHud | null;
+  scrumCall: boolean;
+  scrumResult: ScrumResult | null;
 }
 
 const playerLabel = (state: MatchState, id: number): string => {
@@ -95,6 +126,9 @@ export class MatchHud {
   private lastMinuteUntil = -Infinity;
   private endedAt = Infinity;
   private lastTry: { team: TeamId; scorerId: number; score: [number, number] } | null = null;
+  private scrumCallUntil = -Infinity;
+  private scrumResultUntil = -Infinity;
+  private lastScrum: { team: TeamId | -1; playerId: number } | null = null;
 
   /** Oublie tout (nouveau match). */
   reset(): void {
@@ -102,6 +136,9 @@ export class MatchHud {
     this.lastMinuteUntil = -Infinity;
     this.endedAt = Infinity;
     this.lastTry = null;
+    this.scrumCallUntil = -Infinity;
+    this.scrumResultUntil = -Infinity;
+    this.lastScrum = null;
   }
 
   /** Événements d'un tick (état juste après le tick). */
@@ -119,6 +156,22 @@ export class MatchHud {
           break;
         case 'kickoff':
           this.playCallUntil = -Infinity;
+          this.scrumCallUntil = -Infinity;
+          this.scrumResultUntil = -Infinity;
+          break;
+        case 'scrum_start':
+          this.scrumCallUntil = nowSec + STYLE.scrumCallSec;
+          this.scrumResultUntil = -Infinity;
+          break;
+        case 'scrum_won':
+          this.lastScrum = { team: e.team, playerId: e.playerId };
+          this.scrumCallUntil = -Infinity;
+          this.scrumResultUntil = nowSec + STYLE.scrumResultSec;
+          break;
+        case 'scrum_released':
+          this.lastScrum = { team: -1, playerId: -1 };
+          this.scrumCallUntil = -Infinity;
+          this.scrumResultUntil = nowSec + STYLE.scrumResultSec;
           break;
         case 'match_end':
           this.endedAt = nowSec;
@@ -165,7 +218,25 @@ export class MatchHud {
       playCall: state.phase === 'play' && nowSec < this.playCallUntil,
       tryBanner,
       final: state.phase === 'ended' ? this.finalResult(state, localId, localTeam, nowSec) : null,
+      scrum: this.scrumHud(state, localId),
+      scrumCall: state.scrum !== null && nowSec < this.scrumCallUntil,
+      scrumResult: this.scrumResultFrame(state, localId, localTeam, nowSec),
     };
+  }
+
+  private scrumHud(state: MatchState, localId: number): ScrumHud | null {
+    const sc = state.scrum;
+    if (sc === null) return null;
+    const g = scrumGauge(sc);
+    const me = state.players[localId];
+    const inZone = me !== undefined && inScrumZone(me, sc); // la règle de la sim (pas de copie côté client)
+    return { counts: [sc.counts[0], sc.counts[1]], leader: g.leader, overtime: g.overtime, secLeft: g.secLeft, progress: g.progress, inZone };
+  }
+
+  private scrumResultFrame(state: MatchState, localId: number, localTeam: TeamId, nowSec: number): ScrumResult | null {
+    const r = this.lastScrum;
+    if (r === null || state.phase !== 'play' || nowSec >= this.scrumResultUntil) return null;
+    return { team: r.team, teamName: r.team === -1 ? '' : TEAM_NAMES[r.team], ours: r.team === localTeam, mine: r.playerId === localId };
   }
 
   private finalResult(state: MatchState, localId: number, localTeam: TeamId, nowSec: number): FinalResult {

@@ -3,7 +3,8 @@
  * et joueurs au sol, suivi borné et seulement quand le joueur agit.
  */
 import { describe, expect, it } from 'vitest';
-import { AimAssist, findAssistTarget, type AimAssistQuery, type AssistCandidate } from '../../src/input/aimAssist';
+import { AimAssist, aimAssistApplies, findAssistTarget, type AimAssistQuery, type AssistCandidate } from '../../src/input/aimAssist';
+import { createMatch, debugGiveBall, startPlayNow } from '../../src/sim';
 import {
   AIM_ASSIST_ANGLE_DEG,
   AIM_ASSIST_MAX_TRACK_DEG_PER_SEC,
@@ -96,5 +97,30 @@ describe('aide à la visée', () => {
     const r = a.update(query([cand(3, 1, 0, 12)]));
     expect(r.slowdown).toBe(1);
     expect(r.targetId).toBe(-1);
+  });
+});
+
+describe('aide à la visée : quand elle s’applique (étape 7)', () => {
+  /** Match 3v3 en jeu (rôles : 0 pilier, 1 ailier, 2 demi), ballon libre loin des joueurs. */
+  function match() {
+    const s = createMatch({ teamSize: 3, seed: 1, roles: [['pilier', 'ailier', 'demi'], ['pilier', 'ailier', 'demi']] });
+    startPlayNow(s);
+    s.ball.mode = 'loose';
+    s.ball.carrierId = -1;
+    return s;
+  }
+
+  it('armes en ligne droite, joueur qui peut tirer : oui ; bouclier levé, porteur, au sol, lance-grenades : non', () => {
+    const s = match();
+    expect(aimAssistApplies(s, s.players[1])).toBe(true); // ailier
+    expect(aimAssistApplies(s, s.players[0])).toBe(true); // pilier, bouclier baissé
+    expect(aimAssistApplies(s, s.players[2])).toBe(false); // demi : tir en cloche
+    s.players[0].abilityTicks = 10; // bouclier levé : pas de tir
+    expect(aimAssistApplies(s, s.players[0])).toBe(false);
+    s.players[1].status = 'down';
+    expect(aimAssistApplies(s, s.players[1])).toBe(false);
+    const t = match();
+    debugGiveBall(t, 1);
+    expect(aimAssistApplies(t, t.players[1])).toBe(false); // porteur
   });
 });

@@ -4,6 +4,9 @@
 
 import {
   BOT_DIFFICULTY,
+  BOT_GRENADE_ENGAGE_DIST,
+  BOT_GRENADE_MIN_DIST,
+  BOT_SHOTGUN_ENGAGE_DIST,
   BOT_WALL_MARGIN,
   PLAYER_RADIUS,
   ROLES,
@@ -43,11 +46,22 @@ export function clampToField(state: Readonly<MatchState>, x: number, z: number, 
 /** Marge aux murs du point visé d'une course au ballon : on va le chercher jusque contre le mur. */
 export const CHASE_WALL_MARGIN = PLAYER_RADIUS;
 
-/** Portée d'engagement du bot (portée de l'arme × engageRangeMult), 0 si son arme n'est pas implémentée (demi, étape 7). */
+/**
+ * Portée d'engagement du bot (m), 0 si son arme n'est pas implémentée : balles = portée de l'arme × engageRangeMult ;
+ * plombs (pilier) = plafonnée à BOT_SHOTGUN_ENGAGE_DIST (au-delà le fusil ne fait presque rien : il se rapproche) ;
+ * grenades (demi) = BOT_GRENADE_ENGAGE_DIST × engageRangeMult (au plus la portée de l'arme ; tir balistique).
+ */
 export function engageRange(p: PlayerState, difficulty: BotDifficulty): number {
   const w = ROLES[p.role].weapon;
-  return weaponImplemented(w) ? w.range * BOT_DIFFICULTY[difficulty].engageRangeMult : 0;
+  if (!weaponImplemented(w)) return 0;
+  const mult = BOT_DIFFICULTY[difficulty].engageRangeMult;
+  if (w.projectile === 'grenade') return Math.min(w.range, BOT_GRENADE_ENGAGE_DIST * mult);
+  if (w.projectile === 'pellet') return Math.min(w.range * mult, BOT_SHOTGUN_ENGAGE_DIST);
+  return w.range * mult;
 }
+
+/** Distance horizontale minimale de tir (m) : BOT_GRENADE_MIN_DIST pour le lance-grenades (son propre souffle), 0 sinon. */
+export const minEngageRange = (p: PlayerState): number => (ROLES[p.role].weapon.projectile === 'grenade' ? BOT_GRENADE_MIN_DIST : 0);
 
 /**
  * Joueur au centre du jeu selon la situation PERÇUE : le porteur, ou le receveur d'une passe en vol (futur porteur),

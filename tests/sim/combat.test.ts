@@ -925,14 +925,16 @@ describe('ailier : sprint boosté', () => {
     expect(boosted / hSpeed(p.vel)).toBeCloseTo(BOOST_ACCEL_MULT, 6);
   });
 
-  it('pilier / demi : ABILITY sans effet (étape 7), aucun cooldown consommé ; joueur au sol : rien', () => {
-    const s = arena();
-    place(s, 6, 0, 0);
-    place(s, 2, 3, 0);
-    const log = runLog(s, 3, () => ({ 6: makeInput({ buttons: Buttons.ABILITY }), 2: makeInput({ buttons: Buttons.ABILITY }) }));
-    expect(types(log, 'ability')).toHaveLength(0);
-    expect(s.players[6].abilityCd).toBe(0);
-    expect(s.players[2].abilityCd).toBe(0);
+  it('joueur au sol : ABILITY sans effet, quel que soit le rôle (pilier et demi : tests/sim/roles.test.ts)', () => {
+    for (const id of [6, 2]) {
+      const s = arena();
+      const p = place(s, id, 0, 0);
+      p.status = 'down';
+      p.statusTicks = 50;
+      expect(types(runLog(s, 3, () => ({ [id]: makeInput({ buttons: Buttons.ABILITY }) })), 'ability')).toHaveLength(0);
+      expect(p.abilityCd).toBe(0);
+      expect(s.zones).toHaveLength(0);
+    }
     const d = arena();
     const p = place(d, 0, 0, 0);
     p.status = 'down';

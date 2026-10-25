@@ -8,33 +8,37 @@
  *  - canShoot / fireOverridesSprint : règles partagées avec le déplacement (le tir l'emporte sur le sprint).
  *
  * Projectiles et collisions : projectiles.ts ; dégâts, plaquage, régénération : stability.ts.
- * ÉTAPE 7 : grenades (weaponImplemented), bouclier levé (canShoot, blocage dans projectiles.ts).
+ * Étape 7 : toutes les armes tirent (grenades du demi : explosion.ts) ; bouclier levé (pilier) => pas de tir, mais le
+ * rechargement reste possible derrière le bouclier.
  */
 
 import { GETUP_DURATION_SEC, GETUP_INVULN_SEC, PROJECTILE_MAX_LIFE_SEC, ROLES, type WeaponStats } from './constants';
 import { has, type TickInput } from './input';
 import { aimOrigin, cooldownTicks, isCarrier } from './playerStatus';
 import { rand } from './prng';
+import { shieldUp } from './shield';
 import { secToTicks } from './time';
 import { Buttons, type MatchState, type PlayerState } from './types';
 import { aimDir, type Vec3 } from './vec';
 
 const DEG = Math.PI / 180;
 
-/** L'arme est-elle implémentée ? Étape 5 : balles et plombs. TODO ÉTAPE 7 : grenades (explosion, knockback). */
-export const weaponImplemented = (w: WeaponStats): boolean => w.projectile !== 'grenade';
+/**
+ * L'arme est-elle implémentée ? Toujours vrai depuis l'étape 7 (balles, plombs, grenades) ; gardé dans l'API publique
+ * (HUD, bots) pour une arme future.
+ */
+export const weaponImplemented = (_w: WeaponStats): boolean => true;
 
 /** Cadence de tir en ticks (fireInterval arrondi au tick, au moins 1). Non raccourcie en dernière minute. */
 export const fireIntervalTicks = (w: WeaponStats): number => Math.max(1, secToTicks(w.fireInterval));
 
 /**
- * Le joueur peut-il se servir de son arme (tirer, recharger à la main) ? Actif (ni plaqué ni en train de se
+ * Le joueur a-t-il son arme en main (recharger à la main, et tirer hors bouclier) ? Actif (ni plaqué ni en train de se
  * relever), NON porteur (cahier des charges), pas en posture basse (glissade, plongeon / récupération au sol :
  * l'origine de visée reste à AIM_ORIGIN_HEIGHT, on tirerait par-dessus un muret avec une hitbox cachée derrière),
- * pas en grimpe. Permis en course, en saut et en esquive. Le sprint n'empêche pas de tirer : le tir l'emporte
- * (fireOverridesSprint). TODO ÉTAPE 7 : bouclier levé (pilier) => pas de tir.
+ * pas en grimpe.
  */
-export function canShoot(state: MatchState, p: PlayerState): boolean {
+function weaponInHand(state: MatchState, p: PlayerState): boolean {
   return (
     p.status === 'active' &&
     !isCarrier(state, p) &&
@@ -43,6 +47,15 @@ export function canShoot(state: MatchState, p: PlayerState): boolean {
     p.move !== 'dive_recover' &&
     p.move !== 'climb'
   );
+}
+
+/**
+ * Le joueur peut-il tirer ? Arme en main (weaponInHand) et bouclier baissé (étape 7 : le pilier ne tire pas bouclier
+ * levé ; il peut recharger). Permis en course, en saut et en esquive. Le sprint n'empêche pas de tirer : le tir l'emporte
+ * (fireOverridesSprint).
+ */
+export function canShoot(state: MatchState, p: PlayerState): boolean {
+  return weaponInHand(state, p) && !shieldUp(p);
 }
 
 /**
@@ -151,7 +164,8 @@ function fire(state: MatchState, p: PlayerState, w: WeaponStats, aiming: boolean
 
 /**
  * Étape 5 de `step` : armes, ordre des ids (les tirages de dispersion sont donc déterministes).
- *  - Seulement si canShoot (ni porteur, ni au sol, ni en glissade / plongeon / grimpe) et l'arme est implémentée.
+ *  - Seulement arme en main (ni porteur, ni au sol, ni en glissade / plongeon / grimpe) ; bouclier levé (pilier) :
+ *    rechargement possible, pas de tir.
  *  - `carrierAtStart` : id du porteur au DÉBUT du tick (−1 : aucun). Il n'utilise pas son arme ce tick, même s'il
  *    vient de passer ou de taper le ballon (à la manette, Y émet KICK + RELOAD : le coup de pied ne déclenche pas
  *    en plus un rechargement).
@@ -165,11 +179,12 @@ export function updateShooting(state: MatchState, inputs: readonly TickInput[], 
     const inp = inputs[p.id];
     if (inp === undefined || p.id === carrierAtStart) continue;
     const w = ROLES[p.role].weapon;
-    if (!weaponImplemented(w) || !canShoot(state, p)) continue;
+    if (!weaponImplemented(w) || !weaponInHand(state, p)) continue;
     if (p.reloadTicks === 0 && p.ammo < w.magazine && (p.ammo <= 0 || has(inp.pressed, Buttons.RELOAD))) {
       startReload(state, p, w);
       continue;
     }
+    if (shieldUp(p)) continue; // bouclier levé : rechargement seulement
     if (!has(inp.buttons, Buttons.FIRE) || p.fireCd > 0 || p.ammo <= 0 || p.reloadTicks > 0) continue;
     fire(state, p, w, has(inp.buttons, Buttons.AIM));
     if (p.ammo <= 0) startReload(state, p, w);

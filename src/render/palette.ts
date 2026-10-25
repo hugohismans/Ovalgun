@@ -88,6 +88,27 @@ export const PALETTE = {
   fxGetup: '#ffffff',
   fxAbility: '#3dffa0',
 
+  /** Étape 7 : liseré et flash du bouclier (le panneau prend la couleur claire de l'équipe). */
+  shieldRim: '#ffffff',
+  shieldFlash: '#ffffff',
+  /** Grenades : sphère, traînée ; explosions : boule (couleur de l'équipe du tireur, éclaircie) et onde au sol. */
+  grenade: '#2b2d44',
+  grenadeBand: ['#ffb36b', '#86c6ff'] as const,
+  grenadeTrail: ['#ffe0b8', '#d4ecff'] as const,
+  explosionCore: '#fff6c2',
+  explosionRing: '#ffffff',
+  /** Zones de ralentissement : disque, bord animé (couleurs de l'équipe), aperçu de pose (joueur local). */
+  zonePreview: '#ffffff',
+  grenadePreview: '#ffffff',
+  /**
+   * Mêlée (étape 7) : remplissage neutre (égalité), bord exact de la zone, prolongation (doré), effets au déclenchement /
+   * à la résolution. Les arcs de répartition et le remplissage de l'équipe qui mène prennent les couleurs des équipes.
+   */
+  scrumNeutral: '#ffffff',
+  scrumRim: '#ffffff',
+  scrumOvertime: '#ffd23e',
+  fxScrum: '#ffffff',
+
   /** Décor lointain autour de l'arène. */
   backdropA: '#7b5cff',
   backdropB: '#ff4fa3',
@@ -277,6 +298,76 @@ export const STYLE = {
   dizzyForwardFraction: 0.55,
   fallRate: 14,
 
+  // --- Pilier et demi (étape 7) ---
+  /** Bouclier : segments de l'arc, opacité du panneau, scintillement (amplitude, rad/s), opacité du liseré. */
+  shieldSegments: 18,
+  shieldOpacity: 0.32,
+  shieldShimmer: 0.05,
+  shieldShimmerRate: 6,
+  shieldRimOpacity: 0.85,
+  /** Bouclier : constante de temps du déploiement / repli (s), durée et opacité ajoutée du flash quand il bloque. */
+  shieldDeploySec: 0.06,
+  shieldFlashSec: 0.18,
+  shieldFlashOpacity: 0.55,
+  /** Grenade : rayon de la sphère affichée (m), nombre max simultanées, traînée (durée s, épaisseur m). */
+  grenadeRadius: 0.16,
+  grenadePoolSize: 24,
+  grenadeTrailSec: 0.12,
+  grenadeTrailWidth: 0.09,
+  grenadeTrailOpacity: 0.7,
+  /** Grenade : rotation visuelle (rad par mètre parcouru). */
+  grenadeSpinPerMeter: 0.8,
+  /** Explosion : durée (s), rayon de départ de la boule (fraction du rayon d'explosion), opacité de départ, onde au sol (durée s, épaisseur relative). */
+  explosionSec: 0.42,
+  explosionStartFraction: 0.25,
+  explosionOpacity: 0.85,
+  explosionRingSec: 0.5,
+  explosionRingThickness: 0.12,
+  explosionPoolSize: 12,
+  /** Zone de ralentissement : nombre max, opacité du disque, du bord, du rideau bas (hauteur m), vitesse de rotation du bord (rad/s), pulsation. */
+  zonePoolSize: 12,
+  zoneDiscOpacity: 0.22,
+  zoneRimOpacity: 0.85,
+  zoneRimWidth: 0.35,
+  zoneWallHeight: 0.7,
+  zoneWallOpacity: 0.18,
+  zoneSpinRate: 0.8,
+  zonePulse: 0.12,
+  zonePulseRate: 4,
+  /** Zone : durée (s) du fondu de fin de vie et de l'apparition. */
+  zoneFadeSec: 0.6,
+  zoneAppearSec: 0.2,
+  /** Aperçus du joueur local : zone de ralentissement (capacité prête), point d'impact de la grenade (en visée) — opacité. */
+  zonePreviewOpacity: 0.35,
+  grenadePreviewRadius: 0.8,
+  grenadePreviewOpacity: 0.6,
+  /** Aperçu de grenade : balise verticale (rayon, hauteur m). */
+  grenadePreviewBeaconRadius: 0.06,
+  grenadePreviewBeaconHeight: 2.5,
+
+  // --- Mêlée (étape 7, ScrumView et HUD) ---
+  /**
+   * Zone de capture : largeur (m) de la bande extérieure de répartition (arcs aux couleurs des équipes, chacun grandit
+   * depuis le côté de son en-but), du liseré blanc au rayon exact, opacités (bande, liseré, fond, remplissage de la
+   * progression), rideau bas (hauteur m, opacité), pulsation de la prolongation (rad/s, amplitude).
+   */
+  scrumBandWidth: 0.5,
+  scrumRimWidth: 0.1,
+  scrumBandOpacity: 0.85,
+  scrumRimOpacity: 0.95,
+  scrumBaseOpacity: 0.12,
+  scrumFillOpacity: 0.42,
+  scrumWallHeight: 0.9,
+  scrumWallOpacity: 0.3,
+  scrumPulseRate: 9,
+  scrumPulse: 0.35,
+  /** Mêlée : apparition (s), fondu après la résolution (s). */
+  scrumAppearSec: 0.25,
+  scrumFadeSec: 0.7,
+  /** HUD : « MÊLÉE ! » affiché au déclenchement (s), « Mêlée gagnée par … » à la résolution (s). */
+  scrumCallSec: 1.3,
+  scrumResultSec: 2.2,
+
   // --- Retours de visée (HUD, lus par la session) ---
   /** Hitmarker sur le réticule : durée (s), normal / plaquage. */
   hitMarkerSec: 0.16,
@@ -350,6 +441,15 @@ export const FX = {
     { color: PALETTE.fxPickup, billboard: false, r0: 0.5, r1: 6.0, duration: 0.7, delay: 0, lift: 0.05 },
     { color: PALETTE.fxCatch, billboard: false, r0: 0.4, r1: 4.5, duration: 0.6, delay: 0.12, lift: 0.06 },
     { color: PALETTE.fxPickup, billboard: true, r0: 0.3, r1: 2.4, duration: 0.5, delay: 0.05, lift: 0 },
+  ],
+  /** Mêlée : déclenchement (grande onde au centre de la zone) ; résolution (onde sur le joueur qui reçoit le ballon). */
+  scrumStart: [
+    { color: PALETTE.fxScrum, billboard: false, r0: 0.5, r1: 7.0, duration: 0.6, delay: 0, lift: 0.06 },
+    { color: PALETTE.scrumOvertime, billboard: false, r0: 0.4, r1: 5.0, duration: 0.5, delay: 0.1, lift: 0.07 },
+  ],
+  scrumWon: [
+    { color: PALETTE.fxPickup, billboard: false, r0: 0.4, r1: 3.5, duration: 0.45, delay: 0, lift: 0.05 },
+    { color: PALETTE.fxCatch, billboard: true, r0: 0.2, r1: 1.4, duration: 0.35, delay: 0, lift: 0 },
   ],
   /** Capacité (sprint boosté). */
   ability: [

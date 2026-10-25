@@ -10,16 +10,17 @@
  *   3. Entrées : par joueur (ordre des ids), entrée assainie, fronts montants, yaw/pitch
  *   4. Minuteries : cooldowns… (player.ts) ; statut down/getting_up, rechargement, délai de
  *      régénération (combat.ts) ; durée / cooldown des capacités (abilities.ts)
- *   5. Actions : capacité (abilities.ts), porteur : passe / coup de pied (carrier.ts), tir (combat.ts ; le
+ *   5. Actions : capacité (abilities.ts : sprint boosté, bouclier, pose de zone), porteur : passe / coup de pied (carrier.ts), tir (combat.ts ; le
  *      porteur du DÉBUT du tick n'utilise pas son arme, même s'il vient de lâcher le ballon)
- *   6. Projectiles : déplacement balayé, collisions, dégâts                   (projectiles.ts)
+ *   6. Projectiles : déplacement balayé, collisions, boucliers, dégâts, explosions et knockback
+ *      (projectiles.ts, shield.ts, explosion.ts)
  *      — AVANT le déplacement : les capsules sont testées là où le tireur les voyait en tirant ;
  *      puis décompte de l'invulnérabilité (player.ts, tickInvulnerability)
  *   7. Déplacement (player.ts / body.ts ; plongeon du porteur : carrier.ts), puis séparation entre joueurs,
  *      puis essai du porteur qui vient de franchir la ligne (rules.ts : avant les plaquages de l'étape 8)
  *   8. Stabilité : plaquages (lâcher du ballon), régénération                 (stability.ts)
  *   9. Ballon : porteur ou physique (ball.ts), puis ramassage / réception / interception (carrier.ts)
- *  10. Zones (abilities.ts) et mêlée (scrum.ts)                               (étape 7)
+ *  10. Zones de ralentissement : durée de vie (abilities.ts, étape 7) ; mêlée (scrum.ts)
  *  11. Règles (tick joué seulement) : essai, puis chrono, dernière minute, fin (rules.ts)
  *  12. lastButtons = buttons (sauf entrée manquante : pas de faux front montant au tick suivant)
  *

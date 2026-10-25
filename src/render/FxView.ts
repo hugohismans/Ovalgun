@@ -1,7 +1,7 @@
 /**
  * Effets flat des événements (Three.js) : anneaux qui s'agrandissent et s'estompent, au sol ou face caméra
  * (ramassage, réception, interception, coup de pied, plongeon, passe, passe refusée ; étape 5 : plaquage, relevé,
- * capacité). Traceurs, flashs, étincelles et éclats du combat : CombatFxView. Table des effets :
+ * capacité ; étape 7 : déclenchement et résolution d'une mêlée). Traceurs, flashs, étincelles et éclats du combat : CombatFxView. Table des effets :
  * `FX` (palette.ts) ; choix de l'effet et de son ancrage : `fxForEvent` (PURE, testée).
  * Pool d'anneaux préalloué (STYLE.fxPoolSize) : aucune allocation par frame ni par événement.
  */
@@ -47,6 +47,10 @@ export function fxForEvent(e: MatchEvent, state: MatchState): FxRequest | null {
       return at(e.playerId, FX.ability);
     case 'try':
       return at(e.scorerId, FX.try, state.ball.pos);
+    case 'scrum_start':
+      return { rings: FX.scrumStart, ground: e.pos, air: state.ball.pos };
+    case 'scrum_won':
+      return at(e.playerId, FX.scrumWon);
     default:
       return null;
   }

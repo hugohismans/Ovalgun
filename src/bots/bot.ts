@@ -11,12 +11,14 @@
  *   3. décision tous les decisionSec (± BOT_DECISION_JITTER) ou dès qu'un changement est perçu — tactics.ts ;
  *   4. pilotage vers le point visé (écartement, détour) — steering.ts ;
  *   5. porteur : réflexes et gestes (carrierBrain.ts) ; sinon visée, rafales, rechargement (aiming.ts) et réflexe
- *      d'esquive ; regard tourné d'au plus turnRateDeg × dt ;
+ *      d'esquive ; capacité de rôle (roleAbilities.ts, étape 7 : bouclier du pilier, zone du demi — elle peut imposer
+ *      le regard et suspendre le tir) ; regard tourné d'au plus turnRateDeg × dt ;
  *   6. sortie de blocage (saut, détour) ; conversion de la direction monde en entrée locale (relative au yaw envoyé).
  */
 
 import {
   angleDiff,
+  ballLandingPoint,
   BOT_DECISION_JITTER,
   BOT_DIFFICULTY,
   BOT_DODGE_FORWARD_MIX,
@@ -46,6 +48,8 @@ import { carrierTick, dodgeDirection } from './carrierBrain';
 import type { InputProvider } from './index';
 import { createBotMemory, idleDecision, readSituation, resetBotMemory, type BotMemory } from './memory';
 import { dodgeReflexArmed, updateHitTracking, updatePerception } from './perception';
+import { roleAbilityTick } from './roleAbilities';
+import { scrumApproaching } from './scrumBrain';
 import { resetStuck, steer, trackStuck } from './steering';
 import { decide } from './tactics';
 
@@ -101,12 +105,28 @@ export function botInput(mem: BotMemory, state: Readonly<MatchState>, playerId: 
     mem.lastDirZ = 0;
     mem.lastMoveMag = 0;
     mem.lastButtons = 0;
+    mem.zonePlanTicks = 0;
+    mem.shieldCalmTicks = 0;
+    mem.scrumAlert = false;
     const yaw = me.status === 'active' ? turnYaw(ballYaw) : me.yaw;
     return makeInput({ yaw, pitch: me.status === 'active' ? turnPitch(0) : me.pitch });
   }
 
-  // Décision.
-  if (perceivedChange || mem.decisionTicks <= 0 || mem.decision.role === 'idle') {
+  // Décision (aussi au début / à la fin de l'approche d'une mêlée : toute l'équipe tient la zone ou retourne au ballon
+  // au même tick, sinon un chasseur encore lancé ramassait le ballon que ses coéquipiers tenaient). L'approche commence
+  // BOT_SCRUM_APPROACH_SEC après que le ballon est devenu libre, bien après le temps de réaction de tous les niveaux : la
+  // situation « ballon libre » est déjà perçue, seule son horloge déclenche la décision (comme decisionSec). Hystérésis
+  // à la sortie (scrumApproaching) ; un ballon qui n'est plus libre (ramassé) ne déclenche rien ici : la perception
+  // retardée s'en charge (sinon décision sur une situation perçue « libre » et un ballon déjà porté).
+  const looseNow = state.ball.mode === 'loose';
+  let alert = false;
+  if (looseNow) {
+    const land = ballLandingPoint(state);
+    alert = scrumApproaching(state, me, land.x, land.z, mem.scrumAlert);
+  }
+  const alertChanged = looseNow && alert !== mem.scrumAlert;
+  mem.scrumAlert = alert;
+  if (perceivedChange || alertChanged || mem.decisionTicks <= 0 || mem.decision.role === 'idle') {
     decide(mem, state, me);
     mem.decisionTicks = decisionTicks(mem);
   } else {
@@ -124,12 +144,21 @@ export function botInput(mem: BotMemory, state: Readonly<MatchState>, playerId: 
   const role = mem.decision.role;
   if (role === 'carrier') {
     const c = carrierTick(mem, state, me, turnYaw, dirX, dirZ);
-    yaw = turnYaw(c.wantYaw);
-    pitch = turnPitch(c.wantPitch);
+    let wantYaw = c.wantYaw;
+    let wantPitch = c.wantPitch;
     buttons = c.buttons;
     dirX = c.dirX;
     dirZ = c.dirZ;
     mag = 1;
+    // Capacité de rôle du porteur (bouclier du pilier qui charge ; zone du demi sur un poursuivant), sauf geste en cours.
+    if (mem.decision.plan === 'run' && (buttons & (Buttons.PASS | Buttons.KICK | Buttons.SLIDE)) === 0) {
+      const ab = roleAbilityTick(mem, state, me, true, dirX, dirZ, turnYaw, turnPitch);
+      if (ab.yaw !== null) wantYaw = ab.yaw;
+      if (ab.pitch !== null) wantPitch = ab.pitch;
+      if (ab.press) buttons |= pulse(me, Buttons.ABILITY);
+    }
+    yaw = turnYaw(wantYaw);
+    pitch = turnPitch(wantPitch);
   } else {
     const lookYaw = mag > 0 ? Math.atan2(dirX, dirZ) : ballYaw;
     if (move.sprint) buttons |= Buttons.SPRINT;
@@ -140,11 +169,14 @@ export function botInput(mem: BotMemory, state: Readonly<MatchState>, playerId: 
     } else {
       const a = aimTick(mem, state, me, lookYaw);
       if (debug !== undefined) debug.aim = a;
-      yaw = turnYaw(a.wantYaw);
-      pitch = turnPitch(a.wantPitch);
+      // Capacité de rôle (bouclier face à la menace, visée de la zone) : elle peut prendre le regard et suspendre le tir.
+      const ab = roleAbilityTick(mem, state, me, false, dirX, dirZ, turnYaw, turnPitch);
+      yaw = turnYaw(ab.yaw ?? a.wantYaw);
+      pitch = turnPitch(ab.pitch ?? a.wantPitch);
+      if (ab.press) buttons |= pulse(me, Buttons.ABILITY);
       const cone = BOT_FIRE_CONE_DEG * DEG;
       const aligned = Math.abs(angleDiff(yaw, a.wantYaw)) <= cone && Math.abs(pitch - a.wantPitch) <= cone;
-      if (a.firing && aligned && canShoot(state, me) && weaponImplemented(ROLES[me.role].weapon)) {
+      if (!ab.holdFire && a.firing && aligned && canShoot(state, me) && weaponImplemented(ROLES[me.role].weapon)) {
         buttons |= Buttons.FIRE;
         if (a.ads) buttons |= Buttons.AIM;
       }

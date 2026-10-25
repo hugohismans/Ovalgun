@@ -3,7 +3,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { Haptics, rumbleCueFor } from '../../src/input/haptics';
-import { RUMBLE_HARD_LANDING_SPEED } from '../../src/sim/constants';
+import { GAMEPAD_RUMBLE_EFFECTS, RUMBLE_EXPLOSION_NEAR_MULT, RUMBLE_HARD_LANDING_SPEED } from '../../src/sim/constants';
 
 describe('rumbleCueFor', () => {
   it('ne concerne que le joueur local', () => {
@@ -27,6 +27,37 @@ describe('rumbleCueFor', () => {
     expect(rumbleCueFor({ type: 'land', playerId: 0, speed: RUMBLE_HARD_LANDING_SPEED + 1 }, 0, 0)).toBe('hardLanding');
     expect(rumbleCueFor({ type: 'land', playerId: 0, speed: 2 }, 0, 0)).toBeNull();
     expect(rumbleCueFor({ type: 'jump', playerId: 0, air: false }, 0, 0)).toBeNull();
+  });
+
+  it('étape 7 : son bouclier qui bloque (léger) ; explosion proche (moyen), pas une explosion lointaine', () => {
+    const o = { x: 0, y: 0, z: 0 };
+    expect(rumbleCueFor({ type: 'blocked', targetId: 0, sourceId: 4, pos: o }, 0, 0)).toBe('shieldBlock');
+    expect(rumbleCueFor({ type: 'blocked', targetId: 3, sourceId: 4, pos: o }, 0, 0)).toBeNull();
+    const r = 3.5;
+    const near = { type: 'explosion', ownerId: 4, pos: { x: r * RUMBLE_EXPLOSION_NEAR_MULT - 0.1, y: 0, z: 0 }, radius: r } as const;
+    const far = { type: 'explosion', ownerId: 4, pos: { x: r * RUMBLE_EXPLOSION_NEAR_MULT + 0.1, y: 0, z: 0 }, radius: r } as const;
+    expect(rumbleCueFor(near, 0, 0, o)).toBe('explosionNear');
+    expect(rumbleCueFor(far, 0, 0, o)).toBeNull();
+    expect(rumbleCueFor(near, 0, 0)).toBeNull(); // position du joueur local inconnue
+    expect(GAMEPAD_RUMBLE_EFFECTS.shieldBlock.strong + GAMEPAD_RUMBLE_EFFECTS.shieldBlock.weak).toBeLessThan(
+      GAMEPAD_RUMBLE_EFFECTS.explosionNear.strong + GAMEPAD_RUMBLE_EFFECTS.explosionNear.weak,
+    );
+  });
+});
+
+describe('rumbleCueFor : mêlée (étape 7)', () => {
+  it('déclenchement pour tous ; résolution gagnée / perdue selon son équipe', () => {
+    expect(rumbleCueFor({ type: 'scrum_start', pos: { x: 0, y: 0, z: 0 } }, 0, 0)).toBe('scrumStart');
+    expect(rumbleCueFor({ type: 'scrum_start', pos: { x: 0, y: 0, z: 0 } }, 4, 1)).toBe('scrumStart');
+    expect(rumbleCueFor({ type: 'scrum_won', team: 0, playerId: 2 }, 0, 0)).toBe('scrumWon');
+    expect(rumbleCueFor({ type: 'scrum_won', team: 0, playerId: 0 }, 0, 0)).toBe('scrumWon');
+    expect(rumbleCueFor({ type: 'scrum_won', team: 1, playerId: 4 }, 0, 0)).toBe('scrumLost');
+    expect(rumbleCueFor({ type: 'scrum_released', pos: { x: 0, y: 0, z: 0 } }, 0, 0)).toBeNull();
+    for (const cue of ['scrumStart', 'scrumWon', 'scrumLost'] as const) {
+      const fx = GAMEPAD_RUMBLE_EFFECTS[cue];
+      expect(fx.durationSec).toBeGreaterThan(0);
+      expect(fx.strong + fx.weak).toBeGreaterThan(0);
+    }
   });
 });
 

@@ -27,6 +27,8 @@
  *    (`externalIds`) ; le joueur humain reçoit le ballon aux coups d'envoi de son équipe (`kickoffReceivers`) ; `passive`
  *    (?dummies=off) : joueurs passifs (entrée neutre). `autopilot` (?debug&autopilot) : le joueur 0 est aussi un bot (match bots contre bots
  *    observé depuis sa caméra ; clavier / souris / manette ignorés pour lui).
+ *  - Étape 7 (mêlée) : rien de spécifique ici — les événements de la mêlée passent par les mêmes canaux (HUD de match :
+ *    décompte, « MÊLÉE ! », « Mêlée gagnée par … » ; vibrations ; zone de capture dessinée par le rendu).
  */
 
 import {
@@ -65,7 +67,7 @@ import {
 } from '../sim';
 import type { InputProvider } from '../bots';
 import { createBot } from '../bots';
-import type { AssistCandidate } from '../input/aimAssist';
+import { aimAssistApplies, type AssistCandidate } from '../input/aimAssist';
 import type { GamepadStyle } from '../input/gamepadMap';
 import { Haptics } from '../input/haptics';
 import { CombatHud, type CombatHudFrame } from './combatHud';
@@ -131,10 +133,14 @@ export interface FrameSnapshot {
   magazine: number;
   reloadProgress: number;
   canShoot: boolean;
-  /** Capacité : nom, implémentée (étape 7 pour pilier / demi), temps actif restant (s), durée et cooldown totaux (s). */
+  /**
+   * Capacité : nom, implémentée, temps actif restant (s : sprint boosté, bouclier ; pour le demi, vie restante de SA
+   * zone), durée et cooldown totaux (s), indication contextuelle (« appuie à nouveau pour baisser » bouclier levé).
+   */
   abilityLabel: string;
   abilityImplemented: boolean;
   abilityActiveSec: number;
+  abilityHint: string;
   abilityDurationSec: number;
   abilityCooldownSec: number;
   dodgeCooldownSec: number;
@@ -392,7 +398,7 @@ export class GameSession {
         this.input.exitPointerLock();
       }
     }
-    this.haptics.handleEvents(events, me.id, me.team, nowSec, this.input.activeDevice === 'gamepad' ? this.input.activeGamepad : null);
+    this.haptics.handleEvents(events, me.id, me.team, nowSec, this.input.activeDevice === 'gamepad' ? this.input.activeGamepad : null, me.pos);
     this.renderer.handleEvents(events, this.state, nowSec, this.prev);
     this.combatHud.handleEvents(events, this.state, this.humanId, nowSec);
     for (const e of events) {
@@ -427,7 +433,7 @@ export class GameSession {
   private assistQuery(): Parameters<InputManager['frame']>[1] {
     const s = this.state;
     const me = s.players[this.humanId];
-    if (me.status !== 'active' || isCarrier(s, me)) return null;
+    if (!aimAssistApplies(s, me)) return null; // ne tire pas (au sol, porteur, bouclier levé…) ou tir en cloche
     const alpha = this.loopStep.alpha;
     for (let i = 0; i < s.players.length; i++) {
       const pc = s.players[i];
@@ -485,7 +491,8 @@ export class GameSession {
       canShoot: canShoot(s, me) && weaponImplemented(role.weapon),
       abilityLabel: role.ability.label,
       abilityImplemented: abilityImplemented(me),
-      abilityActiveSec: abilityActive(me) ? ticksToSec(me.abilityTicks) : 0,
+      abilityActiveSec: abilityActive(me) ? ticksToSec(me.abilityTicks) : this.ownZoneSec(me.id),
+      abilityHint: me.role === 'pilier' && abilityActive(me) ? 'appuie à nouveau pour baisser' : '',
       abilityDurationSec: role.ability.duration,
       abilityCooldownSec: cooldownTicks(s, role.ability.cooldown) / TICK_RATE,
       dodgeCooldownSec: cooldownTicks(s, isCarrier(s, me) ? CARRIER_DODGE_COOLDOWN_SEC : DODGE_COOLDOWN_SEC) / TICK_RATE,
@@ -497,6 +504,12 @@ export class GameSession {
       debugTools: this.debugTools,
       match: this.matchHud.frame(s, this.humanId, this.lastTime),
     };
+  }
+
+  /** Vie restante (s) de la zone de ralentissement posée par `id` (0 : aucune). */
+  private ownZoneSec(id: number): number {
+    for (const z of this.state.zones) if (z.ownerId === id) return ticksToSec(z.ttl);
+    return 0;
   }
 
   dispose(): void {

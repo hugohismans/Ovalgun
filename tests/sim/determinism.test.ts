@@ -13,13 +13,25 @@ function simulate(
   teamSize: TeamSize,
   seed: number,
   opts: { roundTripEvery?: number; inputSeed?: number; checkValues?: boolean } = {},
-): { state: MatchState; hashes: string[]; ballTrace: string[]; eventCounts: Partial<Record<MatchEventType, number>>; bad: string[] } {
+): {
+  state: MatchState;
+  hashes: string[];
+  ballTrace: string[];
+  eventCounts: Partial<Record<MatchEventType, number>>;
+  bad: string[];
+  zoneTicks: number;
+  shieldTicks: number;
+} {
   let s = newMatch(teamSize, seed);
-  const frames = scriptedInputs(opts.inputSeed ?? 1234, teamSize * 2, TICKS);
+  // Graine des entrées scriptées : choisie pour que passes ET réceptions arrivent aussi avec les grenades, boucliers et
+  // zones de l'étape 7 (les explosions repoussent les receveurs).
+  const frames = scriptedInputs(opts.inputSeed ?? 99, teamSize * 2, TICKS);
   const hashes: string[] = [];
   const ballTrace: string[] = [];
   const eventCounts: Partial<Record<MatchEventType, number>> = {};
   const bad: string[] = [];
+  let zoneTicks = 0;
+  let shieldTicks = 0;
   for (let t = 0; t < TICKS; t++) {
     scriptedEvents(s, t);
     if (opts.roundTripEvery && t % opts.roundTripEvery === 0) s = cloneState(s);
@@ -28,8 +40,10 @@ function simulate(
     if (t % 100 === 0) hashes.push(hashState(s));
     if (t % 10 === 0) ballTrace.push(JSON.stringify(s.ball));
     if (opts.checkValues && t % 5 === 0 && bad.length === 0) bad.push(...findBadValues(s).map((b) => `tick ${s.tick}: ${b}`));
+    if (s.zones.length > 0) zoneTicks++;
+    if (s.players.some((p) => p.role === 'pilier' && p.abilityTicks > 0)) shieldTicks++;
   }
-  return { state: s, hashes, ballTrace, eventCounts, bad };
+  return { state: s, hashes, ballTrace, eventCounts, bad, zoneTicks, shieldTicks };
 }
 
 describe.each([3, 5] as const)('déterminisme, équipes de %i', (teamSize) => {
@@ -42,12 +56,15 @@ describe.each([3, 5] as const)('déterminisme, équipes de %i', (teamSize) => {
   });
 
   it('les entrées scriptées exercent vraiment les systèmes (sauts, esquives, glissades, rebonds, passes, coups de pied, plongeons…)', () => {
-    for (const type of ['jump', 'land', 'dodge', 'slide', 'bounce', 'pickup', 'dive', 'kick', 'shot', 'reload', 'projectile_end'] as const) {
+    for (const type of ['jump', 'land', 'dodge', 'slide', 'bounce', 'pickup', 'dive', 'kick', 'shot', 'reload', 'projectile_end', 'explosion', 'ability'] as const) {
       expect(ref.eventCounts[type] ?? 0, type).toBeGreaterThan(0);
     }
     // Porteur (étape 4) : des passes PARTENT et des ballons en vol sont ATTRAPÉS (réception / interception, stats).
     expect(ref.eventCounts.pass ?? 0, 'pass').toBeGreaterThan(0);
     expect(ref.eventCounts.catch ?? 0, 'catch').toBeGreaterThan(0);
+    // Étape 7 : grenades (explosions), boucliers levés et zones de ralentissement font partie du déterminisme étendu.
+    expect(ref.zoneTicks, 'zones').toBeGreaterThan(0);
+    expect(ref.shieldTicks, 'boucliers').toBeGreaterThan(0);
     // Les joueurs ont réellement bougé.
     const start = newMatch(teamSize, 42);
     const moved = ref.state.players.filter((p, i) => Math.hypot(p.pos.x - start.players[i].pos.x, p.pos.z - start.players[i].pos.z) > 3);

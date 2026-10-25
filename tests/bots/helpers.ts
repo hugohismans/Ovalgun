@@ -2,9 +2,25 @@
  * Outils communs aux tests des bots (pas un fichier de test : non collecté par vitest).
  */
 import { findBadValues } from '../sim/helpers';
-import { createMatch, hashState, step, type BotDifficulty, type MatchConfig, type MatchState, type PlayerInput, type Role, type TeamSize } from '../../src/sim';
+import {
+  createMatch,
+  hashState,
+  step,
+  type BotDifficulty,
+  type MatchConfig,
+  type MatchState,
+  type PlayerInput,
+  type Role,
+  type TeamSize,
+} from '../../src/sim';
 import { botInput, createBotMemory, type BotMemory } from '../../src/bots';
+import { assignRoles } from '../../src/game/roles';
 
+/**
+ * Rôles des SCÈNES construites (tests de comportement : ids fixes, 0 ailier, 1 pilier, 2 demi…). Les matchs complets
+ * (`runBotMatch`) utilisent la composition du JEU (`gameRoles`), sinon les mesures de rythme ne valent pas pour le jeu
+ * (l'ordre décide aussi qui reçoit les coups d'envoi).
+ */
 export const ROLES_3: [Role[], Role[]] = [
   ['ailier', 'pilier', 'demi'],
   ['ailier', 'pilier', 'demi'],
@@ -55,7 +71,13 @@ export function matchConfig(teamSize: TeamSize, seed: number, extra: Partial<Mat
 }
 
 /**
- * Match complet bots contre bots (tous les joueurs pilotés par un bot de difficulté `difficulty`, ou une par équipe), jusqu'à 'ended'
+ * Composition du jeu par défaut (game/roles.ts : TEAM_ROLES_3V3 / TEAM_ROLES_5V5, rôle « humain » par défaut — ailier,
+ * App.svelte — placé en tête) : 3v3 ailier, pilier, demi ; 5v5 ailier, pilier, ailier, demi, demi. Les deux équipes.
+ */
+export const gameRoles = (teamSize: TeamSize): [Role[], Role[]] => assignRoles(teamSize, 'ailier');
+
+/**
+ * Match complet bots contre bots, composition du jeu (tous les joueurs pilotés par un bot de difficulté `difficulty`, ou une par équipe), jusqu'à 'ended'
  * (ou `maxTicks`). `onTick` est appelé après chaque step.
  */
 export function runBotMatch(
@@ -65,7 +87,7 @@ export function runBotMatch(
   extra: Partial<MatchConfig> = {},
   onTick?: (s: MatchState, inputs: PlayerInput[], memories: BotMemory[]) => void,
 ): MatchRun {
-  const s = createMatch(matchConfig(teamSize, seed, extra));
+  const s = createMatch({ teamSize, seed, roles: gameRoles(teamSize), ...extra });
   const memories = s.players.map((p) => createBotMemory(p.id, typeof difficulty === 'string' ? difficulty : difficulty[p.team], seed));
   const events: Record<string, number> = {};
   let possessionChanges = 0;

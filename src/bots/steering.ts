@@ -9,10 +9,17 @@
  *    travers, coin), il saute et tourne sa direction de BOT_DETOUR_ANGLE_DEG (côté tiré au sort) pendant BOT_DETOUR_SEC.
  *    Les murets bas se franchissent seuls (grimpe automatique de la sim quand on va vers leur face) : le bot ne les
  *    contourne pas, il fonce dessus.
+ *  - Étape 7 : ZONES DE RALENTISSEMENT ADVERSES : si la route vers le point visé traverse une zone adverse (rayon +
+ *    BOT_ZONE_AVOID_MARGIN) à moins de BOT_ZONE_AVOID_LOOKAHEAD de son bord, la direction est tournée vers la tangente
+ *    à la zone, du côté du point visé (contournement) — sauf si le point visé est lui-même dans la zone (ballon,
+ *    porteur à presser : on y va) ou si l'on est déjà dedans (on sort vers le point visé). Le porteur, lui, pénalise
+ *    les directions qui traversent une zone (carrierBrain.ts).
  */
 
 import {
   BOT_ARRIVE_RADIUS,
+  BOT_ZONE_AVOID_LOOKAHEAD,
+  BOT_ZONE_AVOID_MARGIN,
   BOT_DETOUR_ANGLE_DEG,
   BOT_DETOUR_SEC,
   BOT_IDLE_PUSH_MIN,
@@ -53,6 +60,40 @@ function rotate(x: number, z: number, a: number): { x: number; z: number } {
   return { x: x * c + z * s, z: z * c - x * s };
 }
 
+/**
+ * Contournement des zones de ralentissement adverses : direction (dx, dz) unitaire vers le point visé (gx, gz), tournée
+ * vers la tangente de la première zone adverse sur la route (voir l'en-tête). PURE.
+ */
+export function avoidZones(state: Readonly<MatchState>, me: PlayerState, dx: number, dz: number, gx: number, gz: number): { x: number; z: number } {
+  let best = Infinity;
+  let out = { x: dx, z: dz };
+  for (const zn of state.zones) {
+    if (zn.team === me.team) continue;
+    const r = zn.radius + BOT_ZONE_AVOID_MARGIN;
+    const cx = zn.pos.x - me.pos.x;
+    const cz = zn.pos.z - me.pos.z;
+    const dist = Math.sqrt(cx * cx + cz * cz);
+    if (dist <= r || dist - r > BOT_ZONE_AVOID_LOOKAHEAD) continue; // dedans (on sort vers le but) ou trop loin
+    if ((gx - zn.pos.x) ** 2 + (gz - zn.pos.z) ** 2 <= zn.radius * zn.radius) continue; // le but est dans la zone
+    const along = cx * dx + cz * dz;
+    if (along <= 0) continue; // la zone est derrière
+    const goalDist = Math.sqrt((gx - me.pos.x) ** 2 + (gz - me.pos.z) ** 2);
+    if (goalDist < dist - r) continue; // le but est avant la zone
+    const perp = cx * dz - cz * dx; // > 0 : centre à droite (sens trigonométrique du plan XZ)
+    if (Math.abs(perp) >= r || dist >= best) continue;
+    // Tangente : angle asin(r / dist) de part et d'autre de la direction du centre, côté opposé au centre.
+    const a = Math.asin(Math.min(1, r / dist));
+    const ux = cx / dist;
+    const uz = cz / dist;
+    const s = perp > 0 ? -1 : 1; // tourner du côté où la route passe déjà
+    const c = Math.cos(a * s);
+    const sn = Math.sin(a * s);
+    out = { x: ux * c + uz * sn, z: uz * c - ux * sn };
+    best = dist;
+  }
+  return out;
+}
+
 /** Direction et inclinaison voulues d'après la décision courante (sans le suivi de blocage). PURE vis-à-vis de l'état. */
 export function steer(mem: BotMemory, state: Readonly<MatchState>, me: PlayerState): MoveCommand {
   const d = mem.decision;
@@ -74,6 +115,11 @@ export function steer(mem: BotMemory, state: Readonly<MatchState>, me: PlayerSta
       dx = vx / dist;
       dz = vz / dist;
       mag = dist < BOT_SLOW_RADIUS ? Math.max(BOT_MIN_MOVE_INPUT, dist / BOT_SLOW_RADIUS) : 1;
+      if (state.zones.length > 0) {
+        const a = avoidZones(state, me, dx, dz, d.goalX, d.goalZ);
+        dx = a.x;
+        dz = a.z;
+      }
     }
   }
   // Écartement des coéquipiers (pas d'agglutinement), sauf porteur et receveur qui gardent leur course.

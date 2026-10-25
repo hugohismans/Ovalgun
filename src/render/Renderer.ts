@@ -6,19 +6,28 @@
  * courant, cône de passe, point de chute du coup de pied) et effets des événements (`handleEvents`).
  * Étape 5 : traceurs, flashs, étincelles, éclats de plaquage (CombatFxView), joueur touché qui clignote,
  * barres de stabilité face caméra, posture au sol (PlayerView).
+ * Étape 7 : bouclier du pilier (PlayerView, flash sur 'blocked'), grenades et explosions (CombatFxView), zones de
+ * ralentissement et aperçus du demi local — point de pose de la zone quand la capacité est prête, point d'impact de la
+ * grenade en visée (ZoneView) ; zone de capture de la mêlée (ScrumView : rayon exact, répartition, progression,
+ * prolongation).
  */
 
 import * as THREE from 'three';
 import {
+  aimDir,
+  aimOrigin,
   canCarrierAct,
+  canShoot,
   carryPosition,
   groundHeight,
   kickLaunch,
   passAimDirection,
   playerHeight,
   predictBallLanding,
+  predictGrenadeImpact,
   ROLES,
   selectPassTarget,
+  slowZonePlacement,
   type MatchEvent,
   type MatchState,
   type Vec3,
@@ -32,6 +41,8 @@ import { PALETTE, STYLE } from './palette';
 import { PassIndicatorView, type PassIndicatorFrame } from './PassIndicatorView';
 import { PlayerAssets, PlayerView, type PlayerFrame } from './PlayerView';
 import { ShoulderCamera } from './ShoulderCamera';
+import { ScrumView } from './ScrumView';
+import { ZoneView, type AimPreviewFrame } from './ZoneView';
 
 /** Paramètres de caméra du joueur local pour une frame. */
 export interface ViewInput {
@@ -144,6 +155,10 @@ export class Renderer {
   private readonly passIndicator = new PassIndicatorView();
   private readonly fx = new FxView();
   private readonly combatFx = new CombatFxView();
+  private readonly zones = new ZoneView();
+  private readonly scrum = new ScrumView();
+  private readonly aimPreview: AimPreviewFrame = { zone: null, grenade: null, team: 0 };
+  private readonly zonePreviewPos: Vec3 = { x: 0, y: 0, z: 0 };
   private readonly sky = createSky();
   /** Cible de la passe assistée affichée à la dernière frame (-1 : aucune, ou le joueur local ne porte pas). */
   passTargetId = -1;
@@ -179,7 +194,7 @@ export class Renderer {
     const sun = new THREE.DirectionalLight(PALETTE.sun, STYLE.sunIntensity);
     sun.position.set(18, 30, -10);
     this.scene.add(sun);
-    this.scene.add(this.ball.group, this.passIndicator.group, this.fx.group, this.combatFx.group);
+    this.scene.add(this.ball.group, this.passIndicator.group, this.fx.group, this.combatFx.group, this.zones.group, this.scrum.group);
     this.resize();
   }
 
@@ -292,6 +307,9 @@ export class Renderer {
     this.updatePassIndicator(curr, view, carrierId, timeSec);
     this.fx.update(timeSec, this.shoulder.camera);
     this.combatFx.update(curr, a, this.shoulder.camera, dt, timeSec);
+    this.updateAimPreview(curr, view);
+    this.zones.update(curr, this.aimPreview, timeSec);
+    this.scrum.update(curr.scrum, a, timeSec);
     for (const v of this.players) v.faceCamera(this.shoulder.camera.quaternion);
 
     this.sky.position.copy(this.shoulder.camera.position);
@@ -335,6 +353,34 @@ export class Renderer {
   }
 
   /**
+   * Aperçus du demi local (étape 7) : point de pose de sa zone (capacité prête, slowZonePlacement de la sim avec le regard
+   * COURANT, recalé sur sa position interpolée) et point d'impact de sa grenade en visée (predictGrenadeImpact, relief
+   * seulement). Masqués pour les autres rôles, au sol, ou quand l'action est impossible.
+   */
+  private updateAimPreview(curr: MatchState, view: ViewInput): void {
+    const f = this.aimPreview;
+    f.zone = null;
+    f.grenade = null;
+    const me = curr.players[view.localId];
+    if (me === undefined || me.role !== 'demi' || me.status !== 'active') return;
+    f.team = me.team;
+    if (me.abilityCd === 0) {
+      const at = slowZonePlacement(curr, me, view.yaw, view.pitch);
+      const x = at.x + this.localFeet.x - me.pos.x;
+      const z = at.z + this.localFeet.z - me.pos.z;
+      this.zonePreviewPos.x = x;
+      this.zonePreviewPos.y = groundHeight(curr.field, x, z);
+      this.zonePreviewPos.z = z;
+      f.zone = this.zonePreviewPos;
+    }
+    if (view.aiming && canShoot(curr, me)) {
+      const w = ROLES.demi.weapon;
+      const d = aimDir(view.yaw, view.pitch);
+      f.grenade = predictGrenadeImpact(curr.field, aimOrigin(this.localFeet, view.yaw), { x: d.x * w.speed, y: d.y * w.speed, z: d.z * w.speed }, w);
+    }
+  }
+
+  /**
    * Effets des événements d'un tick (appelé par la session après chaque step, avec l'état juste après et l'état
    * juste avant : un projectile terminé pendant le tick est prolongé jusqu'à son point d'impact).
    */
@@ -342,6 +388,8 @@ export class Renderer {
     for (const e of events) {
       this.fx.handle(e, state, timeSec);
       if (e.type === 'hit') this.players[e.targetId]?.flash(timeSec);
+      if (e.type === 'blocked') this.players[e.targetId]?.shieldFlash(timeSec);
+      this.scrum.handleEvent(e);
     }
     this.combatFx.handleEvents(events, state, prev, timeSec);
   }
@@ -352,6 +400,8 @@ export class Renderer {
     this.passIndicator.dispose();
     this.fx.dispose();
     this.combatFx.dispose();
+    this.zones.dispose();
+    this.scrum.dispose();
     this.assets.dispose();
     this.sky.geometry.dispose();
     (this.sky.material as THREE.Material).dispose();

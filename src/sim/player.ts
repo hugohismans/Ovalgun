@@ -82,7 +82,8 @@ export function sprintApplies(inp: TickInput): boolean {
 /**
  * Vitesse de course cible (m/s) pour l'entrée donnée : vitesse du rôle × direction locale
  * (avant 1, pas chassé STRAFE, arrière BACKPEDAL, interpolés) × inclinaison analogique ×
- * visée (sauf porteur) / sprint × porteur × capacités (sprint boosté de l'ailier ; étape 7 : bouclier, zones).
+ * visée (sauf porteur) / sprint × porteur × capacités (sprint boosté de l'ailier ; étape 7 : bouclier levé, zone de
+ * ralentissement adverse — abilities.ts, abilitySpeedMultiplier).
  * Tir contre sprint (étape 5) : FIRE maintenu avec une arme prête (fireOverridesSprint) => le sprint est
  * ignoré ce tick (le tir l'emporte).
  */

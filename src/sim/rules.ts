@@ -23,7 +23,7 @@
  * quand même) et à l'étape 11 (ballon ramassé / attrapé dans l'en-but adverse à l'étape 9).
  *
  * Chrono : décompté d'un tick à chaque tick JOUÉ (tick commencé en phase 'play' après l'étape 2, y compris le tick du
- * coup de sifflet et celui d'un essai ; plus tard la mêlée, qui fait partie du jeu), jamais pendant 'kickoff' / 'try',
+ * coup de sifflet et celui d'un essai ; la mêlée de l'étape 7, qui fait partie du jeu), jamais pendant 'kickoff' / 'try',
  * jamais en entraînement (config.training : pas de dernière minute, pas de fin). Ordre de l'étape 11 : essai, PUIS
  * chrono : un essai marqué au tick où le chrono atteint 0 compte (score de 'match_end' compris), et la fin l'emporte
  * sur la pause d'essai (phase 'ended').
@@ -181,13 +181,14 @@ function checkTry(state: MatchState): void {
 
 /**
  * Fin du match (chrono à 0) : phase 'ended' (définitive), événement 'match_end' avec le score final (égalité
- * possible), ballon mort posé au sol, projectiles retirés, vitesses des joueurs remises à 0 (positions conservées :
+ * possible), ballon mort posé au sol, projectiles retirés, mêlée en cours oubliée (étape 7), vitesses des joueurs remises à 0 (positions conservées :
  * step ne les fait plus évoluer).
  */
 function endMatch(state: MatchState): void {
   const b = state.ball;
   killBall(state, b.pos.x, b.pos.z);
   state.projectiles = [];
+  state.scrum = null;
   for (const p of state.players) p.vel = { x: 0, y: 0, z: 0 };
   state.phase = 'ended';
   state.phaseTicks = 0;

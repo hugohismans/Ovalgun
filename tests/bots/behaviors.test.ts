@@ -249,7 +249,7 @@ describe('bots : défense et ballon libre', () => {
   it('joueur humain (externe) immobile : les bots ne comptent pas sur lui pour presser le porteur', () => {
     const roles = (externalIds: number[]): string[] => {
       const s = scene(3);
-      place(s, 3, 0, 10, Math.PI); // porteur adverse, dans son propre tiers : un seul presseur
+      place(s, 3, 0, 14, Math.PI); // porteur adverse, dans son propre tiers : un seul presseur
       place(s, 0, 2, 5); // humain, le plus proche du porteur, qui ne fait rien
       place(s, 1, -6, 0);
       place(s, 2, 6, -2);

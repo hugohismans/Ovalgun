@@ -20,6 +20,9 @@
  *  - BALLON LIBRE / COUP DE PIED : les BOT_BALL_CHASERS_* plus proches (en temps de course) de chaque équipe vont au
  *      point de chute prédit (ballLandingPoint) ; les autres gardent une forme d'équipe (rideau entre le ballon et leur
  *      en-but, ou en soutien devant s'ils viennent de taper) ; on tire sur les adversaires qui vont au ballon.
+ *  - MÊLÉE (étape 7, scrumBrain.ts) : en approche (ballon libre depuis BOT_SCRUM_APPROACH_SEC, adversaires autour), les
+ *      non-chasseurs rejoignent la zone autour du ballon ; pendant la capture, l'équipe envoie dans la zone de quoi avoir
+ *      une majorité confortable et tire sur les adversaires qui y sont, les autres se placent pour la suite.
  *  - Phase figée (coup d'envoi, essai, fin) : idle.
  */
 
@@ -40,6 +43,7 @@ import {
   BOT_DANGER_OPEN_DIST,
   BOT_DANGER_OPEN_WEIGHT,
   BOT_ESCORT_THREAT_DIST,
+  BOT_GRENADE_STANDOFF,
   BOT_LEAD_SPEED_CAP_MULT,
   BOT_MARK_CARRIER_SHIFT,
   BOT_MARK_GOALSIDE,
@@ -72,6 +76,7 @@ import {
   type TeamId,
 } from '../sim';
 import { planCarrier } from './carrierBrain';
+import { decideScrum, decideScrumApproach, scrumApproaching, shouldHoldZone } from './scrumBrain';
 import type { BotMemory, Decision, Situation, TacticalRole } from './memory';
 import {
   activeOf,
@@ -194,6 +199,19 @@ function decideAttack(mem: BotMemory, state: Readonly<MatchState>, me: PlayerSta
   setRole(d, 'space', goal, true, shootId);
 }
 
+/**
+ * Point visé pour presser le porteur au point anticipé `lp` : le point lui-même, sauf pour le demi (lance-grenades) qui
+ * s'arrête à BOT_GRENADE_STANDOFF du porteur, de son côté (portée utile, hors de son propre souffle).
+ */
+function standoff(state: Readonly<MatchState>, me: PlayerState, lp: Point): Point {
+  if (ROLES[me.role].weapon.projectile !== 'grenade') return clampToField(state, lp.x, lp.z);
+  const vx = me.pos.x - lp.x;
+  const vz = me.pos.z - lp.z;
+  const l = Math.sqrt(vx * vx + vz * vz);
+  if (l <= BOT_GRENADE_STANDOFF || l < 1e-6) return clampToField(state, me.pos.x, me.pos.z);
+  return clampToField(state, lp.x + (vx / l) * BOT_GRENADE_STANDOFF, lp.z + (vz / l) * BOT_GRENADE_STANDOFF);
+}
+
 /** Distance horizontale d'un joueur à un point. */
 const playerDistTo = (p: PlayerState, g: Point): number => Math.sqrt(dist2(p.pos.x, p.pos.z, g.x, g.z));
 
@@ -274,7 +292,7 @@ function decideDefense(mem: BotMemory, state: Readonly<MatchState>, me: PlayerSt
   const pressers = byDist.slice(0, nPress);
   if (pressers.includes(me)) {
     const lp = leadPoint(f, BOT_PRESS_LEAD_SEC);
-    setRole(d, 'press', clampToField(state, lp.x, lp.z), true, f.id);
+    setRole(d, 'press', standoff(state, me, lp), true, f.id);
     return;
   }
   const others = byDist.slice(nPress);
@@ -340,8 +358,15 @@ function decideLoose(mem: BotMemory, state: Readonly<MatchState>, me: PlayerStat
     }
   }
   const inRange = firstOpp !== null && playerDist(me, firstOpp) <= range;
+  // Mêlée possible et pas défavorable (au moins autant de joueurs que l'adversaire autour du ballon) : on « tient » la zone hors du cercle de ramassage en tirant
+  // sur qui s'approche du ballon, plutôt que de le ramasser au milieu des tireurs adverses ; ceux qui n'y entrent pas
+  // gardent la forme (personne ne court au ballon) — scrumBrain.ts.
+  // Même alerte que bot.ts (calculée ce tick, hystérésis comprise) : décision et déclenchement restent d'accord.
+  const approaching = scrumApproaching(state, me, land.x, land.z, mem.scrumAlert);
+  const hold = approaching && shouldHoldZone(state, me, land.x, land.z);
+  if (hold && decideScrumApproach(mem, state, me, land.x, land.z, [], true)) return;
   const ci = ranked.indexOf(me);
-  if (ci >= 0 && ci < nChase) {
+  if (!hold && ci >= 0 && ci < nChase) {
     const vx = tx - me.pos.x;
     const vz = tz - me.pos.z;
     const l = Math.sqrt(vx * vx + vz * vz);
@@ -351,10 +376,16 @@ function decideLoose(mem: BotMemory, state: Readonly<MatchState>, me: PlayerStat
     setRole(d, 'chase', clampToField(state, tx + vx * over, tz + vz * over, CHASE_WALL_MARGIN), true, shootId);
     return;
   }
+  // Mêlée probable (ballon libre depuis longtemps, adversaires autour) : on rejoint la zone pour peser sur le décompte
+  // (scrumBrain.ts), les chasseurs étant déjà comptés.
+  if (approaching && !hold) {
+    const chasers = ranked.slice(0, nChase).map((p) => p.id);
+    if (decideScrumApproach(mem, state, me, land.x, land.z, chasers, false)) return;
+  }
   // Forme : répartis en largeur (rangés par x), en rideau entre le ballon et notre en-but ; si notre équipe vient de
   // taper / lâcher le ballon, on monte plutôt en soutien juste derrière le point de chute.
   const dir = attackDir(me.team);
-  const shapers = ranked.slice(nChase).sort((a, c) => a.pos.x - c.pos.x || a.id - c.id);
+  const shapers = (hold ? ranked : ranked.slice(nChase)).sort((a, c) => a.pos.x - c.pos.x || a.id - c.id);
   const k = shapers.indexOf(me);
   const n = shapers.length;
   const halfSpan = (state.field.width * BOT_SHAPE_WIDTH_FRACTION) / 2;
@@ -385,6 +416,10 @@ export function decide(mem: BotMemory, state: Readonly<MatchState>, me: PlayerSt
   }
   if (focus !== null && focus.team === opponentTeam(me.team)) {
     decideDefense(mem, state, me, focus);
+    return;
+  }
+  if (sit.ballMode === 'scrum' && state.scrum !== null) {
+    decideScrum(mem, state, me, state.scrum);
     return;
   }
   decideLoose(mem, state, me, sit);

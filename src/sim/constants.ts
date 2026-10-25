@@ -69,8 +69,14 @@ export const FIELD_WIDTH_5V5 = 52;
 export const FIELD_LENGTH_5V5 = 96;
 /** Profondeur de chaque en-but en 5v5 (m). */
 export const IN_GOAL_DEPTH_5V5 = 8;
-/** Échelle linéaire du terrain 3v3 par rapport au 5v5 (cahier des charges : ~70 %). S'applique aussi au relief. */
-export const FIELD_SCALE_3V3 = 0.7;
+/**
+ * Échelle linéaire du terrain 3v3 par rapport au 5v5 (cahier des charges : « environ 70 % de la taille »). S'applique
+ * aussi au relief. Décision de la correction de l'étape 7 : « 70 % » lu comme une SURFACE (√0,7 ≈ 0,84 en longueur et
+ * en largeur) plutôt que 0,7 en linéaire (49 % de la surface) : à 0,7, un porteur qui avait passé la défense marquait
+ * presque à coup sûr (≈ 28–30 essais par match de 6 min bots contre bots). ↑ = terrain 3v3 plus grand (moins d'essais,
+ * plus de course).
+ */
+export const FIELD_SCALE_3V3 = 0.84;
 
 /** Hauteur franchie sans ralentir (marche/pente). */
 export const MAX_STEP_HEIGHT = 0.35;
@@ -195,8 +201,13 @@ export const BACKPEDAL_SPEED_MULT = 0.8;
 export const STRAFE_SPEED_MULT = 0.92;
 /** Multiplicateur de vitesse en visée (clic droit). */
 export const AIM_SPEED_MULT = 0.72;
-/** Multiplicateur de vitesse en sprint (Shift maintenu). Le sprint empêche de tirer. */
-export const SPRINT_SPEED_MULT = 1.22;
+/**
+ * Multiplicateur de vitesse en sprint (Shift maintenu). Tirer coupe le sprint. Correction de l'étape 7 : 1,22 -> 1,12 —
+ * un porteur qui avait dépassé la défense ne pouvait plus être rattrapé (porteur 11,3 m/s de moyenne, ailier boosté
+ * 13,9 m/s). Le porteur reste le plus rapide (course × 1,08 × 1,12 = × 1,21, contre × 1,12 pour un défenseur qui sprinte).
+ * ↑ = jeu plus rapide, mais porteurs plus durs à rattraper (plus d'essais).
+ */
+export const SPRINT_SPEED_MULT = 1.12;
 /**
  * Le sprint ne s'applique qu'en avançant : cosinus minimal de l'angle entre la direction d'entrée
  * et « devant » (0,64 ≈ 50° : la diagonale clavier à 45° sprinte, le pas chassé non).
@@ -272,10 +283,12 @@ export const REGEN_DELAY_SEC = 2.0;
 /** Vitesse de régénération de la stabilité (points/s) une fois le délai écoulé. ↑ = la jauge remonte plus vite. */
 export const REGEN_RATE = 45;
 /**
- * Multiplicateur des dégâts subis par le porteur (cahier des charges : « un peu plus fort »).
- * ↑ = le porteur tombe plus vite (défense plus forte).
+ * Multiplicateur des dégâts subis par le porteur (cahier des charges : « un peu plus fort »). Correction de l'étape 7 :
+ * 1,1 -> 1,3 (réglage du rythme, docs/ARCHITECTURE.md §15) : l'ailier plaque un porteur immobile en ≈ 1,0 s au lieu de
+ * 1,2 s. 1,5 (proposé en relecture) ne donnait pas moins d'essais une fois le reste réglé, mais moins de ballon porté et
+ * plus de joueurs au sol. ↑ = le porteur tombe plus vite (défense plus forte).
  */
-export const CARRIER_DAMAGE_MULT = 1.1;
+export const CARRIER_DAMAGE_MULT = 1.3;
 /** Durée au sol après un plaquage (s). Cahier des charges : 2,5 s. ↑ = un plaquage pèse plus lourd (supériorité numérique plus longue). */
 export const DOWN_DURATION_SEC = 2.5;
 /** Durée de relevé, invulnérable et immobile (s). ↑ = relevé plus lent (le plaqué revient plus tard dans le jeu). */
@@ -487,8 +500,8 @@ export const PASS_PICKUP_BLOCK_SEC = 0.4;
 
 /**
  * Coup de pied : vitesse initiale (m/s) sur le terrain 5v5, multipliée par √(field.scale) (portée ∝ v², donc
- * proportionnelle à la taille du terrain : ≈ 25 m/s ×0,84 en 3v3). Portée ≈ v²·sin(2θ)/g ≈ 37 m en 5v5, ≈ 26 m
- * en 3v3 (tireur immobile). ↑ = coups de pied plus longs.
+ * proportionnelle à la taille du terrain : ≈ 25 m/s × 0,92 en 3v3, échelle 0,84). Portée ≈ v²·sin(2θ)/g ≈ 37 m en 5v5,
+ * ≈ 31 m en 3v3 (tireur immobile). ↑ = coups de pied plus longs.
  */
 export const KICK_SPEED = 25;
 /**
@@ -556,8 +569,8 @@ export const DIVE_IN_AIR = true;
 
 export interface WeaponStats {
   /**
-   * Type de projectile tiré. Étape 5 : balles et plombs ; les grenades (explosion, knockback) arrivent à
-   * l'étape 7 (d'ici là, le lance-grenades ne tire pas).
+   * Type de projectile tiré : balles (ailier), plombs (pilier : `pellets` par tir), grenades (demi : trajectoire
+   * balistique de gravité `gravity`, explosion à l'impact, voir src/sim/explosion.ts).
    */
   projectile: 'bullet' | 'pellet' | 'grenade';
   /**
@@ -581,7 +594,10 @@ export interface WeaponStats {
    * ↑ = moins d'avance à prendre sur une cible qui court ; ↓ = balles plus visibles et esquivables de loin.
    */
   speed: number;
-  /** Portée maximale (m) : le projectile disparaît au-delà. ↑ = on touche de plus loin. */
+  /**
+   * Portée maximale (m, distance parcourue le long de la trajectoire) : le projectile disparaît au-delà (une grenade
+   * explose alors en l'air, comme au bout de PROJECTILE_MAX_LIFE_SEC). ↑ = on touche de plus loin.
+   */
   range: number;
   /**
    * Atténuation : dégâts pleins jusqu'à `falloffStart` (m), puis baisse linéaire jusqu'à `falloffMinMult` × dégâts
@@ -596,17 +612,31 @@ export interface WeaponStats {
    */
   magazine: number;
   reloadSec: number;
-  /** Gravité appliquée au projectile (grenades), m/s². ↑ = trajectoire plus en cloche, portée utile plus courte. */
+  /**
+   * Gravité appliquée au projectile (grenades), m/s² : parabole EXACTE (balayée en PROJECTILE_ARC_SUBSTEPS cordes par
+   * tick). Portée sur le plat ≈ v²/g à 45°. ↑ = trajectoire plus en cloche, portée utile plus courte.
+   */
   gravity: number;
-  /** Explosion (grenades) : rayon, dégâts au centre / au bord, bonus impact direct. */
+  /**
+   * Explosion (grenades) : rayon (m, mesuré jusqu'à la SURFACE de la capsule du joueur), dégâts au centre / au bord
+   * (dégressifs linéairement entre les deux), bonus de l'impact direct (le joueur que la grenade touche).
+   * ↑ blastRadius = zone plus large ; ↑ dégâts = plaquage plus rapide.
+   */
   blastRadius: number;
   blastDamageCenter: number;
   blastDamageEdge: number;
   directHitBonus: number;
-  /** Explosion : knockback horizontal et vertical (m/s) au centre. */
+  /**
+   * Explosion : knockback horizontal et vertical (m/s) donné au centre. L'horizontal est une vitesse MINIMALE imposée
+   * dans la direction du souffle (un joueur qui fonce sur l'explosion est renvoyé ; un joueur qui fuit déjà plus vite
+   * ne gagne rien), le vertical s'ajoute (il décolle, garde son élan en l'air, atterrit). ↑ = joueurs projetés plus
+   * loin / plus haut.
+   */
   knockback: number;
   knockbackUp: number;
-  /** Fraction du knockback subie par le tireur s'il est dans son explosion (pas de dégâts). */
+  /** Knockback au bord de l'explosion = knockback × cette fraction (linéaire entre le centre et le bord). ↑ = le bord repousse plus. */
+  knockbackEdgeMult: number;
+  /** Fraction du knockback subie par le tireur s'il est dans son explosion (pas de dégâts) : « grenade jump ». ↑ = saut plus fort. */
   selfKnockbackMult: number;
 }
 
@@ -639,6 +669,7 @@ const NO_BLAST = {
   directHitBonus: 0,
   knockback: 0,
   knockbackUp: 0,
+  knockbackEdgeMult: 0,
   selfKnockbackMult: 0,
 } as const;
 
@@ -649,9 +680,14 @@ export const ROLES: Record<Role, RoleStats> = {
     runSpeed: 7.2,
     stabilityMax: 100,
     airJumps: 0,
+    // Fusil à pompe (étape 7) : 8 plombs × 6,5 = 52 à bout portant => PLAQUAGE EN 2 TIRS (0,83 s) jusqu'à ~6 m (tous
+    // les plombs touchent jusqu'à ~5 m : rayon de dispersion à la hanche 5 × tan 6° ≈ 0,53 m < 0,6 m de capsule).
+    // Mesuré (docs/TESTING.md, étape 7, moyenne de 40 tirs à la hanche / en visée sur une cible immobile) : 52 à 3–5 m,
+    // ≈ 38 / 46 à 8 m, ≈ 22 / 35 à 10 m, ≈ 6 / 10 à 15 m : inefficace au-delà de ~12 m, rien au-delà de `range`.
     weapon: {
       projectile: 'pellet',
-      fireInterval: 0.85,
+      // 25 ticks (0,83 s) : multiple exact du tick (voir WeaponStats.fireInterval).
+      fireInterval: 25 / TICK_RATE,
       pellets: 8,
       damage: 6.5,
       spreadHipDeg: 6,
@@ -664,6 +700,7 @@ export const ROLES: Record<Role, RoleStats> = {
       reloadSec: 2.0,
       ...NO_BLAST,
     },
+    // Bouclier frontal (étape 7) : actif `duration`, puis `cooldown` (annulable : voir SHIELD_CANCEL_MIN_COOLDOWN_FRACTION).
     ability: { label: 'Bouclier', duration: 3.0, cooldown: 10 },
   },
   ailier: {
@@ -697,9 +734,13 @@ export const ROLES: Record<Role, RoleStats> = {
     runSpeed: 8.0,
     stabilityMax: 100,
     airJumps: 0,
+    // Lance-grenades à impact (étape 7) : 30 m/s, gravité 18 => portée ≈ 50 m à 45° sur le plat, 1 m par tick (visible,
+    // esquivable). Impact direct 32 + 10 = 42 (46 sur le porteur) : 3 grenades pour plaquer ; c'est surtout une arme de
+    // contrôle (knockback : ≈ 4,5 m de vol plané au centre, porteur compris, qui garde le ballon).
     weapon: {
       projectile: 'grenade',
-      fireInterval: 0.7,
+      // 21 ticks (0,7 s), multiple exact du tick.
+      fireInterval: 21 / TICK_RATE,
       pellets: 1,
       damage: 0,
       spreadHipDeg: 1.0,
@@ -715,66 +756,163 @@ export const ROLES: Record<Role, RoleStats> = {
       blastDamageCenter: 32,
       blastDamageEdge: 10,
       directHitBonus: 10,
-      knockback: 11,
-      knockbackUp: 4,
-      selfKnockbackMult: 0.6,
+      knockback: 10,
+      knockbackUp: 6,
+      knockbackEdgeMult: 0.35,
+      selfKnockbackMult: 0.75,
     },
+    // Zone de ralentissement (étape 7) : capacité INSTANTANÉE (le cooldown part à la pose), la zone vit `duration`.
     ability: { label: 'Zone de ralentissement', duration: 5.0, cooldown: 12 },
   },
 };
 
-/** Durée de vie max d'un projectile (s), sécurité (la portée `range` arrête normalement les balles bien avant). ↑ = projectiles lents vivent plus longtemps. */
+/**
+ * Durée de vie max d'un projectile (s), sécurité (la portée `range` arrête normalement les balles bien avant). Une
+ * grenade qui l'atteint (tir très en cloche) explose en l'air (« mèche »). ↑ = projectiles lents vivent plus longtemps.
+ */
 export const PROJECTILE_MAX_LIFE_SEC = 3;
+/**
+ * Projectiles soumis à la gravité (grenades) : nombre de cordes par tick pour balayer la parabole (extrémités exactement
+ * sur la parabole ; écart corde / arc ≤ g·(dt/n)²/8 ≈ 0,2 mm). ↑ = contact plus précis, plus coûteux.
+ */
+export const PROJECTILE_ARC_SUBSTEPS = 4;
 /**
  * Pas d'échantillonnage (m) du test projectile / butte (le relief lisse des buttes est échantillonné puis affiné
  * par dichotomie ; murets, rampes et sol sont exacts). ↓ = contact plus précis sur les buttes, plus coûteux.
  */
 export const PROJECTILE_MOUND_SAMPLE_STEP = 0.1;
 /**
- * Rayon des balles et plombs (m), ajouté à PLAYER_RADIUS dans le test projectile / joueur (pas contre le relief) :
- * absorbe le demi-tick d'interpolation entre l'image affichée et la simulation. Une glissade (capsule de
- * PLAYER_LOW_HEIGHT) passe toujours sous un tir à hauteur de torse. ↑ = balles plus tolérantes.
+ * Rayon des projectiles (balles, plombs, grenades ; m), ajouté à PLAYER_RADIUS dans le test projectile / joueur (pas
+ * contre le relief ni le bouclier) : absorbe le demi-tick d'interpolation entre l'image affichée et la simulation. Une
+ * glissade (capsule de PLAYER_LOW_HEIGHT) passe toujours sous un tir à hauteur de torse. ↑ = projectiles plus tolérants.
  */
 export const PROJECTILE_HIT_RADIUS = 0.15;
 
-/** Pilier — bouclier : demi-angle de l'arc protégé devant le joueur (degrés). */
+/*
+ * Pilier — bouclier frontal (étape 7, src/sim/shield.ts). Géométrie (sim ET rendu) : un ARC de cylindre vertical de
+ * rayon SHIELD_DISTANCE autour de l'axe du pilier, sur ±SHIELD_HALF_ANGLE_DEG autour de son regard (yaw), des pieds à
+ * SHIELD_HEIGHT. Un projectile adverse qui ENTRE dans cette surface (de l'extérieur) est détruit : il protège aussi
+ * ceux qui sont derrière. Le pilier lui-même ne subit aucun projectile ni explosion venant de son arc frontal.
+ * (Étape 7 : SHIELD_RADIUS, « demi-largeur » d'un disque plat, est remplacé par SHIELD_HEIGHT : un disque plat de
+ * 1,1 m à 0,8 m ne couvrait que ±54° ; l'arc couvre exactement SHIELD_HALF_ANGLE_DEG.)
+ */
+/** Pilier — bouclier : demi-angle de l'arc protégé devant le joueur (degrés). ↑ = protège plus sur les côtés. */
 export const SHIELD_HALF_ANGLE_DEG = 65;
-/** Pilier — bouclier : multiplicateur de vitesse bouclier levé. */
+/** Pilier — bouclier : multiplicateur de vitesse bouclier levé (porteur compris). ↑ = charge derrière le bouclier plus rapide. */
 export const SHIELD_SPEED_MULT = 0.75;
-/** Pilier — bouclier : distance du bouclier devant le joueur (rendu et collision des projectiles, m). */
+/**
+ * Pilier — bouclier : rayon de l'arc, donc distance du bouclier devant l'axe du joueur (m, collision et rendu). Doit
+ * rester > PLAYER_RADIUS + PROJECTILE_HIT_RADIUS (0,6) pour qu'un tir de face rencontre le bouclier avant la capsule.
+ * ↑ = bouclier plus loin devant (couvre plus large derrière lui).
+ */
 export const SHIELD_DISTANCE = 0.8;
-/** Pilier — bouclier : rayon (demi-largeur) du bouclier (m). */
-export const SHIELD_RADIUS = 1.1;
+/** Pilier — bouclier : hauteur du bouclier au-dessus des pieds (m). Garder > PLAYER_HEIGHT + PROJECTILE_HIT_RADIUS. ↑ = couvre plus haut (lobs). */
+export const SHIELD_HEIGHT = 2.1;
+/**
+ * Pilier — bouclier baissé avant la fin (second appui) : le cooldown est PROPORTIONNEL à la durée utilisée
+ * (cooldown × utilisé / durée), mais au moins cette fraction du cooldown (pas de bouclier « clignotant » gratuit).
+ * Plaqué bouclier levé : cooldown complet. ↑ = annuler coûte plus cher.
+ */
+export const SHIELD_CANCEL_MIN_COOLDOWN_FRACTION = 0.3;
+/**
+ * Pilier — explosion arrêtée par un bouclier (de face pour le pilier, ou derrière un bouclier pour les autres) : aucun
+ * dégât, knockback × cette fraction (le pilier encaisse le souffle mais tient sa ligne). ↑ = le bouclier repousse plus.
+ */
+export const SHIELD_BLAST_KNOCKBACK_MULT = 0.35;
+
+/*
+ * Demi — explosions et knockback (étape 7, src/sim/explosion.ts).
+ */
+/**
+ * Vitesse horizontale max (m/s) qu'un knockback peut donner (plusieurs explosions au même tick ne se cumulent pas sans
+ * limite ; une vitesse déjà plus haute n'est pas réduite). Reste bien sous la limite des sous-pas (pas de traversée de
+ * muret). ↑ = projections plus violentes.
+ */
+export const KNOCKBACK_MAX_HORIZONTAL_SPEED = 16;
+/** Vitesse verticale max (m/s) après un knockback (« grenade jump » compris). ↑ = projections plus hautes. */
+export const KNOCKBACK_MAX_VERTICAL_SPEED = 13;
+/**
+ * Ligne de vue d'une explosion : son origine est reculée de cette distance (m) le long de la trajectoire de la grenade
+ * (côté libre du point d'impact) ; un joueur est touché si le segment origine -> point de son axe le plus proche, ou
+ * origine -> haut de son axe, ne coupe aucun relief (une butte ou un muret protège). ↑ = plus tolérant au ras du sol.
+ */
+export const BLAST_LOS_BACKOFF = 0.2;
 
 /**
  * Ailier — sprint boosté : multiplicateur de la vitesse de course pendant la capacité (cumulé avec le sprint et
  * le bonus du porteur ; utilisable en portant le ballon). ↑ = boost plus grisant (mais porteur plus dur à rattraper).
  */
-export const BOOST_SPEED_MULT = 1.2;
+export const BOOST_SPEED_MULT = 1.1; // correction de l'étape 7 : 1,2 -> 1,1 (ailier porteur boosté ≈ 11,7 m/s au lieu de 13,9)
 /** Ailier — sprint boosté : multiplicateur d'accélération au sol pendant la capacité. ↑ = démarrages plus secs. */
 export const BOOST_ACCEL_MULT = 1.4;
 
-/** Demi — zone de ralentissement : rayon (m). */
+/*
+ * Demi — zone de ralentissement (étape 7, src/sim/abilities.ts) : posée au point visé (rayon du regard contre le
+ * relief, sinon au sol à portée max), une seule par demi (la nouvelle remplace l'ancienne), durée ROLES.demi.ability.duration.
+ * Elle ralentit la COURSE des adversaires dont les pieds sont dedans (sprint, visée, porteur compris) ; l'accélération,
+ * l'esquive, le plongeon et le saut ne changent pas (s'en échapper coûte une esquive). Pas d'effet sur les alliés.
+ */
+/** Demi — zone de ralentissement : rayon (m). ↑ = zone plus large (plus dure à contourner). */
 export const SLOW_ZONE_RADIUS = 4.5;
-/** Demi — zone de ralentissement : multiplicateur de vitesse des adversaires dedans. */
+/** Demi — zone de ralentissement : multiplicateur de vitesse de course des adversaires dedans. ↓ = ralentit plus. */
 export const SLOW_ZONE_SPEED_MULT = 0.55;
-/** Demi — zone de ralentissement : portée de pose (m, le long de la visée, projetée au sol). */
+/** Demi — zone de ralentissement : portée de pose (m, le long de la visée ; sans relief touché, au sol à cette distance horizontale). ↑ = posée plus loin. */
 export const SLOW_ZONE_PLACE_RANGE = 16;
+/** Demi — zone de ralentissement : hauteur (m) au-dessus / au-dessous du centre de la zone où les pieds comptent comme « dedans ». ↑ = on la survole moins facilement. */
+export const SLOW_ZONE_HEIGHT = 1.5;
+
+// ============================================================================
+//  COMPOSITION DES ÉQUIPES (étape 7, lue par src/game/roles.ts)
+// ============================================================================
+
+/**
+ * Composition par défaut en 3v3 (cahier des charges : un de chaque rôle). Le joueur humain prend le rôle choisi, ses
+ * coéquipiers les autres ; l'équipe adverse a la même composition.
+ */
+export const TEAM_ROLES_3V3: readonly Role[] = Object.freeze(['pilier', 'ailier', 'demi']);
+/**
+ * Composition par défaut en 5v5 (doublons autorisés) : 1 pilier, 2 ailiers, 2 demis. Le pilier (le plus lent, portée
+ * courte) est un spécialiste du contact : deux piliers ralentiraient tout le jeu et laisseraient peu de tireurs à
+ * moyenne portée ; deux ailiers donnent des coureurs et du feu précis, deux demis le contrôle de zone (knockback, zones)
+ * qui manque le plus en 5v5 où les défenses sont nombreuses. Ordre = position dans la formation (de gauche à droite).
+ */
+export const TEAM_ROLES_5V5: readonly Role[] = Object.freeze(['pilier', 'ailier', 'demi', 'ailier', 'demi']);
 
 // ============================================================================
 //  MÊLÉE
 // ============================================================================
 
-/** Temps pendant lequel le ballon doit rester libre avant de pouvoir déclencher une mêlée (s). */
+// Étape 7 (src/sim/scrum.ts, docs/ARCHITECTURE.md §14). Cahier des charges : « si le ballon reste libre plus de 3 s avec
+// au moins N joueurs de chaque camp dans un rayon donné (N = 2 en 3v3, 3 en 5v5), la zone devient une zone de capture :
+// l'équipe qui a le plus de joueurs dedans après 3 s récupère le ballon ». Seuls les joueurs ACTIFS comptent (un joueur
+// plaqué ou qui se relève sort du décompte : tirer dans la zone est une façon de la gagner). Distances horizontales.
+// Aucune de ces durées n'est raccourcie en dernière minute.
+
+/**
+ * Temps pendant lequel le ballon doit rester libre (`ball.looseTicks`, mode 'loose' seulement : une passe ou un coup de
+ * pied en vol ne compte pas) avant de pouvoir déclencher une mêlée (s). ↑ = mêlées plus rares (plus de temps pour
+ * ramasser le ballon).
+ */
 export const SCRUM_LOOSE_SEC = 3;
-/** Rayon de la zone de mêlée en 5v5 (m) ; multiplié par l'échelle du terrain en 3v3. */
+/**
+ * Rayon de la zone de mêlée en 5v5 (m) ; multiplié par l'échelle du terrain en 3v3 (≈ 5 m). Sert au déclenchement
+ * (joueurs autour du ballon) ET au décompte de la capture. ↑ = mêlées plus fréquentes et zone plus facile à tenir.
+ */
 export const SCRUM_RADIUS = 6;
-/** Joueurs minimum de CHAQUE équipe dans le rayon pour déclencher la mêlée. */
+/** Joueurs ACTIFS minimum de CHAQUE équipe dans le rayon pour déclencher la mêlée, en 3v3. ↑ = mêlées plus rares. */
 export const SCRUM_MIN_PLAYERS_3V3 = 2;
+/** Idem en 5v5. ↑ = mêlées plus rares. */
 export const SCRUM_MIN_PLAYERS_5V5 = 3;
-/** Durée de la capture (s). L'équipe la plus nombreuse dans la zone à la fin gagne le ballon. */
+/**
+ * Durée de la capture (s). À la fin, l'équipe qui a le plus de joueurs actifs dans la zone gagne le ballon (porté par
+ * son joueur actif le plus proche du centre). ↑ = mêlée plus longue (plus de temps pour renverser le décompte).
+ */
 export const SCRUM_CAPTURE_SEC = 3;
-/** En cas d'égalité : prolongation (s) ; si toujours égalité, tirage au sort seedé. */
+/**
+ * Égalité à la fin de la capture : prolongation (s) en « premier qui mène » — la première équipe qui compte plus de
+ * joueurs que l'autre à la fin d'un tick de prolongation gagne aussitôt. Encore à égalité à la fin : tirage au sort
+ * seedé (state.rng) ; à 0 contre 0, pas de tirage : ballon rendu libre au centre. ↑ = plus de temps pour se départager.
+ */
 export const SCRUM_TIE_EXTRA_SEC = 2;
 
 // ============================================================================
@@ -798,7 +936,7 @@ export const KICKOFF_DEFEND_OFFSET = 6;
 //
 // Les bots (étape 6, src/bots) sont des producteurs de PlayerInput : ils LISENT le MatchState et renvoient une
 // entrée, comme un humain. Leur aléatoire passe par leur PROPRE PRNG (mémoire du bot, jamais MatchState).
-// Distances en mètres « joueur » (non mises à l'échelle) sauf mention « ×échelle » (× field.scale : 0,7 en 3v3).
+// Distances en mètres « joueur » (non mises à l'échelle) sauf mention « ×échelle » (× field.scale : 0,84 en 3v3).
 
 export type BotDifficulty = 'facile' | 'normal' | 'difficile';
 
@@ -991,8 +1129,8 @@ export const BOT_CARRIER_DIR_STICKY = 0.1;
 export const BOT_PATH_CLEAR_DIST = 10;
 /** Porteur : demi-angle (degrés) du cône dans lequel le chemin doit être libre. ↑ = sprinte moins souvent. */
 export const BOT_PATH_CLEAR_HALF_ANGLE_DEG = 35;
-/** Porteur : « pressé » si un adversaire est à moins de cette distance (m), devant ou à côté de lui. ↑ = passe plus tôt. */
-export const BOT_PRESSURE_RADIUS = 7;
+/** Porteur : « pressé » si un adversaire est à moins de cette distance (m), devant ou à côté de lui (7 -> 9 à la correction de l'étape 7 : plus de passes). ↑ = passe plus tôt. */
+export const BOT_PRESSURE_RADIUS = 9;
 /**
  * Porteur : un adversaire jusqu'à cette distance (m) DERRIÈRE lui (le long du terrain) compte encore comme « à côté »
  * (pression, esquive de contact). ↑ = se sent pressé par des poursuivants plus en retrait.
@@ -1083,10 +1221,14 @@ export const BOT_BOOST_MIN_LINE_DIST = 12;
 
 // --- Attaque sans ballon -----------------------------------------------------
 
-/** Soutiens par équipe en 3v3 (les autres coéquipiers cherchent l'espace devant). ↑ = plus de solutions de passe, moins de course devant. */
-export const BOT_SUPPORTERS_3V3 = 1;
-/** Soutiens par équipe en 5v5. ↑ = plus de solutions de passe, moins de course devant. */
-export const BOT_SUPPORTERS_5V5 = 2;
+/**
+ * Soutiens par équipe en 3v3 (les autres coéquipiers cherchent l'espace devant). Correction de l'étape 7 : 1 -> 2 — les
+ * passes ne vont qu'en arrière, le coureur « espace » placé devant ne pouvait ni recevoir ni défendre au changement de
+ * possession (il alimentait les contres). ↑ = plus de solutions de passe, moins de course devant.
+ */
+export const BOT_SUPPORTERS_3V3 = 2;
+/** Soutiens par équipe en 5v5 (2 -> 3 à la correction de l'étape 7, même raison). ↑ = plus de solutions de passe, moins de course devant. */
+export const BOT_SUPPORTERS_5V5 = 3;
 /** Soutien : marge minimale (m) entre son point visé et la touche (sinon il passe de l'autre côté du porteur). ↑ = soutiens moins collés aux bords. */
 export const BOT_SUPPORT_TOUCH_MARGIN = 2;
 /** Soutien : décalage latéral (m, ×échelle) par rapport au porteur. ↑ = soutiens plus écartés (passes plus longues). */
@@ -1141,13 +1283,14 @@ export const BOT_MARK_SHOOT_CARRIER_DIST = 14;
  * Dernier défenseur : dès que l'équipe compte au moins ce nombre de bots actifs, l'un d'eux (le mieux placé devant le
  * porteur) reste TOUJOURS en repli entre le porteur et l'en-but ; en deçà, repli seulement si personne n'est devant le
  * porteur. Correction de l'étape 6 : sans lui, un porteur qui avait passé les presseurs filait à l'essai (43–52 % du
- * temps porté sans aucun défenseur devant). ↓ = repli plus systématique (moins de presseurs / marqueurs).
+ * temps porté sans aucun défenseur devant). Correction de l'étape 7 : 3 -> 2 (en 3v3, après un plaquage, deux défenseurs
+ * restent : l'un se replie toujours). ↓ = repli plus systématique (moins de presseurs / marqueurs).
  */
-export const BOT_COVER_MIN_DEFENDERS = 3;
-/** Repli : profondeur (m, ×échelle) devant le porteur. ↑ = repli plus profond. */
-export const BOT_COVER_DEPTH = 18;
-/** Repli : profondeur au plus égale à cette fraction de la distance du porteur à notre ligne. ↑ = repli plus près de la ligne. */
-export const BOT_COVER_LINE_FRACTION = 0.7;
+export const BOT_COVER_MIN_DEFENDERS = 2;
+/** Repli : profondeur (m, ×échelle) devant le porteur (18 -> 26 à la correction de l'étape 7). ↑ = repli plus profond. */
+export const BOT_COVER_DEPTH = 26;
+/** Repli : profondeur au plus égale à cette fraction de la distance du porteur à notre ligne (0,7 -> 0,9 à la correction de l'étape 7). ↑ = repli plus près de la ligne. */
+export const BOT_COVER_LINE_FRACTION = 0.9;
 /** Repli : x du point de repli = x du porteur × cette fraction (ramené vers le centre). ↑ = repli plus en face du porteur. */
 export const BOT_COVER_X_FRACTION = 0.7;
 /** Marquage : décalage du point de marquage vers le porteur (fraction de l'écart receveur–porteur). ↑ = marqueur plus près de la ligne de passe. */
@@ -1188,6 +1331,121 @@ export const BOT_SHAPE_WIDTH_FRACTION = 0.6;
 export const BOT_SHAPE_SINGLE_X_FRACTION = 0.5;
 /** Forme d'équipe après notre coup de pied / lâcher : profondeur × cette fraction (on monte en soutien). ↑ = reste plus en retrait. */
 export const BOT_SHAPE_OWN_KICK_DEPTH_FRACTION = 0.5;
+
+// --- Rôles : pilier et demi (étape 7) ----------------------------------------
+
+/**
+ * Pilier : distance d'engagement max du fusil à pompe (m, plafond de range × engageRangeMult) : au-delà, les plombs se
+ * perdent et l'atténuation tue les dégâts (≈ 30 à 8 m, ≈ 4 à 15 m) ; le pilier se rapproche au lieu de tirer.
+ * ↑ = tire de plus loin (moins efficace, plus de feu « gaspillé »).
+ */
+export const BOT_SHOTGUN_ENGAGE_DIST = 10;
+/** Demi : distance d'engagement max du lance-grenades (m, × engageRangeMult de la difficulté). ↑ = lobe de plus loin (moins précis sur cible mobile). */
+export const BOT_GRENADE_ENGAGE_DIST = 28;
+/** Demi : pas de grenade sur une cible plus proche que ça (m) : il s'exploserait au visage (knockback sur lui-même). ↓ = tire plus près. */
+export const BOT_GRENADE_MIN_DIST = 6;
+/**
+ * Demi : la grenade ne part que si son point d'impact prévu (predictGrenadeImpact, relief compris) tombe à moins de cette
+ * distance (m) du point visé (pas de grenade dans une butte ou un muret entre lui et la cible). ↑ = tire même à travers le relief.
+ */
+export const BOT_GRENADE_IMPACT_TOLERANCE = 1.5;
+/** Demi : marge (m) au-delà du rayon d'explosion entre lui et l'impact prévu (pas d'auto-knockback involontaire). ↑ = plus prudent. */
+export const BOT_GRENADE_SELF_MARGIN = 1.0;
+/**
+ * Demi : marge (m) ajoutée au rayon de collision d'un adversaire (PLAYER_RADIUS + PROJECTILE_HIT_RADIUS) quand le bot
+ * vérifie que les premiers mètres de la parabole (jusqu'à blastRadius + BOT_GRENADE_SELF_MARGIN de lui) ne traversent
+ * personne : sinon la grenade exploserait sur un adversaire collé à lui, en plein dans son propre souffle (correction de
+ * la relecture de l'étape 7). Couvre le déplacement de l'adversaire pendant ces ≈ 0,15 s de vol. ↑ = plus prudent (tire moins
+ * au contact).
+ */
+export const BOT_GRENADE_PATH_MARGIN = 0.5;
+/**
+ * Demi : hauteur du point visé au-dessus du sol, aux pieds de la cible anticipée (m) : la grenade touche le bas de la
+ * capsule (impact direct) ou le sol juste à côté (souffle). ↑ = vise plus haut (plus d'impacts directs, plus de ratés longs).
+ */
+export const BOT_GRENADE_AIM_HEIGHT = 0.3;
+/**
+ * Demi en pression / repli : il garde cette distance (m) au porteur au lieu de lui courir dessus (portée utile du
+ * lance-grenades, hors de son propre souffle). ↑ = harcèle de plus loin.
+ */
+export const BOT_GRENADE_STANDOFF = 12;
+/** Pilier : lève le bouclier sous le feu quand sa stabilité passe sous cette fraction (tireur hors de portée de son fusil). ↑ = bouclier plus tôt. */
+export const BOT_SHIELD_RAISE_STABILITY_FRACTION = 0.8;
+/** Pilier : sous le feu et sous cette fraction de stabilité, bouclier même si le tireur est à portée de fusil. ↑ = plus prudent. */
+export const BOT_SHIELD_PANIC_STABILITY_FRACTION = 0.45;
+/** Pilier porteur : lève le bouclier si un défenseur armé est devant lui à moins de cette distance (m). ↑ = charge bouclier levé plus tôt. */
+export const BOT_SHIELD_CARRIER_DIST = 14;
+/** Pilier : baisse le bouclier (second appui) après ce temps sans menace (s) quand il peut tirer / courir plus vite. ↑ = garde le bouclier plus longtemps. */
+export const BOT_SHIELD_CALM_SEC = 0.6;
+/** Demi : zone posée sur la course anticipée du porteur adverse, à cette avance (s). ↑ = posée plus loin devant lui. */
+export const BOT_ZONE_LEAD_SEC = 0.6;
+/** Demi : décalage (m) supplémentaire de la zone vers notre en-but, devant le porteur adverse (il court dedans). ↑ = plus loin devant. */
+export const BOT_ZONE_AHEAD = 3;
+/** Demi : distance horizontale max (m) du point de pose (le rayon de visée doit toucher le sol là : < SLOW_ZONE_PLACE_RANGE). ↑ = pose de plus loin. */
+export const BOT_ZONE_MAX_DIST = 14;
+/** Demi en attaque : zone sur un poursuivant à moins de cette distance (m) de notre porteur (derrière ou à côté de lui). ↑ = plus souvent. */
+export const BOT_ZONE_PURSUER_DIST = 8;
+/** Demi : il appuie sur ABILITY quand la pose prévue (slowZonePlacement avec le regard envoyé) est à moins de cette distance (m) du point voulu. ↑ = pose plus vite, moins précise. */
+export const BOT_ZONE_PLACE_TOLERANCE = 1.5;
+/** Contournement des zones adverses : marge (m) ajoutée au rayon de la zone. ↑ = contourne plus large. */
+export const BOT_ZONE_AVOID_MARGIN = 0.8;
+/** Contournement : on ne contourne qu'une zone à moins de cette distance (m) de son bord sur la route. ↑ = anticipe plus tôt. */
+export const BOT_ZONE_AVOID_LOOKAHEAD = 5;
+/** Porteur : pénalité d'une direction de course qui traverse une zone adverse (même échelle que la progression, 1). ↑ = contourne davantage. */
+export const BOT_CARRIER_ZONE_PENALTY = 0.6;
+
+// --- Mêlée (étape 7, src/bots/scrumBrain.ts) -----------------------------------
+
+/**
+ * Approche d'une mêlée : quand le ballon est libre depuis ce temps (s, < SCRUM_LOOSE_SEC) avec un adversaire près du
+ * ballon, les bots jouent la mêlée : l'équipe qui peut la jouer sans être en infériorité « tient » la zone sans ramasser
+ * le ballon (BOT_SCRUM_HOLD_MARGIN), sinon les non-chasseurs rejoignent la zone pour peser sur le décompte. Correction
+ * de l'étape 7 : 1,2 -> 1,6 s — on ne tient la zone qu'autour d'un ballon déjà disputé (à 1,2 s, les bots tournaient
+ * autour de presque tous les ballons libres sans les prendre : moins de ballon porté, plus de ballons libres > 3 s).
+ * Mesuré (24 matchs bots normal, 6 min, réglage de l'étape 7) : ≈ 2,5 mêlées par match en 3v3, ≈ 1,2 en 5v5 (≈ 4 / 2 à
+ * 1,2 s) ; plus tôt (0,5–0,8 s), presque plus aucune (les chasseurs ramassent avant que tout le monde soit là).
+ * ↑ = ils jouent la mêlée plus tard (moins de mêlées).
+ */
+export const BOT_SCRUM_APPROACH_SEC = 1.6;
+/**
+ * Adversaires « dans la zone » pour le décompte des bots : à moins de rayon + cette marge (m) du centre (ils peuvent y
+ * entrer avant la fin). ↑ = plus prudent (plus de bots envoyés dans la zone).
+ */
+export const BOT_SCRUM_THREAT_MARGIN = 3;
+/**
+ * Majorité confortable : un bot entre dans la zone tant que son équipe y compte moins de (adversaires dans la zone +
+ * cette marge) joueurs ; au-delà, les autres se placent pour la suite (soutien si on gagne, défense sinon) au lieu de
+ * s'entasser. ↑ = plus de monde dans la zone (moins de placement pour la suite).
+ */
+export const BOT_SCRUM_LEAD_MARGIN = 2;
+/**
+ * Point visé dans la zone : à cette fraction du rayon depuis le centre, du côté d'où vient le bot (ils se répartissent
+ * autour du ballon au lieu de s'empiler au centre). ↑ = plus près du bord (sortis plus facilement par un knockback).
+ */
+export const BOT_SCRUM_INNER_FRACTION = 0.45;
+/**
+ * Un bot ne rejoint une mêlée en cours que s'il peut entrer dans la zone avant sa fin (temps de course jusqu'au bord ≤
+ * temps restant + cette marge, s ; la prolongation peut l'allonger). ↑ = rejoint même de loin.
+ */
+export const BOT_SCRUM_REACH_SLACK_SEC = 0.5;
+/**
+ * Approche, mêlée possible (au moins N joueurs de chaque camp près du ballon) et équipe en majorité : ses bots « tiennent »
+ * la zone sans ramasser le ballon (mêlée gagnée au décompte plutôt qu'un porteur au milieu des tireurs adverses) : point
+ * visé à au moins BALL_PICKUP_RADIUS + cette marge (m) du ballon. ↑ = se tiennent plus loin du ballon (moins de ramassages involontaires).
+ */
+export const BOT_SCRUM_HOLD_MARGIN = 1.2;
+/**
+ * Approche : on ne tient plus la zone si le ballon est libre depuis plus de SCRUM_LOOSE_SEC + cette marge (s) sans que la
+ * mêlée se soit déclenchée (décompte insuffisant dans le rayon) : on ramasse. ↑ = attend plus longtemps la mêlée.
+ */
+export const BOT_SCRUM_HOLD_GRACE_SEC = 0.3;
+/** Approche : seuls les bots à moins de cette distance (m, ×échelle) du ballon rejoignent la zone. ↑ = rappelle de plus loin. */
+export const BOT_SCRUM_JOIN_DIST = 28;
+/**
+ * Bots en surplus pendant la mêlée, équipe qui perd ou à égalité : défense à cette profondeur (m, ×échelle) entre le
+ * centre de la zone et notre en-but (prêts à presser le futur porteur adverse). ↑ = défense plus reculée.
+ */
+export const BOT_SCRUM_COVER_DEPTH = 10;
 
 /*
  * Cible d'entraînement « tourelle » (src/bots/turret.ts, étape 5) : un adversaire immobile qui se tourne vers l'ennemi
@@ -1351,7 +1609,12 @@ export type RumbleCue =
   | 'try'
   | 'tryConceded'
   | 'matchEnd'
-  | 'hardLanding';
+  | 'hardLanding'
+  | 'shieldBlock'
+  | 'explosionNear'
+  | 'scrumStart'
+  | 'scrumWon'
+  | 'scrumLost';
 
 export interface RumbleEffect {
   /** Durée (s). ↑ = vibration plus longue. */
@@ -1386,6 +1649,18 @@ export const GAMEPAD_RUMBLE_EFFECTS: Readonly<Record<RumbleCue, Readonly<RumbleE
   matchEnd: { durationSec: 0.8, strong: 0.6, weak: 0.6, priority: 6 },
   /** Réception d'un saut à grande vitesse verticale. */
   hardLanding: { durationSec: 0.06, strong: 0.25, weak: 0.0, priority: 1 },
+  /** Étape 7 : son bouclier (pilier local) bloque un tir ou une explosion : léger, sec. */
+  shieldBlock: { durationSec: 0.05, strong: 0.0, weak: 0.4, priority: 1 },
+  /** Étape 7 : explosion de grenade proche (souffle) : moyen et sourd. */
+  explosionNear: { durationSec: 0.18, strong: 0.55, weak: 0.25, priority: 2 },
+  /** Étape 7 : une mêlée se déclenche (n'importe où : c'est un temps fort du match) : double grondement moyen. */
+  scrumStart: { durationSec: 0.3, strong: 0.5, weak: 0.3, priority: 3 },
+  /** Étape 7 : mêlée gagnée par son équipe : net et vif. */
+  scrumWon: { durationSec: 0.25, strong: 0.55, weak: 0.7, priority: 3 },
+  /** Étape 7 : mêlée perdue : sourd et bref. */
+  scrumLost: { durationSec: 0.2, strong: 0.4, weak: 0.0, priority: 3 },
 };
 /** Vitesse verticale d'atterrissage (m/s) au-delà de laquelle « hardLanding » vibre. ↑ = seulement les grosses chutes. */
 export const RUMBLE_HARD_LANDING_SPEED = 9;
+/** « explosionNear » : explosion à moins de (rayon d'explosion × cette valeur) des pieds du joueur local. ↑ = vibre pour des explosions plus lointaines. */
+export const RUMBLE_EXPLOSION_NEAR_MULT = 1.5;

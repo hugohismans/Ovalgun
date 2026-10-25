@@ -9,20 +9,27 @@
  * Événements branchés : atterrissage brutal (étape 3) ; réception / ramassage du ballon, interception
  * réussie, passe interceptée (étape 4 ; un coup de pied réceptionné par l'adversaire n'en est pas une) ;
  * tir reçu (léger), plaquage subi (fort), plaquage réussi (court) — étape 5 ; essai marqué par son équipe / encaissé,
- * fin du match — étape 6.
+ * fin du match — étape 6 ; son bouclier qui bloque (léger), explosion proche (moyen, à moins de
+ * RUMBLE_EXPLOSION_NEAR_MULT × rayon d'explosion de ses pieds) ; mêlée déclenchée (pour tous), gagnée / perdue par son
+ * équipe — étape 7.
  */
 
 import {
   GAMEPAD_RUMBLE,
   GAMEPAD_RUMBLE_EFFECTS,
+  RUMBLE_EXPLOSION_NEAR_MULT,
   RUMBLE_HARD_LANDING_SPEED,
   type MatchEvent,
   type RumbleCue,
   type TeamId,
+  type Vec3,
 } from '../sim';
 
-/** Signal de vibration correspondant à un événement pour le joueur local, ou null. */
-export function rumbleCueFor(e: MatchEvent, localId: number, localTeam: TeamId): RumbleCue | null {
+/**
+ * Signal de vibration correspondant à un événement pour le joueur local, ou null. `localFeet` : position des pieds du
+ * joueur local (explosion proche) ; sans elle, les explosions ne vibrent pas.
+ */
+export function rumbleCueFor(e: MatchEvent, localId: number, localTeam: TeamId, localFeet: Vec3 | null = null): RumbleCue | null {
   switch (e.type) {
     case 'hit':
       return e.targetId === localId ? 'hitTaken' : null;
@@ -34,14 +41,24 @@ export function rumbleCueFor(e: MatchEvent, localId: number, localTeam: TeamId):
       return e.intercepted && e.fromId === localId ? 'interceptionSuffered' : null;
     case 'pickup':
       return e.playerId === localId ? 'catch' : null;
+    case 'scrum_start':
+      return 'scrumStart';
     case 'scrum_won':
-      return e.playerId === localId ? 'catch' : null;
+      return e.team === localTeam ? 'scrumWon' : 'scrumLost';
     case 'try':
       return e.team === localTeam ? 'try' : 'tryConceded';
     case 'match_end':
       return 'matchEnd';
     case 'land':
       return e.playerId === localId && e.speed >= RUMBLE_HARD_LANDING_SPEED ? 'hardLanding' : null;
+    case 'blocked':
+      return e.targetId === localId ? 'shieldBlock' : null;
+    case 'explosion': {
+      if (localFeet === null) return null;
+      const r = e.radius * RUMBLE_EXPLOSION_NEAR_MULT;
+      const d2 = (e.pos.x - localFeet.x) ** 2 + (e.pos.y - localFeet.y) ** 2 + (e.pos.z - localFeet.z) ** 2;
+      return d2 <= r * r ? 'explosionNear' : null;
+    }
     default:
       return null;
   }
@@ -61,11 +78,21 @@ export class Haptics {
   private busyUntil = 0;
   private busyPriority = 0;
 
-  /** Traite les événements d'un tick. `pad` = manette active (un `Gamepad` ; null : rien). */
-  handleEvents(events: readonly MatchEvent[], localId: number, localTeam: TeamId, nowSec: number, pad: object | null): void {
+  /**
+   * Traite les événements d'un tick. `pad` = manette active (un `Gamepad` ; null : rien). `localFeet` : pieds du joueur
+   * local (explosions proches).
+   */
+  handleEvents(
+    events: readonly MatchEvent[],
+    localId: number,
+    localTeam: TeamId,
+    nowSec: number,
+    pad: object | null,
+    localFeet: Vec3 | null = null,
+  ): void {
     if (!this.enabled || pad === null) return;
     for (const e of events) {
-      const cue = rumbleCueFor(e, localId, localTeam);
+      const cue = rumbleCueFor(e, localId, localTeam, localFeet);
       if (cue !== null) this.play(cue, nowSec, pad);
     }
   }

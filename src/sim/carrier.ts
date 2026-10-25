@@ -454,8 +454,9 @@ export function updateDiveMovement(_state: MatchState, p: PlayerState): boolean 
     const sp = Math.sqrt(p.vel.x * p.vel.x + p.vel.z * p.vel.z);
     const ns = Math.max(0, sp - DIVE_RECOVER_DECEL * TICK_DT);
     if (sp > 1e-9) {
-      p.vel.x *= ns / sp;
-      p.vel.z *= ns / sp;
+      // `+ 0` : un freinage jusqu'à l'arrêt donnerait −0 sur une composante négative (MatchState sans −0).
+      p.vel.x = p.vel.x * (ns / sp) + 0;
+      p.vel.z = p.vel.z * (ns / sp) + 0;
     } else {
       p.vel.x = 0;
       p.vel.z = 0;
@@ -667,6 +668,7 @@ export function debugGiveBall(state: MatchState, playerId: number): boolean {
   const p = state.players[playerId];
   if (p === undefined || p.status !== 'active' || !debugToolsAllowed(state)) return false;
   state.ball.throwerId = -1;
+  state.scrum = null; // une mêlée en cours s'arrête (le ballon a quitté la zone)
   p.pickupBlockTicks = 0;
   giveBall(state, p);
   return true;
@@ -691,6 +693,7 @@ export function debugResetBall(state: MatchState): boolean {
   b.looseTicks = 0;
   b.spinRate = 0;
   b.tumbleRate = 0;
+  state.scrum = null; // une mêlée en cours s'arrête
   for (const p of state.players) p.pickupBlockTicks = 0;
   return true;
 }

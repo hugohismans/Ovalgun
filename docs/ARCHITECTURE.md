@@ -62,6 +62,11 @@ fireOverridesSprint, fireIntervalTicks, spreadDirection, weaponImplemented // ti
 damageFalloff, damageAmount, isHittable                                 // dégâts, cible touchable
 segmentCapsuleEntry, segmentTerrainEntry                                // intersections balayées des projectiles
 abilityActive, abilityImplemented                                       // capacités (étape 5 : sprint boosté de l'ailier)
+shieldUp, shieldArcCovers, shieldFacing, segmentShieldEntry, shieldPoint // bouclier du pilier (étape 7, PURES : rendu, bots, §13)
+slowZonePlacement, inSlowZone                                           // zone de ralentissement du demi (étape 7)
+blastDistance, hasLineOfSight, predictGrenadeImpact                     // explosions / grenades (étape 7)
+scrumMinPlayers, scrumRadius, scrumCaptureTicks, scrumMaxTicks,         // mêlée (étape 7, PURES : rendu, HUD, bots, §14)
+scrumInOvertime, scrumTicksLeft, scrumLooseReady, countInZone, inScrumZone
 ```
 
 - Tick fixe à 30 Hz (`TICK_RATE`, `TICK_DT`). `dt` existe pour la forme de l'API mais doit valoir `TICK_DT`.
@@ -94,7 +99,8 @@ Ordre des opérations dans `step` (à respecter et documenter dans `match.ts`) :
 4. Minuteries (cooldowns ; statut down/getting_up, rechargement, délai de régénération ; durée / cooldown des capacités).
 5. Actions : capacité, actions du porteur (passe, coup de pied), tir (création de projectiles ; le porteur du DÉBUT du tick
    n'utilise pas son arme, même s'il vient de passer / taper le ballon).
-6. Projectiles : déplacement balayé, collisions joueurs / boucliers / terrain -> dégâts, explosions, knockback (`projectiles.ts`),
+6. Projectiles : déplacement balayé, collisions joueurs / boucliers / terrain -> dégâts, explosions, knockback (`projectiles.ts`,
+   `shield.ts`, `explosion.ts`),
    **avant le déplacement** (capsules au début du tick, là où le tireur les voyait, §10) ; puis décompte de l'invulnérabilité
    (`tickInvulnerability` : les projectiles voient la valeur du tick précédent).
 7. Déplacement : esquive / glissade / plongeon / saut / course, gravité, terrain (marche, grimpe), murs invisibles, séparation entre joueurs ;
@@ -102,7 +108,7 @@ Ordre des opérations dans `step` (à respecter et documenter dans `match.ts`) :
 8. Stabilité : plaquages (statut down, lâcher du ballon), régénération (`stability.ts`).
 9. Ballon : suit le porteur, ou physique (gravité, rebonds seedés, frottement), puis ramassage / réception / interception
    (`updateBallPickup(state, from, fromMode)` reçoit la position et le mode du ballon AVANT sa physique : test balayé).
-10. Zones (ralentissement), mêlée.
+10. Zones (ralentissement : durée de vie), mêlée (déclenchement sur le ballon libre resté libre après l'étape 9, décompte, résolution, §14).
 11. Règles (tick joué : phase `play` après l'étape 2, même si un essai de l'étape 7 l'a passée à `try`) : essai (ballon ramassé / attrapé
     dans l'en-but à l'étape 9), PUIS chrono, dernière minute, fin de match (§11).
 12. `lastButtons = buttons` (sauf entrée manquante).
@@ -169,14 +175,19 @@ Voir l'en-tête de `src/sim/vec.ts`.
   Coup d'envoi initial : `FIRST_KICKOFF_TEAM` (`config.firstKickoffTeam`). Détails et décisions : §11.
 - **Fin du match** : à 0 au chrono, immédiatement. Égalité possible. Un essai marqué au tick même où le chrono atteint 0 compte (§11).
 - **Armes** : toutes à projectiles (rapides pour SMG/pompe, balistiques pour grenades). Visibles, esquivables, déterministes.
-  Pas de tir ami. Le porteur ne tire pas. Au sol, en glissade, en plongeon, en grimpe, bouclier levé (étape 7) : pas de tir.
+  Pas de tir ami. Le porteur ne tire pas. Au sol, en glissade, en plongeon, en grimpe, bouclier levé (étape 7) : pas de tir
+  (bouclier levé : le rechargement reste possible).
   Le sprint n'empêche pas de tirer : tirer coupe le sprint (§10).
 - **Stabilité** : `stabilityMax` par rôle (100 par défaut). Jauge vide => `down` `DOWN_DURATION_SEC`, ballon lâché (petit rebond),
   puis `getting_up` (`GETUP_DURATION_SEC`) puis invulnérabilité `GETUP_INVULN_SEC`. Sur place, pas de respawn.
 - **Mêlée** : ballon `loose` depuis `SCRUM_LOOSE_SEC` avec ≥ N joueurs actifs de chaque camp dans `SCRUM_RADIUS` (×échelle) => ballon `scrum`
   bloqué au centre, zone de capture `SCRUM_CAPTURE_SEC` ; l'équipe la plus nombreuse dans la zone gagne, ballon donné à son joueur le plus proche.
-  Égalité : prolongation `SCRUM_TIE_EXTRA_SEC`, puis tirage au sort seedé.
+  Égalité : prolongation `SCRUM_TIE_EXTRA_SEC` en « premier qui mène », puis tirage au sort seedé (à 0 contre 0 : ballon rendu libre).
+  Seuls les joueurs actifs comptent (tirer dans la zone pour la vider est voulu). Le chrono tourne. Détails et décisions : §14.
 - **Dernière minute** : `LAST_MINUTE_COOLDOWN_MULT` sur les cooldowns, `LAST_MINUTE_BALL_SPEED_MULT` sur passes / coups de pied.
+- **Terrain 3v3** (« environ 70 % de la taille du 5v5 ») : 70 % de la **surface**, soit une échelle linéaire `FIELD_SCALE_3V3` = √0,7 ≈ 0,84
+  en longueur et en largeur (décision de la correction de l'étape 7, §15 ; avant : 0,7 linéaire, 49 % de la surface, et un porteur qui
+  avait passé la défense marquait presque à coup sûr).
 - **Bots** : la difficulté (`BOT_DIFFICULTY`) règle temps de réaction, erreur de visée, vitesse de rotation, intervalle de décision,
   portée d'engagement, réflexe d'esquive et avance sur cible. Leur aléatoire passe par leur propre PRNG seedé (dérivé de la seed du
   match et de leur id), stocké dans leur mémoire interne (pas dans MatchState). Détails : §12.
@@ -222,8 +233,10 @@ Voir l'en-tête de `src/sim/vec.ts`.
 | `raycast.ts` | **Étape 5** : intersections segment / capsule et segment / relief (exactes ; buttes échantillonnées). |
 | `rules.ts` | **Étape 6** : phases (coup d'envoi, essai, pause, remise en jeu, fin), chrono, dernière minute, `setupKickoff`, `startPlayNow` (§11). |
 | `queries.ts` | **Étape 6** : lectures PURES de l'état pour les bots, le HUD et les tests (sens d'attaque, lignes d'essai, joueurs actifs, possession, point de chute, §11). |
-| `abilities.ts` | **Étape 5** : sprint boosté de l'ailier (durée, cooldown, multiplicateurs) ; **étape 7** : bouclier, zones. |
-| `scrum.ts` | **Étape 7** (vide) : mêlée. |
+| `abilities.ts` | **Étape 5** : sprint boosté de l'ailier (durée, cooldown, multiplicateurs) ; **étape 7** : bouclier (activation, annulation), pose et durée de vie des zones, ralentissement. |
+| `shield.ts` | **Étape 7** : géométrie et règles du bouclier frontal du pilier (§13). |
+| `explosion.ts` | **Étape 7** : explosions des grenades (dégâts dégressifs, impact direct, ligne de vue, boucliers) et knockback (§13). |
+| `scrum.ts` | **Étape 7** : mêlée (déclenchement, décompte, résolution, lectures pures pour le rendu / HUD / bots, §14). |
 
 Décisions prises à l'étape 2 :
 
@@ -318,7 +331,9 @@ Décisions prises à l'étape 3 :
   capsule verticale basse), à peine inclinée (`STYLE.lowPostureLean`) : le corps affiché ne déborde pas de la hitbox.
   (Au sol après un plaquage : capsule couchée, voir §10 ; un joueur au sol est intouchable, aucune hitbox à respecter.)
 - **Ballon** : position ET rotation (culbute, vrille) interpolées entre deux ticks.
-- **Aide à la visée** : seulement manette active, joueur actif non porteur ; cibles = adversaires `active` dans la portée
+- **Aide à la visée** : seulement manette active, joueur qui peut tirer (`aimAssistApplies` : `canShoot` — actif, non porteur, ni
+  glissade / plongeon / grimpe, ni bouclier levé — et arme en ligne droite, donc pas le lance-grenades du demi : correction de l'étape 7) ;
+  cibles = adversaires `active` dans la portée
   de l'arme, angle mesuré jusqu'à la capsule ; ralentissement continu jusqu'à `AIM_ASSIST_SLOWDOWN` ; suivi =
   `AIM_ASSIST_TRACKING` × déplacement angulaire de la cible (même cible qu'à la frame précédente), seulement si un stick
   est incliné (`AIM_ASSIST_MIN_INPUT`), borné à `AIM_ASSIST_MAX_TRACK_DEG_PER_SEC`.
@@ -406,7 +421,7 @@ Décisions prises à l'étape 4 :
   (`pass_denied`, ballon conservé) => le KICK s'applique.
 - **Coup de pied** : départ `KICK_START_FORWARD` devant les pieds, `KICK_START_HEIGHT` au-dessus du sol ; élévation
   `KICK_ELEVATION_DEG` (48° : une chandelle qui passe vite au-dessus des bras) + pitch·`KICK_PITCH_INFLUENCE` bornée ; vitesse
-  `KICK_SPEED` × **√`field.scale`** (portée ∝ v², donc proportionnelle à la taille du terrain : ≈ 36 m en 5v5, ≈ 26 m en 3v3
+  `KICK_SPEED` × **√`field.scale`** (portée ∝ v², donc proportionnelle à la taille du terrain : ≈ 36 m en 5v5, ≈ 30 m en 3v3 (26 m avec l'échelle 3v3 d'avant la correction de l'étape 7)
   à l'arrêt, au lieu d'un dégagement systématique dans l'en-but du 3v3) × dernière minute, + `KICK_INHERIT_VELOCITY` × vitesse
   horizontale du tireur. Tireur bloqué `KICK_PICKUP_BLOCK_SEC` (il peut ensuite rattraper son propre coup de pied :
   « chip and chase »). **Contre** : seulement un adversaire à moins de `KICK_CHARGE_DOWN_RADIUS` du tireur pendant
@@ -716,11 +731,11 @@ Décisions :
   **Anticipation** (pression, soutien) avec une vitesse plafonnée à `runSpeed × BOT_LEAD_SPEED_CAP_MULT` (une esquive à 21 m/s faisait
   sauter le point visé de 8 m : demi-tours en série).
   - Attaque : porteur (§ ci-dessous) ; receveur d'une passe en vol : garde sa ligne (même direction, même sprint ; la passe vise sa course
-    anticipée, §9) ; les `BOT_SUPPORTERS_3V3/5V5` (1 / 2) coéquipiers les plus en retrait : soutien à `BOT_SUPPORT_LATERAL` × échelle sur le
+    anticipée, §9) ; les `BOT_SUPPORTERS_3V3/5V5` (1 / 2 ; 2 / 3 depuis le §15) coéquipiers les plus en retrait : soutien à `BOT_SUPPORT_LATERAL` × échelle sur le
     côté et `BOT_SUPPORT_DEPTH` derrière le porteur anticipé (dans son cône de passe ; un soutien seul se met du côté le plus large) ; les
     autres : espace devant (`BOT_SPACE_AHEAD` / `BOT_SPACE_LATERAL` × échelle). Ils ne tirent que sur un défenseur à moins de
     `BOT_ESCORT_THREAT_DIST` du porteur (protection), sinon ils courent sans tirer.
-  - Défense : **dernier défenseur** (`cover`) : dès `BOT_COVER_MIN_DEFENDERS` (3) bots actifs, le mieux placé (de préférence déjà devant le
+  - Défense : **dernier défenseur** (`cover`) : dès `BOT_COVER_MIN_DEFENDERS` (3 ; 2 depuis le §15) bots actifs, le mieux placé (de préférence déjà devant le
     porteur, armé d'abord) tient TOUJOURS un point entre le porteur et notre en-but (`BOT_COVER_DEPTH` × échelle, au plus
     `BOT_COVER_LINE_FRACTION` de la distance à la ligne) et tire sur le porteur ; avec moins de bots, seulement si personne n'est devant le
     porteur — et alors AVANT la pression (courir derrière un porteur qui sprinte ne sert à rien : sans ce repli, 43–52 % du temps porté se
@@ -804,8 +819,333 @@ Décisions :
   personne derrière). Environ 6 à 10 demi-tours par joueur et par minute hors esquive, surtout aux changements de possession (légitimes).
   ≈ 0,3–0,7 s de calcul par match (sim + bots).
 - **Limites connues** : pas d'évitement explicite des murets (on compte sur la grimpe automatique et le détour de blocage) ; le demi ne
-  tire pas (étape 7) ; la mêlée (étape 7) n'est pas jouée par les bots (un ballon libre longtemps au même endroit reste une course au
-  ballon) ; les bots ne lisent pas les projectiles (esquive sur tir reçu seulement) ; l'avance d'un coup de pied est estimée au temps de
+  tire pas (étape 7 : résolu, §13) ; la mêlée (étape 7) n'est pas jouée par les bots (un ballon libre longtemps au même endroit reste une course au
+  ballon ; étape 7 : résolu, §14) ; les bots ne lisent pas les projectiles (esquive sur tir reçu seulement) ; l'avance d'un coup de pied est estimée au temps de
   course depuis les positions actuelles (sans temps de vol ni réaction) : seuls ≈ 30–40 % des (rares) coups de pied sont récupérés par
   l'équipe du botteur ; la difficulté n'est pas validée contre de vrais joueurs (un humain passif perd 0–270 contre des bots normaux, un
   humain « naïf » qui fonce sans tirer ≈ 20–160).
+
+## 13. Étape 7 (1re partie) : pilier et demi
+
+| Fichier | Rôle |
+|---|---|
+| `sim/shield.ts` | Bouclier frontal : `shieldUp`, `shieldArcCovers` (arc frontal), `shieldFacing`, `segmentShieldEntry` (surface), `shieldPoint`. PUR. |
+| `sim/explosion.ts` | `explode` (dégâts dégressifs, impact direct, ligne de vue, boucliers, self-knockback, une touche créditée), `applyKnockback`, `blastDistance`, `hasLineOfSight`, `blastLosOrigin`. |
+| `sim/projectiles.ts` | Parabole exacte balayée en `PROJECTILE_ARC_SUBSTEPS` cordes, boucliers (règles 1 et 2), impact / fin de vie des grenades, `predictGrenadeImpact` (PUR). |
+| `sim/abilities.ts` | Bouclier (activation, second appui = annulation à cooldown proportionnel), pose de zone (`slowZonePlacement`), `updateZones`, `inSlowZone`, multiplicateurs de vitesse. |
+| `sim/combat.ts` | Toutes les armes tirent (`weaponImplemented` toujours vrai) ; `canShoot` faux bouclier levé, rechargement permis. |
+| `game/roles.ts` | `assignRoles` sur les compositions par défaut `TEAM_ROLES_3V3` / `TEAM_ROLES_5V5` (constants.ts), `parseRole` (`?role=`). |
+| `bots/roleAbilities.ts` | Bouclier du pilier, zone du demi (décision, regard, appui). |
+| `bots/aim.ts`, `bots/aiming.ts` | `ballisticPitch`, `ballisticAimTo` (parabole exacte, arc bas / haut) ; tir en cloche du demi, portée plafonnée du fusil à pompe, pas de tir sur un bouclier qui fait face. |
+| `bots/steering.ts`, `bots/carrierBrain.ts`, `bots/tactics.ts` | Contournement des zones adverses (`avoidZones`, pénalité du porteur), demi qui garde ses distances en pression (`standoff`). |
+| `render/PlayerView.ts` | Bouclier (arc translucide couleur d'équipe, liseré, flash). |
+| `render/CombatFxView.ts` | Grenades (sphère + bande d'équipe + traînée, interpolées sur leur parabole : `grenadePoint`), explosions (boule + onde). |
+| `render/ZoneView.ts` | Zones (disque, rideau bas, tirets qui tournent, apparition / fondu) ; aperçus du demi local (pose de zone, impact de grenade). |
+| `input/haptics.ts` | `shieldBlock` (léger), `explosionNear` (moyen). |
+
+Décisions :
+
+- **Fusil à pompe** (le générique de l'étape 5 couvre tout : `pellets` projectiles par tir, deux tirages `state.rng` chacun, atténuation
+  `falloffStart` -> `range`) : 8 plombs × 6,5 = 52 à bout portant => **plaquage en 2 tirs** (0,83 s, cadence ramenée à 25 ticks, multiple
+  exact) jusqu'à ~6 m. Mesuré (40 tirs, cible immobile, hanche / visée) : 52 à 3–5 m, ≈ 38 / 46 à 8 m, ≈ 22 / 35 à 10 m, ≈ 6 / 10 à 15 m,
+  rien au-delà de `range` (15 m) : inefficace au-delà de ~12 m. Valeurs inchangées hors cadence.
+- **Bouclier : géométrie** (sim ET rendu) : arc de cylindre vertical de rayon `SHIELD_DISTANCE` (0,8 m > 0,6 m de capsule + tolérance) autour
+  de l'axe du pilier, sur ±`SHIELD_HALF_ANGLE_DEG` (65°) autour de son yaw, des pieds à `SHIELD_HEIGHT` (2,1 m). `SHIELD_RADIUS` (demi-largeur
+  d'un disque plat) est remplacé par `SHIELD_HEIGHT` : un disque plat de 1,1 m à 0,8 m ne couvrait que ±54°. Deux règles :
+  1. **surface** : un projectile adverse qui ENTRE dans la surface depuis l'extérieur est détruit (`blocked`, fin `blocked`) — il protège un
+     coéquipier **collé dans son dos et dans l'axe du tir** (ce n'est pas un « mur » : à 1,5 m derrière lui, un coéquipier n'est plus couvert dès
+     que le tireur est à 45° de l'axe, la ligne de tir passe à côté de l'arc de 0,8 m) ; un tir qui part de l'intérieur du cylindre (collé) ou
+     qui la traverse par l'arrière n'est pas arrêté par elle ;
+  2. **arc frontal** : le pilier ne subit aucun projectile ni explosion dont la direction horizontale d'arrivée est dans son arc (couvre les tirs
+     rasants qui contourneraient le bord de la surface, les tirs collés). Les tirs dans le dos le touchent. Un lob qui arrive par l'avant est
+     bloqué aussi (règle 2) ; un lob par-dessus vers un coéquipier derrière n'est pas arrêté par la surface (ouverte en haut).
+  Égalités sur une corde : relief, puis bouclier, puis joueur. Un bouclier n'arrête que les projectiles de l'équipe adverse ; il protège même
+  un pilier invulnérable ; il n'est levé que par un pilier actif (`shieldUp`).
+- **Bouclier : capacité** : front montant ABILITY, capacité prête => `abilityTicks` = durée (3 s), cooldown (10 s) après la durée. **Second
+  appui** pendant la durée => bouclier baissé, cooldown **proportionnel** à la durée utilisée (`cooldown × utilisé / durée`, au moins
+  `SHIELD_CANCEL_MIN_COOLDOWN_FRACTION` = 0,3 : pas de bouclier « clignotant » gratuit). Plaqué bouclier levé : cooldown complet (`endAbility`).
+  Bouclier levé : vitesse de course × `SHIELD_SPEED_MULT` (porteur compris : le pilier qui charge derrière son bouclier), pas de tir (`canShoot`),
+  mais le **rechargement** reste possible ; esquive, glissade, saut, plongeon, passe et coup de pied inchangés.
+- **Bouclier contre les explosions** : un adversaire du tireur protégé (règle 2 pour le pilier ; règle 1 : TOUTES ses lignes de vue vers
+  l'explosion traversent un bouclier levé de son équipe) ne prend **aucun dégât** et un knockback × `SHIELD_BLAST_KNOCKBACK_MULT` (0,35 : le
+  pilier encaisse le souffle mais tient sa ligne) ; un événement `blocked` par bouclier et par explosion. Une grenade qui touche un bouclier y
+  explose (fin `blocked`).
+- **Grenades** : projectile balistique de gravité `gravity` (18 m/s²), vitesse 30 m/s (portée ≈ 50 m à 45°), parabole **exacte** balayée en
+  `PROJECTILE_ARC_SUBSTEPS` (4) cordes par tick (extrémités sur la parabole, écart ≤ 0,2 mm ; chaque corde est testée contre relief, boucliers
+  et capsules : pas de tunnel). Rayon de collision avec les joueurs = `PROJECTILE_HIT_RADIUS` comme les balles (décision reportée de
+  l'étape 5). Explosion à l'impact (relief, mur invisible, joueur adverse, bouclier) ; en **fin de vie** (portée `range` ou
+  `PROJECTILE_MAX_LIFE_SEC` : tir très en cloche), explosion en l'air. Le tireur, ses coéquipiers et les joueurs non touchables ne
+  déclenchent pas l'impact (ils sont traversés).
+- **Explosion** : `d` = distance du centre à la SURFACE de la capsule (point de l'axe le plus proche − `PLAYER_RADIUS`) ; concerné si
+  `d ≤ blastRadius`. Dégâts = `blastDamageCenter → blastDamageEdge` linéaire en `u = d / blastRadius`, `+ directHitBonus` pour le joueur
+  touché de plein fouet, × `CARRIER_DAMAGE_MULT` pour le porteur. **Ligne de vue** (règle simple et déterministe) : origine = point d'impact
+  reculé de `BLAST_LOS_BACKOFF` le long de la trajectoire (côté libre : la corde jusqu'à l'impact est libre de relief ; = centre pour une
+  explosion en l'air) ; le joueur est touché si le segment origine -> point de son axe le plus proche, OU origine -> haut de son axe, ne coupe
+  aucun relief (`segmentTerrainEntry`) : une butte entre les deux protège, une tête qui dépasse d'un muret non. Une touche créditée au tireur
+  par grenade qui blesse au moins un adversaire (`shotsHit ≤ shotsFired`).
+- **Knockback** : `(knockback, knockbackUp) × (1 + (knockbackEdgeMult − 1)·u)`, horizontal dans la direction centre -> joueur, réduit
+  linéairement à moins de `PLAYER_RADIUS` du centre (explosion sous les pieds : vers le haut). Le souffle horizontal est une **vitesse
+  minimale imposée le long de sa direction** (correction de l'étape 7, §15 ; avant, il s'ajoutait à la vitesse du joueur) : avec `n` la
+  direction et `a = vitesse·n`, si `a < souffle` la vitesse gagne `(souffle − a)·n` (composante latérale conservée) ; un joueur qui fonce sur
+  l'explosion est vraiment renvoyé, un porteur qui fuit déjà plus vite qu'elle ne gagne rien (avant, une grenade tombée derrière un porteur le
+  poussait vers l'en-but : 31 à 45 souffles par match 3v3 aidaient le porteur adverse) ; plusieurs explosions au même tick dans la même direction
+  ne se cumulent pas. Horizontale plafonnée à `KNOCKBACK_MAX_HORIZONTAL_SPEED` (une vitesse déjà plus haute n'est pas réduite), verticale =
+  `max(vy, 0) + souffle` plafonnée à `KNOCKBACK_MAX_VERTICAL_SPEED`. Le joueur quitte le sol
+  (pas de saut « coyote » gratuit), **garde son élan en l'air** (règle existante : en l'air, maintenir sa direction ne freine pas ; sans entrée,
+  rien ne freine), atterrit normalement ; le déplacement reste balayé en sous-pas (`body.ts`) : **pas de traversée de muret** (test : projeté
+  contre un mur haut, il reste de son côté). Esquive, glissade et grimpe interrompues ; plongeon -> récupération (sans contrôle jusqu'au sol).
+  Un **porteur projeté garde le ballon**. Le tireur dans son explosion : knockback × `selfKnockbackMult` (0,75), **aucun dégât** (« grenade
+  jump » : tiré à ses pieds au début d'un saut, on monte nettement plus haut). **Joueurs au sol, qui se relèvent, invulnérables** : ni dégâts
+  ni knockback (un joueur intouchable l'est aussi pour le souffle). Coéquipiers du tireur : rien (pas de tir ami).
+  Réglage : 10 m/s + 6 m/s au centre => ≈ 0,45 s en l'air et ≈ 4,5 m de vol plané ; au bord (× 0,35), une petite poussée.
+- **Zone de ralentissement** : capacité **instantanée** (`abilityTicks` reste à 0) : le cooldown (12 s) part à la pose, la zone vit
+  `ROLES.demi.ability.duration` (5 s, `ttl` exact : elle agit sur le déplacement pendant exactement 150 ticks, retirée à l'étape 10 du dernier).
+  Point de pose (`slowZonePlacement`, PUR, partagé avec le rendu et les bots) : rayon de visée depuis `aimOrigin` (longueur
+  `SLOW_ZONE_PLACE_RANGE`) contre le relief (et les murs invisibles), reculé de 5 cm (face de muret) puis posé au sol (`groundHeight`) ; sans
+  contact, au sol à `SLOW_ZONE_PLACE_RANGE` **horizontalement** devant (`forward(yaw)`) ; centre ramené dans le terrain. **Une zone par demi** :
+  la nouvelle remplace l'ancienne (en pratique le cooldown dépasse la durée ; la règle tient si on les règle autrement ou en dernière minute).
+  Ids = `nextEntityId` (comme les projectiles), `state.zones` rangé par id croissant. Effet : les **adversaires** dont les pieds sont dedans
+  (`inSlowZone` : distance horizontale ≤ rayon, |Δy| ≤ `SLOW_ZONE_HEIGHT`) ont leur **vitesse de course** × `SLOW_ZONE_SPEED_MULT` (sprint,
+  visée, porteur compris ; plusieurs zones ne se cumulent pas). **Décisions** : l'accélération ne change pas (l'élan en trop retombe à
+  `GROUND_OVERSPEED_DECEL`) ; l'**esquive** et le **plongeon** gardent leur vitesse (s'échapper d'une zone coûte une esquive) ; le saut ne change
+  pas ; la glissade devient souvent impossible (vitesse sous `SLIDE_MIN_SPEED`). Aucun effet sur les alliés. Remise à zéro à chaque remise en jeu.
+- **Composition des équipes** (`game/roles.ts`) : 3v3 = un de chaque rôle (`TEAM_ROLES_3V3`) ; 5v5 = **1 pilier, 2 ailiers, 2 demis**
+  (`TEAM_ROLES_5V5`) : le pilier (le plus lent, portée courte) est un spécialiste du contact — deux piliers ralentiraient tout le jeu et
+  laisseraient peu de tireurs à moyenne portée ; deux ailiers donnent des coureurs et du feu précis, deux demis le contrôle de zone (knockback,
+  zones) qui manque le plus en 5v5 où les défenses sont nombreuses. Le rôle choisi par l'humain est retiré une fois de la composition et placé
+  en tête (index 0, même place de formation) ; l'équipe adverse a la même composition. Client : `?role=pilier|ailier|demi` (défaut ailier)
+  en attendant le menu de l'étape 8.
+- **Bots** :
+  - **portées** (`world.ts`, `engageRange`) : fusil à pompe plafonné à `BOT_SHOTGUN_ENGAGE_DIST` (10 m : au-delà, il se rapproche — le rôle
+    « pression » le mène au porteur) ; lance-grenades `BOT_GRENADE_ENGAGE_DIST` × `engageRangeMult`, jamais à moins de `BOT_GRENADE_MIN_DIST`
+    (son propre souffle). L'ancienne pénalité « désarmé » (demi après les autres pour presser / couvrir) ne s'applique plus.
+  - **demi : tir en cloche** (`aiming.ts`) : `ballisticAimTo` (parabole exacte, deux passes pour l'épaule) vers les **pieds** de la cible
+    anticipée (`BOT_GRENADE_AIM_HEIGHT` au-dessus du sol, avance = durée de vol × `leadFraction`, vitesse plafonnée), arc bas de préférence.
+    Au moment de tirer, l'impact prévu (`predictGrenadeImpact`, relief seulement) doit tomber à moins de `BOT_GRENADE_IMPACT_TOLERANCE` du
+    point visé et à plus de `blastRadius + BOT_GRENADE_SELF_MARGIN` de lui, et **aucun adversaire touchable** ne doit se trouver sur les
+    premiers mètres de la parabole (jusqu'à `blastRadius + BOT_GRENADE_SELF_MARGIN` de lui, mêmes cordes que la sim, capsules élargies de
+    `BOT_GRENADE_PATH_MARGIN` ; correction de l'étape 7 : sans ce contrôle, 7 à 15 grenades par match explosaient sur un adversaire collé au
+    demi, en plein dans son propre souffle) ; sinon il essaie l'autre arc (mémorisé : `lobHigh`) et ne tire pas ce tick (le contrôle n'a lieu
+    qu'au tick où l'arme est prête : coût négligeable). En pression, il s'arrête à `BOT_GRENADE_STANDOFF` du
+    porteur (`standoff`). Pas d'AIM (visée) pour les grenades. **Personne ne tire sur un pilier dont le bouclier lui fait face** (`shieldFacing`).
+  - **pilier : bouclier** (`roleAbilities.ts`) : sans ballon, levé sous le feu (réflexe armé) si sa stabilité passe sous
+    `BOT_SHIELD_RAISE_STABILITY_FRACTION` face à un tireur hors de portée de son fusil, ou sous `BOT_SHIELD_PANIC_STABILITY_FRACTION` ; il fait
+    alors face à la menace (pas de tir) ; baissé (second appui) après `BOT_SHIELD_CALM_SEC` sans menace s'il a une cible à portée de fusil.
+    Porteur : levé dès qu'un défenseur armé est devant lui (dans l'arc, à moins de `BOT_SHIELD_CARRIER_DIST`) ou s'il est sous le feu, baissé
+    après un moment sans menace. La capacité du porteur n'est pas évaluée pendant une passe / un coup de pied / un plongeon.
+  - **demi : zone** : défense — devant le porteur adverse (sa course anticipée de `BOT_ZONE_LEAD_SEC`, + `BOT_ZONE_AHEAD` vers notre en-but),
+    s'il n'est pas déjà ralenti ; attaque — sur le poursuivant le plus proche de notre porteur (à moins de `BOT_ZONE_PURSUER_DIST`, derrière ou
+    à côté ; le demi porteur se retourne brièvement, seulement si personne ne le presse devant). Point à moins de `BOT_ZONE_MAX_DIST` ; le bot
+    vise le sol à ce point et appuie quand `slowZonePlacement` **avec le regard réellement envoyé** tombe à moins de `BOT_ZONE_PLACE_TOLERANCE`
+    (abandon après `BOT_ACTION_MAX_PREP_SEC`, pas de tir pendant la préparation).
+  - **zones adverses** : un bot qui va vers un point visé tourne sa direction vers la **tangente** de la première zone adverse sur sa route
+    (rayon + `BOT_ZONE_AVOID_MARGIN`, à moins de `BOT_ZONE_AVOID_LOOKAHEAD` de son bord), sauf si le point visé est dans la zone (ballon,
+    porteur : on y va) ou s'il est déjà dedans (il sort vers son but) ; le porteur pénalise de `BOT_CARRIER_ZONE_PENALTY` les directions qui en
+    traversent une. L'ailier garde son comportement (son sprint boosté est désormais réservé à son rôle, le prédicat `abilityImplemented`
+    étant vrai pour tous).
+- **Rendu** : bouclier = arc translucide (couleur principale de l'équipe), liseré blanc (arcs + bords), déploiement lissé
+  (`STYLE.shieldDeploySec`), flash blanc sur `blocked` ; grenades = sphère sombre cerclée de la couleur claire de l'équipe + traînée courte,
+  position remontée sur la parabole (`grenadePoint` : `pos − vel·τ − ½gτ²ŷ`) ; une grenade qui disparaît n'a pas de traceur prolongé
+  (l'explosion prend le relais) ; explosion = boule flat qui s'étend jusqu'au rayon et s'estompe + onde au sol (couleur de l'équipe) ;
+  zones = disque translucide, rideau bas (visible de loin), bord + tirets qui tournent, pulsation, apparition et fondu ; plombs = traceurs
+  courts de l'étape 5. **Aperçus du demi local** : anneau en tirets au point de pose de sa zone quand la capacité est prête, anneau + balise
+  au point d'impact de sa grenade **en visée** (relief seulement). Signes de rôle (déjà présents, vérifiés en jeu) : crête plate = pilier,
+  aileron = ailier, auréole = demi. Pools préalloués ; seuls les aperçus du demi allouent quelques vecteurs par image (fonctions pures de la sim).
+- **HUD / entrées** : la puce de capacité affiche le libellé du rôle et son état : bouclier (temps restant, « appuie à nouveau pour baisser »),
+  zone (vie restante de SA zone et cooldown en même temps), sprint boosté ; aucune nouvelle touche (A / LB = capacité, second appui = baisser
+  le bouclier ; tir et visée inchangés : clic gauche / RT, clic droit / LT). Vibrations : `shieldBlock` (son bouclier bloque, léger),
+  `explosionNear` (explosion à moins de `RUMBLE_EXPLOSION_NEAR_MULT × rayon` de ses pieds, moyen).
+- **Correction annexe** : le freinage de la récupération de plongeon pouvait écrire `-0` dans la vitesse (composante négative × 0) ; révélé par
+  les nouveaux matchs, corrigé (`+ 0`).
+- **Tests** : `tests/sim/roles.test.ts` (fusil à pompe, bouclier, grenades, knockback, zones), `tests/bots/roles.test.ts` (comportements et
+  matchs complets avec les trois rôles), `tests/game/roles.test.ts`, vues (bouclier, grenades, explosions, zones), vibrations ; le test de
+  déterminisme scripté exige désormais explosions, capacités, zones et boucliers (graine d'entrées 99 : avec les explosions, la graine
+  précédente ne produisait plus de réception en 5v5).
+- **Mesures** (bots normal contre normal, 6 min, seeds 1 à 4 ; AVANT le réglage du rythme du §15) : 3v3 ≈ 29 essais, ballon porté 69 %, 11,5 %
+  de joueurs au sol, ≈ 3 coups de pied ; 5v5 ≈ 16 essais, porté 59 %, 13 % au sol. Par match 3v3 : ≈ 240 explosions, ≈ 115 tirs bloqués par un bouclier, une zone posée
+  ≈ 70 % du temps de jeu, ≈ 68 boucliers et ≈ 71 zones levés / posées ; plaquages répartis (ailier ≈ 32, pilier ≈ 35, demi ≈ 24 ; sur le porteur :
+  ≈ 21 / 23 / 11). ≈ 0,5–0,9 s de calcul par match.
+- **Limites connues** : la mêlée reste à faire (2e partie de l'étape 7 : faite, §14) ; un lob par-dessus un bouclier vers un coéquipier abrité derrière
+  n'est arrêté que par la règle 2 du pilier ; les bots ne lisent toujours pas les projectiles en vol (pas d'esquive anticipée des grenades) ;
+  le demi porteur qui se retourne pour poser une zone perd un peu de vitesse (marche arrière) ; le disque d'une zone posée sur un relief est
+  plat (partiellement caché dans une butte).
+
+## 14. Étape 7 (2e partie) : la mêlée
+
+| Fichier | Rôle |
+|---|---|
+| `sim/scrum.ts` | `updateScrum` (étape 10 de `step`) : déclenchement, décompte, résolution ; lectures PURES `scrumMinPlayers`, `scrumRadius`, `scrumCaptureTicks`, `scrumMaxTicks`, `scrumInOvertime`, `scrumTicksLeft`, `scrumLooseReady`, `countInZone`. |
+| `sim/types.ts` | `ScrumState` documenté ; nouvel événement `scrum_released` (0 contre 0). |
+| `sim/rules.ts`, `sim/carrier.ts` | Fin du match et outils de test (`debugGiveBall`, `debugResetBall`) effacent la mêlée (la remise en jeu le faisait déjà). |
+| `bots/scrumBrain.ts` | Approche (`scrumApproaching`, `shouldHoldZone`, `decideScrumApproach`), capture (`decideScrum`), cible de tir dans la zone (`scrumTarget`). |
+| `bots/tactics.ts`, `bots/bot.ts`, `bots/memory.ts`, `bots/aiming.ts` | Branchement : ballon libre (approche), ballon `scrum` (capture) ; décision de toute l'équipe au début / à la fin de l'approche (`scrumAlert`) ; rôle tactique `scrum` (tir sans retenue). |
+| `render/ScrumView.ts` | Zone de capture (shader : liseré au rayon exact, arcs de répartition, remplissage de la progression, prolongation dorée), rideau, apparition / fondu ; `scrumGauge` (PURE). |
+| `render/FxView.ts`, `render/palette.ts` | Ondes `FX.scrumStart` / `FX.scrumWon` ; `PALETTE.scrum*`, `STYLE.scrum*`. |
+| `game/matchHud.ts`, `ui/App.svelte` | HUD de la mêlée (décompte, jauge partagée, temps restant, prolongation, « tu comptes »), « MÊLÉE ! », « Mêlée gagnée par … ». |
+| `input/haptics.ts` | `scrumStart`, `scrumWon`, `scrumLost`. |
+
+Décisions (simulation) :
+
+- **Déclenchement** (phase `play` seulement) : `ball.mode === 'loose'` et `ball.looseTicks ≥ secToTicks(SCRUM_LOOSE_SEC)` (`looseTicks` est
+  incrémenté par `ball.ts` à l'étape 9 : un ballon lâché au tick L déclenche au plus tôt au tick L + 89, soit 90 ticks de ballon libre ; une
+  passe ou un coup de pied en vol ne compte pas), ET au moins `scrumMinPlayers` (2 en 3v3, 3 en 5v5) joueurs **actifs** de chaque équipe à au
+  plus `scrumRadius` (`SCRUM_RADIUS` × échelle) en distance **horizontale** pieds -> ballon (`≤` : un joueur pile au bord compte). Le test a lieu
+  à l'étape 10, après le ramassage : un ballon ramassé à l'étape 9 du même tick n'est plus libre, pas de mêlée. Effets : `state.scrum` =
+  { centre au sol sous le ballon (`groundHeight`), rayon, `ticks` = 0, décompte }, ballon `scrum` posé au centre (`BALL_RADIUS` au-dessus du
+  sol), immobile (vitesse, rotations à 0 ; `ball.ts` l'immobilise à chaque tick ; aucun joueur ne le pousse), **non ramassable** (`carrier.ts`
+  ne ramasse qu'un ballon `loose`), événement `scrum_start`.
+- **Capture** : à chaque tick suivant, `ticks++` puis décompte des joueurs actifs de chaque équipe dans la zone (`down` et `getting_up` exclus :
+  tirer pour plaquer les adversaires de la zone est la façon de la gagner — voulu). Projectiles, explosions et knockback continuent normalement
+  (un joueur projeté hors de la zone ne compte plus) ; les joueurs entrent et sortent librement.
+- **Résolution** : au tick où `ticks` atteint `secToTicks(SCRUM_CAPTURE_SEC)` (90 ticks après `scrum_start`), l'équipe la plus nombreuse gagne.
+  **Égalité : prolongation en « premier qui mène »** jusqu'à capture + `secToTicks(SCRUM_TIE_EXTRA_SEC)` : la première équipe qui compte plus
+  de joueurs que l'autre à la fin d'un tick gagne aussitôt. Choisi plutôt que « à la fin » : la prolongation récompense le premier plaquage
+  dans la zone, elle se termine dès qu'il y a un écart (lisible : « premier qui mène » dans le HUD) et ne prolonge pas inutilement une
+  mêlée déjà décidée. Encore à égalité à la fin : **un** tirage `state.rng` (`< 0,5` => équipe 0). Le gagnant reçoit le ballon **porté**
+  (`giveBall` : `looseTicks` = 0, `lastTeam`, pas de nouvelle mêlée possible avant `SCRUM_LOOSE_SEC` de ballon libre) par son joueur actif
+  **dans la zone** le plus proche du centre (égalité : plus petit id) ; événement `scrum_won`, `state.scrum = null`.
+- **Gagnant sans joueur dans la zone** : impossible au décompte (l'équipe qui mène a au moins un joueur dedans) et au tirage, qui n'a lieu qu'à
+  égalité NON nulle. **Règle sûre à 0 contre 0** (tout le monde plaqué ou sorti) : pas de tirage, le ballon est rendu **libre**, immobile, au
+  centre (`looseTicks` = 0), événement `scrum_released`. Rejeté : donner le ballon au joueur de l'équipe tirée au sort le plus proche hors de la
+  zone (le ballon « téléporté » à 30 m, voire dans l'en-but adverse => essai instantané).
+- **Essai** : impossible pendant une mêlée (ballon non porté). Une mêlée gagnée par l'attaque **dans l'en-but adverse** donne le ballon à un
+  joueur qui y a les pieds : essai à l'étape 11 du même tick (cohérent avec « ballon ramassé dans l'en-but adverse = essai ») — testé.
+- **Interactions** : pas de mêlée en phase figée (`kickoff`, `try`, `ended`) ; remise en jeu (`setupKickoff`), fin du match (`endMatch`) et
+  outils de test effacent `state.scrum` ; par sécurité, une mêlée dont le ballon n'est plus en mode `scrum` (état forgé) est oubliée. Le chrono
+  tourne (tick joué). **Dernière minute inchangée** : aucune durée de mêlée n'est multipliée par `LAST_MINUTE_COOLDOWN_MULT` (testé).
+- **Contrat** : `ScrumState` inchangé (`center`, `radius`, `ticks`, `counts`) ; la prolongation se lit avec `scrumInOvertime(scrum)` (ticks ≥
+  capture), le temps restant avec `scrumTicksLeft`. Déterminisme : joueurs par id croissant, un seul tirage au plus, état JSON pur (tests
+  d'aller-retour en pleine mêlée, 3v3 et 5v5).
+
+Décisions (bots, `scrumBrain.ts`) :
+
+- **Constat** : avec la règle « premier dans le cercle », un ballon libre est presque toujours ramassé en 1 à 2 s ; dans les matchs bots
+  contre bots, ≈ 0,1 mêlée par match se déclenchait d'elle-même (et 0 en 5v5, où il faut 3 joueurs de chaque camp). Les bots doivent donc
+  **jouer** la mêlée, comme le décrit le cahier des charges (« ils rentrent dans la zone pour peser sur le décompte »).
+- **Approche** (`scrumApproaching`) : ballon libre depuis `BOT_SCRUM_APPROACH_SEC` (1,6 s depuis la correction de l'étape 7 ; 1,2 s avant :
+  les bots tournaient autour de presque tous les ballons libres sans les prendre) avec un adversaire à moins de rayon +
+  `BOT_SCRUM_THREAT_MARGIN` du ballon (**hystérésis** de `BOT_ROLE_HYSTERESIS_M` à la sortie : un adversaire qui rôde sur le bord ne fait plus
+  basculer l'alerte à chaque tick). Le début et la fin de l'approche, ballon **toujours libre**, déclenchent une décision de toute l'équipe
+  **au même tick** (`BotMemory.scrumAlert`) : sans cela, un chasseur encore lancé (décision toutes les ~0,4 s) ramassait le ballon que ses
+  coéquipiers tenaient. Ce déclenchement ne passe pas par le temps de réaction : l'approche commence 1,6 s après que le ballon est devenu
+  libre, bien après la réaction de tous les niveaux (0,22–0,5 s) — la situation « ballon libre » est déjà perçue, seule son horloge déclenche
+  la décision (comme `decisionSec`). Un ballon **ramassé** ne déclenche rien ici (correction) : la perception retardée s'en charge, au lieu
+  d'une décision prise sur une situation perçue « libre » avec un ballon déjà porté. `tactics.ts` relit la même alerte (`mem.scrumAlert`).
+  - **Zone tenue** (`shouldHoldZone`) : si une mêlée est possible (au moins N joueurs actifs de chaque camp peuvent être dans la zone au
+    déclenchement, temps de course jusqu'au bord ≤ temps restant + `BOT_SCRUM_REACH_SLACK_SEC`) et que l'équipe n'est pas en infériorité
+    (au moins autant de joueurs que l'adversaire ; à égalité, les deux équipes tiennent), personne ne court au ballon : les entrants se placent
+    autour, hors du cercle de ramassage (`BALL_PICKUP_RADIUS + BOT_SCRUM_HOLD_MARGIN`), et tirent sur l'adversaire le plus proche du ballon
+    (celui qui va le ramasser) ; les autres gardent la forme d'équipe. Justification : au milieu des tireurs adverses, le porteur serait
+    plaqué presque aussitôt (×`CARRIER_DAMAGE_MULT`) ; la mêlée se joue au décompte. Si elle ne se déclenche pas (`SCRUM_LOOSE_SEC +
+    BOT_SCRUM_HOLD_GRACE_SEC` dépassé : décompte insuffisant dans le rayon), on ramasse. En infériorité : on va chercher le ballon (testé).
+  - Sinon : les chasseurs vont au ballon (comportement de l'étape 6) et des entrants rejoignent la zone (pour la mêlée si elle se déclenche).
+  - Mesuré : plus tôt (0,5–0,8 s), les chasseurs ramassent avant que tout le monde soit là, presque plus aucune mêlée.
+- **Capture** (`decideScrum`, situation PERÇUE `scrum`) : « majorité confortable » — l'équipe envoie dans la zone au plus (adversaires
+  actifs à moins de rayon + `BOT_SCRUM_THREAT_MARGIN` + `BOT_SCRUM_LEAD_MARGIN`) joueurs (humains de l'équipe déjà dedans déduits), les plus
+  rapides à y entrer (hystérésis `BOT_ROLE_HYSTERESIS_M`), seulement ceux qui peuvent y entrer à temps ; ils visent un point à
+  `BOT_SCRUM_INNER_FRACTION` du rayon de leur côté (répartis autour du ballon) et tirent sur l'adversaire de la zone le plus proche (rôle
+  `scrum` : pauses entre rafales sans `BOT_RESTRAINED_PAUSE_MULT`). Les autres se placent **pour la suite** : soutien derrière la zone
+  (cône de passe du futur porteur) + espace devant si l'équipe mène, défense étalée à `BOT_SCRUM_COVER_DEPTH` × échelle entre la zone et
+  leur en-but sinon ; ils tirent aussi sur un adversaire de la zone à portée. Le demi n'y tire pas à moins de `BOT_GRENADE_MIN_DIST`
+  (son propre souffle) : dans la zone, il compte surtout.
+- **Résolution** : la situation perçue devient « ballon porté » (après le temps de réaction) : décision normale (porteur, soutien, défense).
+- **Mesures** : voir §15 (après le réglage de la correction de l'étape 7, composition du jeu, 24 seeds : ≈ 2,5 mêlées par match en 3v3, ≈ 1,3
+  en 5v5, ≈ 2 % du temps de jeu, 80 % décidées au bout des 3 s, le reste en prolongation, tirages très rares). Avant la correction, la mesure
+  de l'implémentation (≈ 2,1 / 1,5 mêlées, essais « quasi inchangés ») était faite avec une autre composition que celle du jeu (tests/bots/helpers.ts :
+  2 piliers en 5v5) et avec `BOT_SCRUM_APPROACH_SEC` = 1,2 s, qui coûtait en fait ≈ 3–5 points de ballon porté. ≈ 0,6 / 0,8 s de calcul par
+  match (approche : un `ballLandingPoint` par bot et par tick de ballon libre).
+
+Décisions (rendu, HUD, entrées) :
+
+- **Zone** (`ScrumView`) : un disque unité mis à l'échelle du rayon EXACT de l'état, dessiné par un shader (une seule géométrie, uniforms par
+  image) : liseré blanc au bord, bande de répartition (deux arcs aux couleurs des équipes, chacun grandit depuis le côté de son en-but —
+  « tir à la corde » lisible de n'importe quel côté), remplissage **radial** de la progression (du centre vers la bande ; radial plutôt
+  qu'un secteur d'horloge : lisible quel que soit l'angle de caméra), couleur de l'équipe qui mène (blanc à égalité) ; prolongation : liseré
+  et remplissage dorés qui pulsent, le remplissage repart du centre. Rideau bas translucide (visible de loin). Disque plat (comme les zones
+  du demi) : sur une butte, il est en partie caché. La progression est interpolée (`alpha`) ; fondu à la couleur du vainqueur après la
+  résolution. `#include <colorspace_fragment>` : mêmes couleurs que les `MeshBasicMaterial` des équipes.
+- **HUD** : sous le score (décalé sous l'étiquette « DERNIÈRE MINUTE »), « MÊLÉE » / « PROLONGATION », décompte et jauge partagée aux couleurs
+  des équipes, temps restant de la phase en cours (`scrumGauge`, la même fonction que le rendu), « tu comptes » quand le joueur local est
+  dedans (`inScrumZone`, la règle exacte de la sim exportée par l'API : le HUD n'en garde pas de copie, correction de l'étape 7) ; bannières « MÊLÉE ! » (`STYLE.scrumCallSec`, à la place de « JOUEZ ! » s'il y en a un) et « Mêlée gagnée par … » / « Mêlée :
+  ballon rendu » (`STYLE.scrumResultSec`). Correction annexe : les bannières s'animent avec `banner-pop`, qui garde le `translateX(-50%)`
+  (l'animation `count-pop` le remplaçait : bannière décalée pendant 0,3 s).
+- **Vibrations** : `scrumStart` pour tout le monde (un temps fort du match, comme un essai), `scrumWon` / `scrumLost` selon l'équipe du
+  joueur local (remplace l'ancien « réception » réservé au joueur qui recevait le ballon). Aucune nouvelle touche : clavier et manette
+  identiques (entrer dans la zone, tirer).
+- **Limites connues** : `scrumTarget` (bots) ne tient pas compte de la ligne de vue (un adversaire derrière un muret de la zone peut être
+  visé) ; un humain qui ramasse le ballon pendant que les bots tiennent la zone coupe court à la mêlée (c'est la règle : premier dans le
+  cercle). Pas de biais d'équipe : sur toutes les séries de mesure de la correction de l'étape 7 (≈ 300 matchs), mêlées gagnées 217 / 220 en
+  3v3 et 136 / 133 en 5v5 (l'écart « 16 sur 17 » vu sur 8 seeds était du bruit).
+
+## 15. Correction de l'étape 7 : rythme et constats de relecture
+
+Relecture indépendante de l'étape 7 (bugs, architecture, équilibrage), puis correction. Mesures au harnais de relecture (matchs bots contre
+bots de 6 min, difficulté normale, **composition du jeu par défaut** : 3v3 ailier, pilier, demi ; 5v5 ailier, pilier, ailier, demi, demi ;
+seeds 1 à 24 sauf mention).
+
+Correctifs :
+
+- **Knockback** (`explosion.ts`, constat majeur) : vitesse minimale imposée le long du souffle au lieu d'une addition (§13). Avant, un coureur
+  lancé à 8,8 m/s vers une explosion centrale n'était renvoyé que de 2,2 m par rapport à sa course (4,5 m pour un joueur immobile) et un ailier
+  porteur boosté continuait même d'avancer ; la grenade du demi, qui tombe souvent derrière un porteur (avance partielle), le poussait vers
+  l'en-but. Test : coureur qui fonce sur l'explosion renvoyé à la vitesse du souffle, fuyard plus rapide inchangé, deux souffles au même
+  tick non cumulés, plafond.
+- **Demi bot** (`aiming.ts`) : pas de grenade quand un adversaire touchable est sur les premiers mètres de la trajectoire (§13). Auto-knockbacks
+  par match : 10 -> 0 en 3v3, 13,5 -> 3,5 en 5v5 (seeds 1–2 ; le reste : relief, foules). Test : adversaire collé sur la ligne de tir.
+- **Alerte de mêlée** (`bot.ts`, `scrumBrain.ts`) : hystérésis à la sortie, pas de décision d'alerte sur un ballon ramassé (§14). Test unitaire de
+  `scrumApproaching`.
+- **HUD** : « tu comptes » lit `inScrumZone` (sim) au lieu d'une copie de la règle (§14). Test : `inScrumZone` = décompte de la sim.
+- **Aide à la visée** : coupée bouclier levé et pour le lance-grenades (`aimAssistApplies`, §8). Test.
+- **Tests** : matchs complets avec la composition du jeu (`gameRoles`, tests/bots/helpers.ts ; les scènes construites gardent leurs ids) ; mêlée
+  coupée par la fin du match correctement détectée (`endMatch` efface `state.scrum` : l'ancien garde-fou ne pouvait jamais servir) et deux
+  seeds par taille au lieu de quatre (8,3 -> ≈ 4,5 s) ; titre « 3vNaN » corrigé ; bornes de rythme resserrées (ci-dessous).
+- **Docs** : le bouclier ne protège qu'un coéquipier collé dans son dos (§13) ; plus de « biais d'équipe » dans les mêlées (§14).
+
+**Rythme** (constat majeur : ≈ 31 essais par match en 3v3 et 15 en 5v5 avec le code livré, objectif ≈ 4 à 12). Cause principale : un porteur
+qui avait passé la défense ne pouvait plus être rattrapé (sprint × 1,22, ailier porteur boosté à 13,9 m/s, défenseur qui tire = défenseur qui ne
+sprinte pas), et en 3v3 les contres après un plaquage convertissaient 50 à 64 %. Combinaison retenue : « S1 » du relecteur, vérifiée au harnais,
+plus `BOT_SCRUM_APPROACH_SEC` d'un autre constat, avec **une différence** : `CARRIER_DAMAGE_MULT` 1,3 au lieu de 1,5 — une fois l'approche de
+mêlée à 1,6 s, 1,5 ne donnait pas moins d'essais en normal (13,4 / 9,3 contre 13,3 / 9,8 sur 24 seeds) mais moins de ballon porté (57 % contre
+59 % en 3v3) et plus de joueurs au sol (15,1 % contre 13,9 %), et 1,3 reste plus près du « un peu plus fort » du cahier des charges (feeling du
+porteur, priorité absolue) ; contre des bots faciles, 1,5 marque ≈ 3 essais de moins. Uniquement des constantes :
+
+| Constante | Avant | Après | Pourquoi |
+|---|---|---|---|
+| `SPRINT_SPEED_MULT` | 1,22 | 1,12 | Porteur rattrapable ; il reste le plus rapide (× 1,08 × 1,12 = 1,21 contre 1,12) |
+| `BOOST_SPEED_MULT` | 1,2 | 1,1 | Ailier porteur boosté ≈ 11,7 m/s au lieu de 13,9 |
+| `CARRIER_DAMAGE_MULT` | 1,1 | 1,3 | Défense plus forte ; ailier : porteur immobile plaqué en 1,0 s au lieu de 1,2 s |
+| `FIELD_SCALE_3V3` | 0,7 | 0,84 | « 70 % de la taille » lu comme une surface (§4) |
+| `BOT_SUPPORTERS_3V3` / `_5V5` | 1 / 2 | 2 / 3 | Le coureur « espace » devant ne servait qu'à alimenter les contres |
+| `BOT_COVER_MIN_DEFENDERS` | 3 | 2 | Un défenseur se replie toujours, même à deux |
+| `BOT_COVER_DEPTH` / `BOT_COVER_LINE_FRACTION` | 18 m / 0,7 | 26 m / 0,9 | Repli plus profond (devant le porteur, pas derrière) |
+| `BOT_PRESSURE_RADIUS` | 7 m | 9 m | Le porteur bot passe plus tôt |
+| `BOT_SCRUM_APPROACH_SEC` | 1,2 s | 1,6 s | Zone tenue seulement autour d'un ballon déjà disputé |
+
+| Mesure (normal) | 3v3 avant | 3v3 après | 5v5 avant | 5v5 après |
+|---|---|---|---|---|
+| Essais par match (min–max) | 27,5 (24–33) | **13,3** (9–18) | 16,6 (12–22) | **9,8** (6–15) |
+| Ballon porté / libre (part du jeu) | 66 % / 26 % | 59 % / 28 % | 52 % / 35 % | 47 % / 38 % |
+| Joueurs au sol (temps-joueur) | 12,3 % | 13,9 % | 15,4 % | 16,2 % |
+| Possessions converties en essai | 41 % | 23 % | 25 % | 16 % |
+| Possession médiane | 5,2 s | 5,8 s | 4,5 s | 4,9 s |
+| Vitesse moyenne du porteur | 10,4 m/s | 9,6 m/s | 11,4 m/s | 10,3 m/s |
+| Temps porté sans défenseur devant (20 m) | 38 % | 20 % | 27 % | 18 % |
+| Mêlées par match | 1,8 | 2,5 | 1,6 | 1,2 |
+
+« Avant » = code de l'étape 7 avec les correctifs ci-dessus, sans le réglage (le code livré, mesuré par le relecteur avec l'ordre de rôles
+`TEAM_ROLES_*` : 30,9 / 15,0). Composition `TEAM_ROLES_*` (humain pilier) après réglage : 13,6 / 9,1 (seeds 1–12). Facile / difficile après
+réglage (seeds 1–8) : 19,4 / 12,9 essais en 3v3, 13,8 / 8,9 en 5v5. Le 3v3 reste en haut de la cible (≈ 13) : sans changer de règle, les
+leviers crédibles plafonnent vers 12–14 (essayés en plus, dans le bruit de ± 1,5 : porteur × 1,05, un seul presseur, marquage plus large,
+sprint 1,15).
+**Prix à payer** : un peu moins de ballon porté et un peu plus de joueurs au sol (à revalider avec un humain ; si le ballon libre gêne en jeu
+réel, réduire les plaquages de non-porteurs avec `BOT_RESTRAINED_PAUSE_MULT` 2,5 -> 3,5 plutôt que d'agrandir `BALL_PICKUP_RADIUS`, qui tue les
+mêlées en 5v5). Bornes de rythme des tests (seeds 1–3) : essais 4–18 (3v3) / 4–14 (5v5), ballon porté ≥ 50 % / 40 %, au sol ≤ 17 % / 19 %.
+Temps pour plaquer par arme : docs/TESTING.md (étape 7).
+
+Constats écartés ou partiels :
+
+- **Réaction de l'alerte de mêlée** (le déclenchement ignore le temps de réaction) : écarté pour le début (l'approche commence 1,6 s après que le
+  ballon est libre, bien après la réaction de tous les niveaux : c'est l'horloge d'une situation déjà perçue), corrigé pour le ballon ramassé et
+  pour le « clignotement » (hystérésis).
+- **Ballon libre 31–40 % du temps** : accepté comme prix du rythme (voir ci-dessus), pas de changement de règle.
+

@@ -142,7 +142,7 @@ describe('course', () => {
     expect(steadySpeed('ailier', { ...side, buttons: S })).toBeCloseTo(steadySpeed('ailier', side), 9);
     expect(steadySpeed('ailier', { ...side, buttons: S })).toBeLessThan(base);
     // Diagonale clavier (45°) : sprint.
-    expect(steadySpeed('ailier', { moveX: 1, moveY: 1, buttons: S })).toBeGreaterThan(base * 1.1);
+    expect(steadySpeed('ailier', { moveX: 1, moveY: 1, buttons: S })).toBeCloseTo(steadySpeed('ailier', { moveX: 1, moveY: 1 }) * SPRINT_SPEED_MULT, 6);
   });
 
   it('le porteur est plus rapide (CARRIER_SPEED_MULT)', () => {

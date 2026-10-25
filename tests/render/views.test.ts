@@ -5,12 +5,22 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { BallView } from '../../src/render/BallView';
-import { CombatFxView, inFlightTracer, tracerPoint } from '../../src/render/CombatFxView';
+import { CombatFxView, grenadePoint, inFlightTracer, tracerPoint } from '../../src/render/CombatFxView';
 import { fxForEvent, FxView } from '../../src/render/FxView';
-import { FX, STYLE } from '../../src/render/palette';
+import { FX, PALETTE, STYLE } from '../../src/render/palette';
 import { PassIndicatorView } from '../../src/render/PassIndicatorView';
 import { PlayerAssets, PlayerView } from '../../src/render/PlayerView';
-import { PLAYER_HEIGHT, PLAYER_LOW_HEIGHT, PLAYER_RADIUS } from '../../src/sim/constants';
+import { ScrumView, scrumGauge } from '../../src/render/ScrumView';
+import { ZoneView } from '../../src/render/ZoneView';
+import {
+  PLAYER_HEIGHT,
+  PLAYER_LOW_HEIGHT,
+  PLAYER_RADIUS,
+  SHIELD_DISTANCE,
+  SHIELD_HALF_ANGLE_DEG,
+  SHIELD_HEIGHT,
+  TICK_DT,
+} from '../../src/sim/constants';
 import { createMatch } from '../../src/sim/match';
 import { cloneState } from '../../src/sim/serialize';
 import type { MatchState } from '../../src/sim/types';
@@ -315,3 +325,153 @@ describe('combat (étape 5)', () => {
   });
 });
 
+
+describe('pilier et demi (étape 7)', () => {
+  it('PlayerView : bouclier du pilier visible seulement levé, même géométrie que la sim, flash quand il bloque', () => {
+    const s = match();
+    const p = s.players[2]; // pilier de l'équipe 0
+    expect(p.role).toBe('pilier');
+    const assets = new PlayerAssets();
+    const v = new PlayerView(assets, p.id, p.team, p.role, false);
+    const frame = { feet: { x: 0, y: 0, z: 0 }, yaw: 0, pitch: 0, ground: 0, carrier: false };
+    const shield = v.root.children[0].children.find((c) => c.type === 'Group' && c.children.some((m) => m.type === 'LineSegments'));
+    expect(shield).toBeDefined();
+    for (let i = 0; i < 30; i++) v.update(p, frame, 1 / 60, i / 60);
+    expect(shield?.visible).toBe(false);
+    p.abilityTicks = 30;
+    for (let i = 0; i < 30; i++) v.update(p, frame, 1 / 60, 1 + i / 60);
+    expect(shield?.visible).toBe(true);
+    v.root.updateMatrixWorld(true);
+    const panel = shield?.children[0] as THREE.Mesh;
+    const box = new THREE.Box3().setFromObject(panel, true);
+    expect(box.max.z).toBeCloseTo(SHIELD_DISTANCE, 2); // devant (yaw 0 = +Z), à SHIELD_DISTANCE de l'axe
+    expect(box.min.y).toBeCloseTo(0, 2);
+    expect(box.max.y).toBeCloseTo(SHIELD_HEIGHT, 2);
+    expect(box.max.x).toBeCloseTo(SHIELD_DISTANCE * Math.sin((SHIELD_HALF_ANGLE_DEG * Math.PI) / 180), 2);
+    const mat = panel.material as THREE.MeshBasicMaterial;
+    const calm = mat.opacity;
+    v.shieldFlash(2);
+    v.update(p, frame, 1 / 60, 2.01);
+    expect(mat.opacity).toBeGreaterThan(calm + 0.2);
+    // Un ailier n'a pas de bouclier.
+    const a = new PlayerView(assets, 0, 0, 'ailier', false);
+    expect(a.root.children[0].children.some((c) => c.type === 'Group' && c.children.some((m) => m.type === 'LineSegments'))).toBe(false);
+    v.dispose();
+    a.dispose();
+    assets.dispose();
+  });
+
+  it('grenadePoint : position interpolée sur la parabole (alpha 1 = état courant, alpha 0 = un tick plus tôt)', () => {
+    const g = { id: 1, kind: 'grenade' as const, ownerId: 1, team: 0 as const, pos: { x: 1, y: 3, z: 10 }, vel: { x: 0, y: 4, z: 30 }, ttl: 80, traveled: 10, damage: 0 };
+    const out = { x: 0, y: 0, z: 0 };
+    grenadePoint(g, 18, 1, 0, out);
+    expect(out).toEqual({ x: 1, y: 3, z: 10 });
+    grenadePoint(g, 18, 0, 0, out);
+    expect(out.z).toBeCloseTo(10 - 30 * TICK_DT, 9);
+    expect(out.y).toBeCloseTo(3 - 4 * TICK_DT - 0.5 * 18 * TICK_DT * TICK_DT, 9);
+  });
+
+  it('CombatFxView : grenade en vol (sphère + traînée), explosion (boule + onde) qui s’estompe ; pas de traceur prolongé pour une grenade', () => {
+    const prev = match();
+    const curr = cloneState(prev);
+    curr.projectiles = [{ id: 5, kind: 'grenade', ownerId: 1, team: 0, pos: { x: 0, y: 2, z: 5 }, vel: { x: 0, y: 3, z: 30 }, ttl: 80, traveled: 5, damage: 0 }];
+    const fx = new CombatFxView();
+    const cam = new THREE.PerspectiveCamera();
+    fx.handleEvents(
+      [
+        { type: 'explosion', ownerId: 1, pos: { x: 3, y: 0, z: 3 }, radius: 3.5 },
+        { type: 'projectile_end', projectileId: 4, ownerId: 1, kind: 'grenade', pos: { x: 3, y: 0, z: 3 }, reason: 'terrain' },
+      ],
+      curr,
+      prev,
+      0,
+    );
+    fx.update(curr, 0.5, cam, 1 / 60, 0.05);
+    const tracers = fx.group.children.slice(0, STYLE.tracerPoolSize).filter((c) => c.visible).length;
+    expect(tracers).toBe(0);
+    const visible = fx.group.children.filter((c) => c.visible);
+    // Grenade (groupe) + traînée + boule + onde (+ étincelles du relief).
+    expect(visible.length).toBeGreaterThanOrEqual(4);
+    fx.update({ ...curr, projectiles: [] }, 0.5, cam, 1 / 60, 5);
+    expect(fx.group.children.filter((c) => c.visible)).toHaveLength(0);
+    fx.dispose();
+  });
+
+  it('ZoneView : une zone affichée par zone de l’état, couleur de son équipe, qui disparaît avec elle ; aperçus du joueur local', () => {
+    const s = match();
+    s.zones = [
+      { id: 3, kind: 'slow', ownerId: 1, team: 0, pos: { x: 0, y: 0, z: 5 }, radius: 4.5, ttl: 100 },
+      { id: 4, kind: 'slow', ownerId: 4, team: 1, pos: { x: 6, y: 0, z: -5 }, radius: 4.5, ttl: 3 },
+    ];
+    const zv = new ZoneView();
+    zv.update(s, { zone: { x: 1, y: 0, z: 2 }, grenade: null, team: 0 }, 1);
+    const groups = zv.group.children.filter((c) => c.type === 'Group' && c.visible);
+    expect(groups).toHaveLength(2);
+    expect(groups[0].position.z).toBeCloseTo(5, 6);
+    const disc = groups[1].children[0] as THREE.Mesh;
+    expect((disc.material as THREE.MeshBasicMaterial).color.getHexString()).toBe(new THREE.Color(PALETTE.teams[1].main).getHexString());
+    expect(zv.group.children.filter((c) => c.type === 'Mesh' && c.visible)).toHaveLength(1); // aperçu de zone seul
+    s.zones = [];
+    zv.update(s, { zone: null, grenade: { x: 0, y: 0, z: 9 }, team: 0 }, 2);
+    expect(zv.group.children.filter((c) => c.type === 'Group' && c.visible)).toHaveLength(0);
+    expect(zv.group.children.filter((c) => c.type === 'Mesh' && c.visible)).toHaveLength(1); // aperçu de grenade seul
+    zv.dispose();
+  });
+});
+
+describe('Mêlée (étape 7) : jauge et zone de capture', () => {
+  const scrum = (ticks: number, counts: [number, number]) => ({ center: { x: 3, y: 0.2, z: -4 }, radius: 4.2, ticks, counts });
+
+  it('scrumGauge : progression de la capture puis de la prolongation, répartition, équipe qui mène, temps restant', () => {
+    const g0 = scrumGauge(scrum(0, [2, 2]));
+    expect(g0).toEqual({ progress: 0, overtime: false, share0: 0.5, leader: -1, secLeft: 3 });
+    const g = scrumGauge(scrum(45, [3, 1]), 0.5);
+    expect(g.progress).toBeCloseTo(45.5 / 90, 9);
+    expect(g.share0).toBeCloseTo(0.75, 9);
+    expect(g.leader).toBe(0);
+    expect(g.secLeft).toBeCloseTo((90 - 45.5) / 30, 9);
+    const ot = scrumGauge(scrum(90 + 30, [1, 1]));
+    expect(ot.overtime).toBe(true);
+    expect(ot.progress).toBeCloseTo(0.5, 9);
+    expect(ot.secLeft).toBeCloseTo(1, 9);
+    expect(scrumGauge(scrum(10, [0, 0])).share0).toBe(0.5);
+    expect(scrumGauge(scrum(10, [0, 2])).leader).toBe(1);
+  });
+
+  it('ScrumView : disque au rayon exact, uniforms de la jauge, prolongation dorée, fondu à la couleur du vainqueur', () => {
+    const v = new ScrumView();
+    v.update(null, 0, 0);
+    expect(v.group.visible).toBe(false);
+    v.update(scrum(30, [1, 3]), 0, 1);
+    v.update(scrum(31, [1, 3]), 0, 1 + STYLE.scrumAppearSec);
+    expect(v.group.visible).toBe(true);
+    expect(v.group.position.x).toBeCloseTo(3, 9);
+    expect(v.group.position.z).toBeCloseTo(-4, 9);
+    expect(v.group.scale.x).toBeCloseTo(4.2, 9); // rayon exact (disque unité)
+    const disc = v.group.children[0] as THREE.Mesh;
+    const u = (disc.material as THREE.ShaderMaterial).uniforms;
+    expect(u.uShare.value).toBeCloseTo(0.25, 9);
+    expect(u.uProgress.value).toBeCloseTo(31 / 90, 9);
+    expect((u.uFill.value as THREE.Color).getHexString()).toBe(new THREE.Color(PALETTE.teams[1].main).getHexString());
+    v.update(scrum(100, [2, 2]), 0, 2);
+    expect((u.uRim.value as THREE.Color).getHexString()).toBe(new THREE.Color(PALETTE.scrumOvertime).getHexString());
+    // Résolution : fondu à la couleur du vainqueur, puis masqué.
+    v.handleEvent({ type: 'scrum_won', team: 0, playerId: 1 });
+    v.update(null, 0, 3);
+    expect(v.group.visible).toBe(true);
+    expect((u.uFill.value as THREE.Color).getHexString()).toBe(new THREE.Color(PALETTE.teams[0].main).getHexString());
+    v.update(null, 0, 3 + STYLE.scrumFadeSec + 0.01);
+    expect(v.group.visible).toBe(false);
+    v.dispose();
+  });
+
+  it('fxForEvent : onde au centre au déclenchement, sur le joueur qui reçoit le ballon à la résolution', () => {
+    const s = match();
+    const start = fxForEvent({ type: 'scrum_start', pos: { x: 1, y: 0, z: 2 } }, s);
+    expect(start?.rings).toBe(FX.scrumStart);
+    expect(start?.ground).toEqual({ x: 1, y: 0, z: 2 });
+    const won = fxForEvent({ type: 'scrum_won', team: 0, playerId: 1 }, s);
+    expect(won?.rings).toBe(FX.scrumWon);
+    expect(won?.ground).toBe(s.players[1].pos);
+  });
+});

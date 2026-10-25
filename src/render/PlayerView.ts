@@ -7,6 +7,9 @@
  * pulsante pendant l'invulnérabilité (plongeon, relevé : on voit d'un coup d'œil que le joueur est intouchable).
  * Étape 5 : clignotement quand il est touché (`flash`), barre de stabilité au-dessus de la tête des AUTRES joueurs
  * (visible quand la jauge n'est pas pleine), posture au sol COUCHÉE avec des étoiles qui tournent, puis relevé.
+ * Étape 7 : bouclier frontal du pilier (même géométrie que la sim, shield.ts : arc de cylindre de rayon SHIELD_DISTANCE
+ * sur ±SHIELD_HALF_ANGLE_DEG, des pieds à SHIELD_HEIGHT), translucide à la couleur de l'équipe, liseré blanc, qui
+ * flashe quand il bloque (`shieldFlash`) ; il se déploie / se replie en STYLE.shieldDeploySec.
  *
  * Géométries et matériaux partagés (PlayerAssets) ; seuls le corps (clignotement) et la jauge (couleur) ont un
  * matériau propre à chaque joueur. Aucune allocation par frame.
@@ -21,6 +24,10 @@ import {
   playerHeight,
   ROLES,
   secToTicks,
+  SHIELD_DISTANCE,
+  SHIELD_HALF_ANGLE_DEG,
+  SHIELD_HEIGHT,
+  shieldUp,
   type PlayerState,
   type Role,
   type TeamId,
@@ -64,6 +71,19 @@ export class PlayerAssets {
   /** Barre de stabilité (plan unité) et étoiles du joueur au sol. */
   readonly bar = new THREE.PlaneGeometry(1, 1);
   readonly star = starShape(5, 0.45);
+  /** Bouclier du pilier : arc de cylindre ouvert centré sur +Z local (forward), pieds à SHIELD_HEIGHT (origine au milieu). */
+  readonly shield = new THREE.CylinderGeometry(
+    SHIELD_DISTANCE,
+    SHIELD_DISTANCE,
+    SHIELD_HEIGHT,
+    STYLE.shieldSegments,
+    1,
+    true,
+    -SHIELD_HALF_ANGLE_DEG * (Math.PI / 180),
+    2 * SHIELD_HALF_ANGLE_DEG * (Math.PI / 180),
+  );
+  /** Liseré du bouclier : arcs du haut et du bas + deux bords verticaux (segments). */
+  readonly shieldRim = shieldRimGeometry();
 
   readonly teamMats: [THREE.MeshToonMaterial, THREE.MeshToonMaterial];
   readonly teamDarkMats: [THREE.MeshToonMaterial, THREE.MeshToonMaterial];
@@ -144,7 +164,29 @@ export class PlayerAssets {
     ];
     for (const m of mats) m.dispose();
     this.gradient.dispose();
+    this.shield.dispose();
+    this.shieldRim.dispose();
   }
+}
+
+/** Liseré du bouclier (LineSegments) : arcs à y = ±SHIELD_HEIGHT / 2 et deux bords verticaux, dans le repère du bouclier. */
+function shieldRimGeometry(): THREE.BufferGeometry {
+  const pts: number[] = [];
+  const half = SHIELD_HALF_ANGLE_DEG * (Math.PI / 180);
+  const n = STYLE.shieldSegments;
+  const hy = SHIELD_HEIGHT / 2;
+  const at = (a: number, y: number): [number, number, number] => [SHIELD_DISTANCE * Math.sin(a), y, SHIELD_DISTANCE * Math.cos(a)];
+  for (const y of [-hy, hy]) {
+    for (let i = 0; i < n; i++) {
+      const a0 = -half + (2 * half * i) / n;
+      const a1 = -half + (2 * half * (i + 1)) / n;
+      pts.push(...at(a0, y), ...at(a1, y));
+    }
+  }
+  pts.push(...at(-half, -hy), ...at(-half, hy), ...at(half, -hy), ...at(half, hy));
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+  return g;
 }
 
 /** Géométrie d'étoile plate (branches de rayon 1, creux de rayon `inner`). */
@@ -219,6 +261,7 @@ export class PlayerView {
   private readonly dizzy = new THREE.Group();
   private readonly stars: THREE.Mesh[] = [];
   private readonly role: Role;
+  private readonly team: TeamId;
   private hitAt = -1;
   private fall = 0;
   /**
@@ -232,6 +275,12 @@ export class PlayerView {
   private readonly invulnMat: THREE.MeshBasicMaterial;
   private lean = 0;
   private low = 0;
+  /** Bouclier (pilier seulement) : groupe, matériaux propres (flash), déploiement lissé 0..1, instant du dernier blocage. */
+  private readonly shieldGroup: THREE.Group | null = null;
+  private readonly shieldMat: THREE.MeshBasicMaterial | null = null;
+  private readonly shieldRimMat: THREE.LineBasicMaterial | null = null;
+  private shieldOpen = 0;
+  private blockedAt = -1;
 
   constructor(
     assets: PlayerAssets,
@@ -243,6 +292,7 @@ export class PlayerView {
     const H = PLAYER_HEIGHT;
     const R = PLAYER_RADIUS;
     this.role = role;
+    this.team = team;
     this.root.add(this.yawGroup);
     this.yawGroup.add(this.fallGroup);
     this.fallGroup.add(this.pose);
@@ -335,6 +385,32 @@ export class PlayerView {
     this.dizzy.visible = false;
     this.dizzy.position.z = PLAYER_HEIGHT * STYLE.dizzyForwardFraction; // au-dessus du corps couché vers l'avant
     this.yawGroup.add(this.dizzy);
+
+    // Bouclier du pilier : sous le lacet (suit le regard), pas sous la posture (la sim le place des pieds à SHIELD_HEIGHT).
+    if (role === 'pilier') {
+      this.shieldMat = new THREE.MeshBasicMaterial({
+        color: PALETTE.teams[team].main,
+        transparent: true,
+        opacity: STYLE.shieldOpacity,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
+      this.shieldRimMat = new THREE.LineBasicMaterial({ color: PALETTE.shieldRim, transparent: true, opacity: STYLE.shieldRimOpacity });
+      const panel = new THREE.Mesh(assets.shield, this.shieldMat);
+      panel.renderOrder = 3;
+      const rim = new THREE.LineSegments(assets.shieldRim, this.shieldRimMat);
+      rim.renderOrder = 4;
+      this.shieldGroup = new THREE.Group();
+      this.shieldGroup.add(panel, rim);
+      this.shieldGroup.position.y = SHIELD_HEIGHT / 2;
+      this.shieldGroup.visible = false;
+      this.yawGroup.add(this.shieldGroup);
+    }
+  }
+
+  /** Le bouclier de ce joueur vient de bloquer un tir / une explosion : flash (STYLE.shieldFlashSec). */
+  shieldFlash(timeSec: number): void {
+    this.blockedAt = timeSec;
   }
 
   /** Le joueur vient d'être touché : clignotement (STYLE.hitFlashSec). */
@@ -350,6 +426,8 @@ export class PlayerView {
   dispose(): void {
     this.bodyMat.dispose();
     this.barFillMat.dispose();
+    this.shieldMat?.dispose();
+    this.shieldRimMat?.dispose();
   }
 
   /** Met à jour la vue pour une frame (état interpolé). */
@@ -395,6 +473,25 @@ export class PlayerView {
     this.bodyMat.emissiveIntensity = since < STYLE.hitFlashSec ? STYLE.hitFlashIntensity * (1 - since / STYLE.hitFlashSec) : 0;
     if (this.invulnShell.visible) {
       this.invulnMat.opacity = STYLE.invulnOpacity + STYLE.invulnPulse * Math.sin(timeSec * STYLE.invulnPulseRate);
+    }
+
+    // Bouclier : se déploie (largeur et hauteur) quand il est levé, flashe quand il bloque.
+    if (this.shieldGroup !== null && this.shieldMat !== null && this.shieldRimMat !== null) {
+      const target = shieldUp(p) ? 1 : 0;
+      this.shieldOpen = target + (this.shieldOpen - target) * Math.exp(-dt / STYLE.shieldDeploySec);
+      if (Math.abs(this.shieldOpen - target) < 1e-3) this.shieldOpen = target;
+      this.shieldGroup.visible = this.shieldOpen > 0.01;
+      if (this.shieldGroup.visible) {
+        const k = this.shieldOpen;
+        this.shieldGroup.scale.set(k, 0.4 + 0.6 * k, k);
+        this.shieldGroup.position.y = (SHIELD_HEIGHT / 2) * (0.4 + 0.6 * k);
+        const since = this.blockedAt < 0 ? Infinity : timeSec - this.blockedAt;
+        const flash = since < STYLE.shieldFlashSec ? 1 - since / STYLE.shieldFlashSec : 0;
+        const shimmer = STYLE.shieldShimmer * Math.sin(timeSec * STYLE.shieldShimmerRate);
+        this.shieldMat.opacity = Math.min(1, (STYLE.shieldOpacity + shimmer) * k + STYLE.shieldFlashOpacity * flash);
+        this.shieldMat.color.set(flash > 0.5 ? PALETTE.shieldFlash : PALETTE.teams[this.team].main);
+        this.shieldRimMat.opacity = Math.min(1, STYLE.shieldRimOpacity * k + flash);
+      }
     }
 
     // Ombre au sol : plus petite et plus claire quand le joueur est en l'air.

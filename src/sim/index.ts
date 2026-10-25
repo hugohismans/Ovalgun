@@ -83,6 +83,22 @@ export {
 export { canShoot, fireIntervalTicks, fireOverridesSprint, spreadDirection, weaponImplemented } from './combat';
 export { damageAmount, damageFalloff, isHittable } from './stability';
 export { segmentCapsuleEntry, segmentTerrainEntry } from './raycast';
-export { abilityActive, abilityImplemented } from './abilities';
+export { abilityActive, abilityImplemented, inSlowZone, slowZonePlacement } from './abilities';
+// Étape 7 : bouclier du pilier, explosions du demi (règles PURES lues par le rendu, le HUD et les bots).
+export { segmentShieldEntry, shieldArcCovers, shieldFacing, shieldPoint, shieldUp } from './shield';
+export { blastDistance, hasLineOfSight } from './explosion';
+export { predictGrenadeImpact } from './projectiles';
+// Étape 7 : mêlée (lectures PURES pour le rendu, le HUD, les bots et les tests).
+export {
+  countInZone,
+  inScrumZone,
+  scrumCaptureTicks,
+  scrumInOvertime,
+  scrumLooseReady,
+  scrumMaxTicks,
+  scrumMinPlayers,
+  scrumRadius,
+  scrumTicksLeft,
+} from './scrum';
 // Sérialisation.
 export { cloneState, hashState, fnv1a } from './serialize';

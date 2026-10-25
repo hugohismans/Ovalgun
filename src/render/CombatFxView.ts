@@ -4,13 +4,28 @@
  *    projectile qui disparaît pendant le tick (impact, portée) est prolongé jusqu'à son point final ('projectile_end') ;
  *    visuellement, le traceur part du CANON de l'arme affichée et rejoint la vraie trajectoire (qui part de
  *    l'origine de visée, sur l'épaule) en STYLE.tracerConvergeDist mètres ;
- *  - flash de bouche ('shot'), étincelles d'impact ('hit' sur un joueur, 'projectile_end' sur le relief),
- *    éclat en étoile du plaquage ('tackled').
+ *  - flash de bouche ('shot'), étincelles d'impact ('hit' sur un joueur, 'projectile_end' sur le relief ou un bouclier),
+ *    éclat en étoile du plaquage ('tackled') ;
+ *  - étape 7 : plombs du fusil à pompe (traceurs courts, `pellet`) ; GRENADES en vol (sphère sombre cerclée de la couleur
+ *    de l'équipe + petite traînée), interpolées sur leur parabole (`grenadePoint`) ; EXPLOSIONS ('explosion') : boule
+ *    flat qui s'étend jusqu'au rayon d'explosion et s'estompe, onde au sol.
  * Ne lit que des MatchState et des événements ; n'écrit jamais dans l'état.
  */
 
 import * as THREE from 'three';
-import { forward, right, TICK_DT, type MatchEvent, type MatchState, type Projectile, type ProjectileKind, type TeamId, type Vec3 } from '../sim';
+import {
+  forward,
+  groundHeight,
+  right,
+  ROLES,
+  TICK_DT,
+  type MatchEvent,
+  type MatchState,
+  type Projectile,
+  type ProjectileKind,
+  type TeamId,
+  type Vec3,
+} from '../sim';
 import { PALETTE, STYLE } from './palette';
 
 /** Géométrie d'étoile plate (branches alternant rayon 1 et `inner`). */
@@ -72,6 +87,18 @@ export function inFlightTracer(p: Projectile, alpha: number, ownerYaw: number, o
   return out;
 }
 
+/**
+ * Position affichée d'une grenade EN VOL (PURE) : la sim l'a avancée d'un tick sur sa parabole ; on remonte de
+ * τ = TICK_DT·(1 − alpha) + `back` secondes : pos − vel·τ − ½·g·τ²·ŷ (vel = vitesse à la fin du tick). Écrit dans `out`.
+ */
+export function grenadePoint(p: Projectile, gravity: number, alpha: number, back: number, out: Vec3): Vec3 {
+  const tau = TICK_DT * (1 - alpha) + back;
+  out.x = p.pos.x - p.vel.x * tau;
+  out.y = p.pos.y - p.vel.y * tau - 0.5 * gravity * tau * tau;
+  out.z = p.pos.z - p.vel.z * tau;
+  return out;
+}
+
 const newSpec = (): TracerSpec => ({ origin: { x: 0, y: 0, z: 0 }, dir: { x: 0, y: 0, z: 1 }, head: 0, kind: 'bullet', ownerYaw: 0 });
 
 /** Projectile terminé pendant le dernier tick : de sa position au début du tick à son point final. */
@@ -84,6 +111,24 @@ interface Ending {
   dir: Vec3;
   from: number;
   to: number;
+}
+
+/** Explosion affichée : boule et onde au sol. */
+interface Blast {
+  ball: THREE.Mesh;
+  ballMat: THREE.MeshBasicMaterial;
+  ring: THREE.Mesh;
+  ringMat: THREE.MeshBasicMaterial;
+  active: boolean;
+  start: number;
+  radius: number;
+}
+
+/** Grenade affichée : sphère (+ bande d'équipe) et traînée. */
+interface GrenadeSlot {
+  body: THREE.Group;
+  band: THREE.Mesh;
+  trail: THREE.Mesh;
 }
 
 interface Particle {
@@ -112,6 +157,19 @@ export class CombatFxView {
   private nextSpark = 0;
   private nextBurst = 0;
   private readonly endings: Ending[] = [];
+  // Étape 7 : grenades et explosions.
+  private readonly grenadeGeo = new THREE.SphereGeometry(1, 14, 10);
+  private readonly grenadeBandGeo = new THREE.TorusGeometry(1.02, 0.18, 6, 18);
+  private readonly grenadeMat: THREE.MeshBasicMaterial;
+  private readonly grenadeBandMats: [THREE.MeshBasicMaterial, THREE.MeshBasicMaterial];
+  private readonly grenadeTrailMats: [THREE.MeshBasicMaterial, THREE.MeshBasicMaterial];
+  private readonly grenades: GrenadeSlot[] = [];
+  private readonly blastGeo = new THREE.IcosahedronGeometry(1, 2);
+  private readonly blastRingGeo = new THREE.RingGeometry(1 - STYLE.explosionRingThickness, 1, 48).rotateX(-Math.PI / 2);
+  private readonly blasts: Blast[] = [];
+  private nextBlast = 0;
+  private readonly gp: Vec3 = { x: 0, y: 0, z: 0 };
+  private readonly gq: Vec3 = { x: 0, y: 0, z: 0 };
   private endingCount = 0;
   /**
    * Fins de projectiles des ticks PRÉCÉDENTS de la même frame (plusieurs ticks par frame à ≤ 30 i/s ou après un
@@ -156,6 +214,38 @@ export class CombatFxView {
       const mat = basic(PALETTE.tackleBurst);
       this.bursts.push({ ...particle(this.burstGeo, mat), mat });
     }
+    // Grenades : sphère sombre + bande de couleur d'équipe, traînée claire (cylindre orienté comme un traceur).
+    this.grenadeMat = new THREE.MeshBasicMaterial({ color: PALETTE.grenade, fog: false });
+    this.grenadeBandMats = [new THREE.MeshBasicMaterial({ color: PALETTE.grenadeBand[0] }), new THREE.MeshBasicMaterial({ color: PALETTE.grenadeBand[1] })];
+    this.grenadeTrailMats = [basic(PALETTE.grenadeTrail[0], STYLE.grenadeTrailOpacity), basic(PALETTE.grenadeTrail[1], STYLE.grenadeTrailOpacity)];
+    for (let i = 0; i < STYLE.grenadePoolSize; i++) {
+      const body = new THREE.Group();
+      const sphere = new THREE.Mesh(this.grenadeGeo, this.grenadeMat);
+      const band = new THREE.Mesh(this.grenadeBandGeo, this.grenadeBandMats[0]);
+      band.rotation.x = Math.PI / 2;
+      body.add(sphere, band);
+      body.scale.setScalar(STYLE.grenadeRadius);
+      body.visible = false;
+      const trail = new THREE.Mesh(this.tracerGeo, this.grenadeTrailMats[0]);
+      trail.visible = false;
+      trail.renderOrder = 6;
+      trail.frustumCulled = false;
+      this.grenades.push({ body, band, trail });
+      this.group.add(body, trail);
+    }
+    // Explosions : boule flat + onde au sol (matériaux propres : opacité animée).
+    for (let i = 0; i < STYLE.explosionPoolSize; i++) {
+      const ballMat = basic(PALETTE.explosionCore, STYLE.explosionOpacity);
+      const ringMat = basic(PALETTE.explosionRing, 1);
+      const ball = new THREE.Mesh(this.blastGeo, ballMat);
+      const ring = new THREE.Mesh(this.blastRingGeo, ringMat);
+      ball.visible = false;
+      ring.visible = false;
+      ball.renderOrder = 7;
+      ring.renderOrder = 5;
+      this.blasts.push({ ball, ballMat, ring, ringMat, active: false, start: 0, radius: 1 });
+      this.group.add(ball, ring);
+    }
     for (let i = 0; i < STYLE.tracerPoolSize; i++) {
       this.endings.push({ team: 0, ownerId: 0, kind: 'bullet', origin: { x: 0, y: 0, z: 0 }, dir: { x: 0, y: 0, z: 1 }, from: 0, to: 0 });
     }
@@ -189,6 +279,9 @@ export class CombatFxView {
           if (p !== undefined) this.spawnBurst(p.pos, timeSec);
           break;
         }
+        case 'explosion':
+          this.spawnBlast(state, e.pos, e.radius, state.players[e.ownerId]?.team ?? 0, timeSec);
+          break;
         default:
           break;
       }
@@ -196,7 +289,8 @@ export class CombatFxView {
   }
 
   private recordEnding(e: Extract<MatchEvent, { type: 'projectile_end' }>, events: readonly MatchEvent[], prev: MatchState | null): void {
-    if (this.endingCount >= this.endings.length) return;
+    // Une grenade qui disparaît explose : l'explosion prend le relais (pas de traceur prolongé).
+    if (this.endingCount >= this.endings.length || e.kind === 'grenade') return;
     const p = prev?.projectiles.find((q) => q.id === e.projectileId);
     const end = this.endings[this.endingCount];
     let fx: number;
@@ -292,6 +386,18 @@ export class CombatFxView {
     }
   }
 
+  private spawnBlast(state: MatchState, pos: Vec3, radius: number, team: TeamId, timeSec: number): void {
+    const b = this.blasts[this.nextBlast];
+    this.nextBlast = (this.nextBlast + 1) % this.blasts.length;
+    b.active = true;
+    b.start = timeSec;
+    b.radius = radius;
+    b.ball.position.set(pos.x, pos.y, pos.z);
+    b.ring.position.set(pos.x, groundHeight(state.field, pos.x, pos.z) + 0.05, pos.z);
+    b.ballMat.color.set(PALETTE.explosionCore);
+    b.ringMat.color.set(PALETTE.teams[team].light);
+  }
+
   private spawnBurst(feet: Vec3, timeSec: number): void {
     const s = this.bursts[this.nextBurst];
     this.nextBurst = (this.nextBurst + 1) % this.bursts.length;
@@ -327,9 +433,13 @@ export class CombatFxView {
   update(curr: MatchState, alpha: number, camera: THREE.Camera, dt: number, timeSec: number): void {
     let n = 0;
     const max = this.tracers.length;
+    let ng = 0;
     for (const p of curr.projectiles) {
-      if (n >= max) break;
-      if (p.kind === 'grenade') continue; // ÉTAPE 7 : rendu des grenades
+      if (p.kind === 'grenade') {
+        if (ng < this.grenades.length) this.drawGrenade(this.grenades[ng++], curr, p, alpha);
+        continue;
+      }
+      if (n >= max) continue;
       const yaw = curr.players[p.ownerId]?.yaw ?? 0;
       const spec = inFlightTracer(p, alpha, yaw, this.spec);
       const len = p.kind === 'pellet' ? STYLE.pelletTracerLength : STYLE.tracerLength;
@@ -351,6 +461,29 @@ export class CombatFxView {
       this.drawTracer(n++, e.team, spec, Math.max(0, spec.head - len), spec.head);
     }
     for (let i = n; i < max; i++) this.tracers[i].visible = false;
+    for (let i = ng; i < this.grenades.length; i++) {
+      this.grenades[i].body.visible = false;
+      this.grenades[i].trail.visible = false;
+    }
+    for (const b of this.blasts) {
+      if (!b.active) continue;
+      const u = (timeSec - b.start) / STYLE.explosionSec;
+      const ur = (timeSec - b.start) / STYLE.explosionRingSec;
+      if (u >= 1 && ur >= 1) {
+        b.active = false;
+        b.ball.visible = false;
+        b.ring.visible = false;
+        continue;
+      }
+      const ease = 1 - (1 - Math.min(1, u)) * (1 - Math.min(1, u));
+      b.ball.visible = u < 1;
+      b.ball.scale.setScalar(b.radius * (STYLE.explosionStartFraction + (1 - STYLE.explosionStartFraction) * ease));
+      b.ballMat.opacity = STYLE.explosionOpacity * (1 - Math.min(1, u));
+      b.ring.visible = ur < 1;
+      const er = 1 - (1 - Math.min(1, ur)) * (1 - Math.min(1, ur));
+      b.ring.scale.setScalar(Math.max(1e-3, b.radius * er));
+      b.ringMat.opacity = 1 - Math.min(1, ur);
+    }
     // Les fins des ticks précédents n'ont été montrées qu'une image ; celles du dernier tick restent jusqu'au prochain.
     if (this.endingFull > 0) {
       for (let i = this.endingFull; i < this.endingCount; i++) this.copyEnding(i, i - this.endingFull);
@@ -405,7 +538,45 @@ export class CombatFxView {
     }
   }
 
+  /** Place une grenade en vol (position interpolée sur la parabole) et sa traînée. */
+  private drawGrenade(slot: GrenadeSlot, curr: MatchState, p: Projectile, alpha: number): void {
+    const owner = curr.players[p.ownerId];
+    const g = owner === undefined ? 0 : ROLES[owner.role].weapon.gravity;
+    const speed = Math.hypot(p.vel.x, p.vel.y, p.vel.z);
+    grenadePoint(p, g, alpha, 0, this.gp);
+    slot.body.visible = true;
+    slot.body.position.set(this.gp.x, this.gp.y, this.gp.z);
+    slot.band.material = this.grenadeBandMats[p.team];
+    slot.body.rotation.y = p.traveled * STYLE.grenadeSpinPerMeter; // rotation visuelle (lisibilité de la bande)
+    // Traînée : de la position il y a STYLE.grenadeTrailSec (au plus depuis le départ) à la position affichée.
+    const back = Math.min(STYLE.grenadeTrailSec, speed > 1e-6 ? p.traveled / speed : 0);
+    grenadePoint(p, g, alpha, back, this.gq);
+    this.vb.set(this.gp.x - this.gq.x, this.gp.y - this.gq.y, this.gp.z - this.gq.z);
+    const len = this.vb.length();
+    if (len < 1e-3) {
+      slot.trail.visible = false;
+      return;
+    }
+    this.vb.multiplyScalar(1 / len);
+    slot.trail.visible = true;
+    slot.trail.material = this.grenadeTrailMats[p.team];
+    slot.trail.position.set((this.gp.x + this.gq.x) / 2, (this.gp.y + this.gq.y) / 2, (this.gp.z + this.gq.z) / 2);
+    slot.trail.quaternion.setFromUnitVectors(this.axis, this.vb);
+    slot.trail.scale.set(STYLE.grenadeTrailWidth, STYLE.grenadeTrailWidth, len);
+  }
+
   dispose(): void {
+    this.grenadeGeo.dispose();
+    this.grenadeBandGeo.dispose();
+    this.grenadeMat.dispose();
+    for (const m of this.grenadeBandMats) m.dispose();
+    for (const m of this.grenadeTrailMats) m.dispose();
+    this.blastGeo.dispose();
+    this.blastRingGeo.dispose();
+    for (const b of this.blasts) {
+      b.ballMat.dispose();
+      b.ringMat.dispose();
+    }
     this.tracerGeo.dispose();
     this.flashGeo.dispose();
     this.burstGeo.dispose();

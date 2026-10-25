@@ -55,7 +55,7 @@ donc surtout par les tests automatiques, et un peu à la main depuis la console 
 - **Terrain** : on monte les petites marches sans ralentir. Un muret bas abordé de face (ou en biais jusqu'à environ 66°)
   est grimpé sans arrêt, en perdant 25 % d'élan. Un muret qu'on frôle en le longeant ne fait rien de spécial : on passe à côté.
   Aucune traversée de muret, même en esquive répétée. Murs invisibles sur les bords.
-  Les deux camps sont symétriques, et le 3v3 utilise un terrain à 70 %.
+  Les deux camps sont symétriques, et le 3v3 utilise un terrain à 70 % (de la surface depuis la correction de l'étape 7 : × 0,84 en longueur et en largeur).
 - **Ballon** : rebonds de plus en plus petits avec une déviation imprévisible, mais reproductible avec la même seed.
   Il roule, puis s'arrête. Il dévale les flancs des buttes, mais peut rester posé sur une rampe douce.
   En roulant au pied d'une rampe, il la monte sans faux rebond.
@@ -69,7 +69,7 @@ donc surtout par les tests automatiques, et un peu à la main depuis la console 
 | `GROUND_DECEL` | Freinage au sol quand on lâche la direction (m/s²) | 60 | Monter pour des arrêts plus secs |
 | `GROUND_OVERSPEED_DECEL` | Vitesse à laquelle l'élan en trop (esquive, glissade, grimpe, fin de sprint) disparaît (m/s²) | 15 | Descendre (10) pour un élan plus long et glissant, monter (25) pour revenir vite à la vitesse de course |
 | `AIR_ACCEL` | Contrôle en l'air (m/s²) | 20 | Monter pour corriger sa trajectoire plus facilement en l'air |
-| `SPRINT_SPEED_MULT` | Bonus de vitesse du sprint | 1,22 | Entre 1,15 et 1,3 ; au-delà, le porteur devient difficile à rattraper |
+| `SPRINT_SPEED_MULT` | Bonus de vitesse du sprint | 1,12 (1,22 jusqu'à l'étape 7) | Entre 1,1 et 1,2 ; au-delà, le porteur devient difficile à rattraper (beaucoup plus d'essais) |
 | `SPRINT_MIN_FORWARD_COS` | Largeur du cône avant dans lequel le sprint s'applique (cos de l'angle) | 0,64 (≈ 50°) | Descendre vers 0,5 (60°) pour sprinter plus en biais ; ne pas passer au-dessus de 0,7, sinon la diagonale clavier ne sprinte plus |
 | `SPRINT_MIN_TILT` | Inclinaison du stick nécessaire pour sprinter | 0,7 | Monter vers 0,85 si la manette sprinte par erreur |
 | `MOVE_INPUT_FULL_SPEED` | Inclinaison du stick qui donne la pleine vitesse | 0,9 | Descendre vers 0,75 si les sticks usés n'atteignent pas le bord |
@@ -386,13 +386,13 @@ Porteur ailier boosté au sprint : ≈ 13,9 m/s, contre 10,7 m/s pour un ailier 
 | `PROJECTILE_HIT_RADIUS` | Tolérance des balles autour des capsules (m) | 0,15 | 0,25 si l'on rate encore « sur » la cible ; 0 pour une précision stricte |
 | `ROLES.ailier.weapon.range` / `falloffStart` / `falloffMinMult` | Portée, début de l'atténuation, dégâts restants à portée max | 45 m / 25 m / 0,6 | Baisser `falloffStart` (18) pour pousser au combat rapproché |
 | `ROLES.ailier.weapon.magazine` / `reloadSec` | Chargeur et rechargement | 30 / 1,4 s | 24 balles pour forcer un rechargement par plaquage |
-| `CARRIER_DAMAGE_MULT` | Dégâts subis par le porteur | 1,1 | 1,25 pour une défense plus forte ; 1 si le porteur tombe trop vite |
+| `CARRIER_DAMAGE_MULT` | Dégâts subis par le porteur | 1,3 (1,1 jusqu'à l'étape 7) | 1,5 pour une défense plus forte ; 1,1 si le porteur tombe trop vite (plus d'essais) |
 | `REGEN_DELAY_SEC` / `REGEN_RATE` | Répit avant régénération, vitesse de remontée (points/s) | 2 s / 45 | Cahier des charges : 2 s ; baisser le taux (30) pour que les dégâts « collent » plus |
 | `DOWN_DURATION_SEC` / `GETUP_DURATION_SEC` / `GETUP_INVULN_SEC` | Au sol, relevé, invulnérabilité après relevé | 2,5 / 0,5 / 0,6 s | Cahier des charges : 2,5 s au sol ; monter l'invulnérabilité si l'on se fait replaquer en se relevant |
 | `TACKLE_SLIDE_MAX_SPEED` / `TACKLE_SLIDE_DECEL` | Glissade du corps plaqué : vitesse max au plaquage, freinage | 7 m/s / 20 m/s² | Freinage 30 pour une chute plus sèche ; vitesse 9 pour une glissade plus spectaculaire |
 | `TACKLE_DROP_POP_FORWARD` / `TACKLE_DROP_POP_UP` | Rebond du ballon lâché (avant / haut, m/s) | 2,5 / 4 | Monter l'avant (4) pour plus de « courses au ballon » |
 | `TACKLE_DROP_CARRY_KEEP` / `TACKLE_DROP_MAX_CARRY` | Part de la vitesse du porteur transmise au ballon, plafond | 0,3 / 4 m/s | 0 : le ballon tombe toujours au même endroit ; plafond 6 pour des lâchers plus longs en sprint |
-| `BOOST_SPEED_MULT` / `BOOST_ACCEL_MULT` | Sprint boosté de l'ailier : vitesse, accélération | 1,2 / 1,4 | 1,3 pour un boost plus grisant (porteur boosté presque intouchable) |
+| `BOOST_SPEED_MULT` / `BOOST_ACCEL_MULT` | Sprint boosté de l'ailier : vitesse, accélération | 1,1 (1,2 jusqu'à l'étape 7) / 1,4 | 1,2 pour un boost plus grisant (porteur boosté presque intouchable) |
 | `ROLES.ailier.ability.duration` / `cooldown` | Durée et cooldown du sprint boosté (le cooldown démarre à la fin) | 3 s / 9 s | 2 s / 8 s pour un boost plus « coup de rein » |
 | `LAST_MINUTE_COOLDOWN_MULT` | Dernière minute : rechargement, capacité, esquive, glissade, plongeon (pas la cadence de tir) | 0,7 | — |
 | `TURRET_LEAD_FRACTION` | Avance prise par les tourelles sur une cible qui court | 1 | 0,5 pour s'entraîner contre des tourelles qu'on esquive en courant |
@@ -467,7 +467,7 @@ de `src/sim/constants.ts`). Clavier/souris et manette marchent partout, y compri
 | `BOT_DIFFICULTY.<niveau>.aimErrorDeg` / `.aimErrorM` | Erreur de visée (angle plancher / décalage latéral de près) | 5 / 3,5 / 2,5° ; 1 / 0,7 / 0,5 m | Le levier principal de la précision (cible : ≈ 35 / 50 / 65 %) |
 | `BOT_DIFFICULTY.<niveau>.engageRangeMult` / `.burstPauseMult` | Portée de tir / pauses entre rafales | 0,75 / 0,85 / 0,95 ; × 1,3 / 1 / 0,9 | Pauses plus longues = moins de pression |
 | `BOT_DIFFICULTY.<niveau>.dodgeReflex` / `.leadFraction` / `.turnRateDeg` | Esquive sous le feu / avance sur cible / rotation | 0,4 / 0,8 / 1,2 par s ; 40 / 80 / 100 % ; 300 / 420 / 600 °/s | Écart entre niveaux trop grand : rapprocher ces valeurs (elles se cumulent) |
-| `BOT_COVER_MIN_DEFENDERS` / `BOT_COVER_DEPTH` | Dernier défenseur toujours gardé (dès N bots) / sa profondeur (×échelle) | 3 / 18 m | Trop d'essais : profondeur 22 m ; défense trop passive : MIN 4 |
+| `BOT_COVER_MIN_DEFENDERS` / `BOT_COVER_DEPTH` | Dernier défenseur toujours gardé (dès N bots) / sa profondeur (×échelle) | 2 / 26 m (3 / 18 m jusqu'à l'étape 7) | Défense trop passive : MIN 3 |
 | `BOT_PRESSERS_3V3` / `_5V5` / `BOT_PRESSERS_OWN_THIRD` | Défenseurs qui convergent / juste après une remise en jeu | 2 / 2 / 1 | 1 en 3v3 pour une défense moins étouffante |
 | `BOT_ROLE_HYSTERESIS_M` / `BOT_LEAD_SPEED_CAP_MULT` | Stabilité des rôles / anticipation plafonnée (pas de suivi des esquives) | 1,5 m / 1,2 | Rôles qui « clignotent » : 2,5 m |
 | `BOT_RESTRAINED_PAUSE_MULT` / `BOT_ESCORT_THREAT_DIST` | Discipline de tir hors pression / distance d'une menace directe | 2,5 / 8 m | Trop de joueurs au sol : 3,5 / 6 m |
@@ -475,11 +475,184 @@ de `src/sim/constants.ts`). Clavier/souris et manette marchent partout, y compri
 | `BOT_BALL_CHASERS_3V3` / `_5V5` / `BOT_CHASE_SHOOT_MARGIN_SEC` | Chasseurs du ballon libre / ils ne tirent que battus de cette avance | 2 / 2 / 0,3 s | Fusillade au ballon : marge 0,6 s |
 | `BOT_ENCIRCLED_RADIUS` / `BOT_ENCIRCLED_COUNT` / `_5V5` | Quand le porteur envisage de taper (sans passe) | 3,5 m / 2 / 3 | Plus de coups de pied : rayon 5 m |
 | `BOT_KICK_MIN_ADVANTAGE_SEC` / `BOT_KICK_LAND_MIN_LINE_DIST` / `BOT_KICK_AFTER_KICK_SEC` | Coup de pied seulement si son équipe arrive avant / pas dans l'en-but / pas de ping-pong | 0,4 s / 8 m / 1,5 s | Plus de jeu au pied : avance 0 s |
-| `BOT_PASS_MIN_OPENNESS` / `BOT_PASS_MIN_OPENNESS_OWN_THIRD` / `BOT_PRESSURE_RADIUS` | Démarquage exigé pour passer (normal / dans son tiers) / rayon de pression | 0,45 / 0,3 / 7 m | Plus de passes : rayon 9 m |
-| `BOT_SUPPORTERS_3V3` / `_5V5` | Soutiens derrière le porteur (les autres partent devant) | 1 / 2 | 2 en 3v3 pour plus de passes |
+| `BOT_PASS_MIN_OPENNESS` / `BOT_PASS_MIN_OPENNESS_OWN_THIRD` / `BOT_PRESSURE_RADIUS` | Démarquage exigé pour passer (normal / dans son tiers) / rayon de pression | 0,45 / 0,3 / 9 m (7 m jusqu'à l'étape 7) | Plus de passes : démarquage 0,3 |
+| `BOT_SUPPORTERS_3V3` / `_5V5` | Soutiens derrière le porteur (les autres partent devant) | 2 / 3 (1 / 2 jusqu'à l'étape 7) | 1 / 2 pour plus de course devant (plus de contres, plus d'essais) |
 | `BOT_DIVE_TRY_DISTANCE` | Distance de la ligne où le porteur plonge | 4,5 m | ≤ 6 m (longueur du plongeon) |
 | `BOT_FIRE_CONE_DEG` / `BOT_BURST_SEC` / `BOT_BURST_PAUSE_SEC` | Rythme de tir | 3° / 0,7 s / 0,25 s | Pauses plus longues pour moins de pression |
 | `GAMEPAD_RUMBLE_EFFECTS.try` / `.tryConceded` / `.matchEnd` | Vibrations : essai marqué / encaissé, fin | — | `strong` et `weak` à 0 pour couper |
 
 Réglages purement visuels (durée de « JOUEZ ! », de la bannière de dernière minute, délai avant « Rejouer », anneaux de l'essai) :
 `STYLE.playCallSec`, `STYLE.lastMinuteBannerSec`, `STYLE.endScreenInputDelaySec`, `FX.try` dans `src/render/palette.ts`.
+
+## Étape 7 — rôles pilier et demi, mêlée
+
+Les trois rôles sont jouables, pour toi comme pour les bots, et la mêlée existe. **Pilier** : fusil à pompe (gros dégâts de près) et
+bouclier frontal ; **demi** : lance-grenades à impact qui repousse et zone de ralentissement au sol ; **ailier** : inchangé. En 3v3, un de
+chaque rôle par équipe ; en 5v5, 1 pilier, 2 ailiers, 2 demis. **Mêlée** : un ballon libre depuis **3 s** avec au moins **2 joueurs de chaque
+camp** autour (3 en 5v5), dans un rayon de **5 m** en 3v3 (6 m en 5v5), devient une **zone de capture** : le ballon est bloqué au centre
+(personne ne peut le ramasser) et, après **3 s**, l'équipe qui a le plus de joueurs **debout** dans la zone récupère le ballon, porté par son
+joueur le plus proche du centre. Les plaqués ne comptent pas : tirer sur les adversaires de la zone est la façon de la gagner. Égalité :
+**prolongation de 2 s** en « premier qui mène », puis tirage au sort seedé ; personne dans la zone à la fin : ballon rendu libre au centre. Le
+chrono continue. La correction de l'étape 7 a aussi **réglé le rythme** (≈ 13 essais par match en 3v3, ≈ 10 en 5v5, au lieu de ≈ 28 / 17 :
+voir les mesures plus bas et docs/ARCHITECTURE.md §15).
+
+### Comment tester
+
+1. **Tests automatiques** : `npm test`. Étape 7 :
+   - `npx vitest run tests/sim/roles.test.ts` : plombs par tir, dégâts à 3 / 8 / 15 m, plaquage en 2 tirs à bout portant ; bouclier qui bloque
+     de face mais pas de dos, protège un coéquipier collé derrière, durée et cooldown exacts, annulation à cooldown proportionnel, vitesse
+     réduite, pas de tir mais rechargement, porteur pilier, explosion de face ; parabole exacte, explosion sur muret / sol / joueur / bouclier
+     / en l'air, dégâts dégressifs, impact direct, knockback dégressif et self-knockback, **souffle = vitesse minimale** (un coureur qui fonce
+     sur l'explosion est renvoyé, un fuyard plus rapide ne gagne rien, deux souffles ne se cumulent pas), porteur projeté qui garde le ballon,
+     pas de traversée de mur, pas de tir ami, butte qui protège ; zone posée à la visée et à portée max, ralentit les adversaires et pas les
+     alliés, durée exacte, remplacement ;
+   - `npx vitest run tests/sim/scrum.test.ts` : rien avant 3 s de ballon libre, déclenchement au tick exact, N joueurs de chaque côté (3v3 et
+     5v5), rayon exact, plaqués exclus, pas de mêlée en phase figée, ballon immobile et non ramassable, résolution au tick exact, ballon au plus
+     proche du centre puis au plus petit id, dernière minute sans effet, prolongation, tirage seedé, 0 contre 0, chrono, mêlée gagnée dans
+     l'en-but adverse = essai, nettoyage, `inScrumZone` = décompte de la sim, déterminisme et aller-retour JSON en pleine mêlée ;
+   - `npx vitest run tests/bots/roles.test.ts tests/bots/scrum.test.ts` : pilier qui lève le bouclier sous le feu de face et en portant le
+     ballon, qui presse pour tirer de près ; demi qui lobe sur les pieds du porteur sans s'exploser, **pas de grenade quand un adversaire est
+     collé sur la trajectoire**, zone posée devant le porteur ; contournement d'une zone adverse ; renforts qui entrent dans la zone de mêlée,
+     majorité confortable, tirs dans la zone, zone tenue pendant l'approche, ballon ramassé en infériorité, **hystérésis de l'alerte de
+     mêlée**, jeu normal après la résolution ; matchs complets (composition du jeu) où chaque rôle tire, plaque et utilise sa capacité, et où
+     les mêlées se résolvent ;
+   - `npx vitest run tests/bots/match.test.ts` : **bornes de rythme** resserrées (seeds 1 à 3, normal) : 4 à 18 essais par match en 3v3, 4 à
+     14 en 5v5, ballon porté ≥ 50 % / 40 %, joueurs au sol ≤ 17 % / 19 %, au plus 10 coups de pied ;
+   - client : vues (bouclier, grenades, explosions, zones, mêlée), HUD de la mêlée, vibrations, composition des équipes, aide à la visée.
+2. **Choisir son rôle** (en attendant le menu de l'étape 8) : `?role=pilier`, `?role=ailier` (défaut) ou `?role=demi`, combinable avec
+   `?debug`, `?size=5`, `?difficulty=…`, `?dummies=off` (cibles passives), `?training`. Exemples : `http://localhost:5173/?debug&role=pilier`,
+   `…/?debug&role=demi&dummies=off`.
+3. **Contrôles** (aucune nouvelle touche, clavier et manette identiques) : tir **clic gauche / RT**, visée **clic droit / LT**, capacité
+   **A (Q en QWERTY) / LB** ; **second appui** sur la capacité = baisser le bouclier. Mêlée : déplacement et tir habituels (ZQSD / stick
+   gauche, clic gauche / RT).
+4. **Pilier** (`?debug&role=pilier&dummies=off`, B / croix ↓ pour lâcher le ballon au centre) :
+   - colle-toi à un adversaire (3–5 m) et tire deux fois : **plaquage en 2 tirs** (0,83 s entre deux tirs, 5 cartouches, 2 s de rechargement).
+     Recule à 10 m puis 15 m : les plombs se dispersent et ne font presque plus rien ;
+   - capacité : un **arc translucide** à la couleur de ton équipe se déploie devant toi (3 s) ; tu ralentis (× 0,75), tu ne tires plus (mais tu
+     peux recharger) ; à la manette, l'aide à la visée est coupée (la caméra n'« accroche » plus en tournant le bouclier vers la menace).
+     Fais-toi tirer dessus de face : le bouclier **flashe** et les balles s'arrêtent dessus, manette : petite vibration sèche. De dos, tu prends
+     tout. Il couvre un coéquipier **collé dans ton dos**, pas un coéquipier à quelques mètres sur le côté ;
+   - appuie une deuxième fois : le bouclier se baisse, le cooldown est plus court si tu l'as peu utilisé (au moins 3 s) ;
+   - porte le ballon (G / View) et lève le bouclier : tu charges plus lentement mais les défenseurs d'en face ne te plaquent plus de face.
+5. **Demi** (`?debug&role=demi&dummies=off`) :
+   - capacité prête : un **anneau en tirets** au sol montre où la zone sera posée (au point visé, ou à 16 m si tu vises l'horizon). A / LB :
+     un **disque** à la couleur de ton équipe pendant 5 s ; les adversaires qui courent dedans vont à 55 % de leur vitesse, tes coéquipiers non ;
+     cooldown 12 s dès la pose ;
+   - tir : la grenade part en cloche et explose à l'impact. En **visée** (clic droit / LT), un anneau + une balise montrent où elle tombera
+     (pas d'aide à la visée manette pour le tir en cloche). Une grenade sur un adversaire le **projette** (≈ 4,5 m de vol au centre) : un
+     adversaire qui te fonce dessus est **renvoyé** vers l'arrière, un porteur qui s'enfuit plus vite que le souffle n'est pas accéléré ; un
+     porteur projeté garde le ballon ;
+   - « grenade jump » : saute et tire tout de suite à tes pieds : tu montes nettement plus haut, sans dégâts ;
+   - une explosion derrière une butte ne touche pas ; une grenade sur un bouclier levé de face ne fait rien au pilier (il est juste un peu
+     repoussé). Manette : vibration moyenne quand une explosion éclate près de toi.
+6. **Mêlée** : `?debug`, puis **B** / croix ↓ (ballon au centre) quand les deux équipes sont autour du centre, et ne touche pas le ballon : il
+   faut qu'il reste libre 3 s. Ou observe `?debug&autopilot` (≈ 2,5 mêlées par match en 3v3, ≈ 1,2 en 5v5 avec `&size=5`). Pendant la
+   mêlée : entre dans la zone (le HUD affiche « tu comptes »), tire sur les adversaires qui y sont (un plaqué sort du décompte), ou reste
+   dehors pour te placer pour la suite.
+7. **Observer les bots** : `?debug&autopilot&role=pilier` (ou `&role=demi`, `&size=5`, `&difficulty=…`).
+
+### Ce qu'on doit voir / ressentir
+
+- **Pilier** : le plus lent (7,2 m/s), redoutable de près, inutile de loin ; son bouclier en fait le meilleur « porteur de choc ». Il reste
+  vulnérable de dos, aux lobs et pendant le cooldown ; le bouclier ne protège qu'un coéquipier collé derrière lui (pas un mur).
+- **Demi** : peu de dégâts directs (2 à 3 grenades pour plaquer), mais il déplace les gens (un coureur qui fonce sur l'explosion repart en
+  arrière, un défenseur est éjecté de sa ligne) et ralentit une zone clé : c'est un rôle de contrôle. Les demis bots ne s'explosent plus au
+  visage en tirant sur un adversaire collé à eux.
+- **Porteur** (réglage du rythme) : toujours le plus rapide (course × 1,08, sprint × 1,12), mais un défenseur qui sprinte peut le rattraper et
+  il tombe plus vite sous le feu (dégâts × 1,3) : il faut passer, esquiver, jouer avec ses soutiens (deux en 3v3, trois en 5v5, placés derrière
+  lui). Les essais « tout seul de 40 m » deviennent rares.
+- **Mêlée** : grande onde au centre, « MÊLÉE ! », manette : double grondement moyen (pour tout le monde). Disque au sol de rayon exact
+  (liseré blanc), bande extérieure en deux arcs aux couleurs des équipes (chaque arc grandit depuis le côté de son en-but), remplissage du
+  centre vers la bande au fil de la capture (couleur de l'équipe qui mène), rideau bas visible de loin ; prolongation dorée qui pulse.
+  HUD : « MÊLÉE » / « PROLONGATION · premier qui mène », décompte, jauge, temps restant, « tu comptes ». Résolution : fondu à la couleur du
+  vainqueur, « Mêlée gagnée par … », vibration nette (gagnée) ou sourde (perdue).
+- **Bots** : les piliers pressent pour tirer de près et lèvent le bouclier quand on leur tire dessus de loin ou quand ils portent le ballon face
+  à un défenseur ; les demis gardent leurs distances (≈ 12 m), lobent sur les pieds du porteur et posent leur zone devant lui ; tout le monde
+  contourne les zones adverses ; personne ne tire sur un bouclier qui lui fait face. Un défenseur reste toujours en repli devant le porteur
+  (dès deux bots debout). Quand un ballon traîne au sol depuis 1,6 s au milieu des deux équipes, l'équipe qui n'est pas en infériorité
+  l'entoure à 2,5 m en tirant sur celui qui s'en approche ; pendant la capture, chaque équipe envoie de quoi avoir une majorité confortable
+  (adversaires + 2) et tire dans la zone, les autres se placent pour la suite.
+
+### Mesures d'équilibrage
+
+Harnais de relecture : matchs bots contre bots de 6 min, difficulté normale, composition du jeu par défaut (3v3 ailier, pilier, demi ; 5v5
+ailier, pilier, ailier, demi, demi), seeds 1 à 24. « Avant » = étape 7 avant le réglage du rythme ; « après » = réglage actuel.
+
+| Par match | 3v3 avant | 3v3 après | 5v5 avant | 5v5 après |
+|---|---|---|---|---|
+| **Essais** (min–max) | 27,5 (24–33) | **13,3** (9–18) | 16,6 (12–22) | **9,8** (6–15) |
+| Possessions converties en essai | 41 % | 23 % | 25 % | 16 % |
+| Possession médiane | 5,2 s | 5,8 s | 4,5 s | 4,9 s |
+| Ballon porté / libre (part du jeu) | 66 % / 26 % | 59 % / 28 % | 52 % / 35 % | 47 % / 38 % |
+| Joueurs au sol (part du temps-joueur) | 12,3 % | 13,9 % | 15,4 % | 16,2 % |
+| Vitesse moyenne du porteur | 10,4 m/s | 9,6 m/s | 11,4 m/s | 10,3 m/s |
+| Temps porté sans défenseur devant (20 m) | 38 % | 20 % | 27 % | 18 % |
+| **Mêlées** (part du temps de jeu) | 1,8 | **2,5** (2,1 %) | 1,6 | **1,2** (1,0 %) |
+| Plaquages (part ailier / pilier / demi) | 97 | 104 (37 / 34 / 29 %) | 196 | 201 (40 / 18 / 42 %) |
+| Coups de pied | — | 2 | — | 1,5 |
+
+- Essais par rôle (3v3, après) : ailier ≈ 6,6, demi ≈ 4,1, pilier ≈ 2,2. Facile / difficile (après, seeds 1–8) : 19,4 / 12,9 essais en 3v3,
+  13,8 / 8,9 en 5v5. Composition « humain pilier » (`TEAM_ROLES_*` dans l'ordre) : 13,6 / 9,1. Le 3v3 reste en haut de la cible (≈ 4 à 12) :
+  sans changer de règle, les autres leviers crédibles ne descendent pas sous 12–13.
+- Mêlées (après) : ≈ 80 % décidées au bout des 3 s, le reste en prolongation, tirages très rares ; aucun biais d'équipe (217 / 220 mêlées
+  gagnées en 3v3, 136 / 133 en 5v5 sur les séries de mesure). Par match 3v3 : ≈ 225 explosions, ≈ 75 tirs bloqués par un bouclier (bouclier
+  levé ≈ 13 % du temps d'un pilier), une zone de ralentissement sur le terrain ≈ 60 % du temps (73 % en 5v5).
+
+**Temps pour plaquer** (cible immobile, toutes les munitions vers le centre de la capsule — visée parfaite, médiane sur 5 seeds — puis bot
+normal, médiane sur 8 seeds ; « porteur » : × `CARRIER_DAMAGE_MULT`, 1,1 avant le réglage, 1,3 après) :
+
+| Arme, distance | Visée parfaite | Porteur avant -> après | Bot normal (porteur) |
+|---|---|---|---|
+| Fusil à pompe (pilier), 4 m | 0,87 s (2 tirs) | 0,87 -> 0,87 s | 2,5 s (1,7 s) |
+| Fusil à pompe, 8 m | 1,77 s (3 tirs) | 0,93 -> 0,93 s | 4,9 s (3,7 s) |
+| Fusil à pompe, 12 m | 3,5 s | 2,6 -> 2,6 s | hors portée bot (10 m) |
+| Pistolet-mitrailleur (ailier), 4–8 m | 1,30 s | 1,23 -> 1,03 s | 2,8 s (2,5 s) |
+| Pistolet-mitrailleur, 12–20 m | 1,33 s | 1,27 -> 1,07 s | 2,9 s à 12 m, 7,6 s à 20 m (2,5 / 7,2 s) |
+| Lance-grenades (demi), 4 m | 1,9 s | 1,9 -> 1,0 s | ne tire pas (< 6 m) |
+| Lance-grenades, 8–12 m | 2,0–2,8 s | 2,0–2,8 -> 1,1–1,3 s | 6,2 s à 12 m (4,0 s) |
+| Lance-grenades, 20 m | 7,5 s | 7,5 -> 2,3 s | souvent > 8 s |
+
+Le knockback des grenades éloigne la cible (le temps du demi augmente avec la distance et contre une cible qui bouge). Les temps « bot »
+comprennent la réaction, les rafales et l'erreur de visée de la difficulté.
+
+### Dégâts du fusil à pompe (mesuré, 40 tirs, cible immobile visée au centre)
+
+| Distance | Hanche | Visée | Tirs pour plaquer (hanche) |
+|---|---|---|---|
+| 3–5 m | 52 (tous les plombs) | 52 | **2** |
+| 8 m | ≈ 38 | ≈ 46 | 3 |
+| 10 m | ≈ 22 | ≈ 35 | 5 |
+| 15 m | ≈ 6 | ≈ 10 | > 10 (inefficace) |
+
+### Constantes utiles pour ajuster le feeling
+
+| Constante | Effet | Valeur actuelle | Piste de réglage |
+|---|---|---|---|
+| `ROLES.pilier.weapon.pellets` / `.damage` | Plombs par tir, dégâts par plomb (52 à bout portant = 2 tirs) | 8 / 6,5 | Garder `pellets × damage` ≥ 50 pour le plaquage en 2 tirs |
+| `ROLES.pilier.weapon.spreadHipDeg` / `spreadAimDeg` / `falloffStart` / `range` | Dispersion, atténuation, portée | 6° / 4,5° / 6 m / 15 m | `range` 12 si le pilier gagne trop de duels à moyenne distance |
+| `ROLES.pilier.weapon.fireInterval` / `magazine` / `reloadSec` | Cadence, cartouches, rechargement | 25/30 s / 5 / 2 s | 30/30 s pour un fusil plus lourd |
+| `ROLES.pilier.ability.duration` / `cooldown` | Bouclier : durée, cooldown après la durée | 3 s / 10 s | 4 s / 12 s pour un bouclier plus « tank » |
+| `SHIELD_HALF_ANGLE_DEG` / `SHIELD_DISTANCE` / `SHIELD_HEIGHT` | Arc protégé, rayon de l'arc, hauteur (sim et rendu) | 65° / 0,8 m / 2,1 m | `SHIELD_DISTANCE` 1,2 m pour couvrir plus largement les coéquipiers derrière (à remesurer) |
+| `SHIELD_SPEED_MULT` / `SHIELD_CANCEL_MIN_COOLDOWN_FRACTION` / `SHIELD_BLAST_KNOCKBACK_MULT` | Vitesse bouclier levé, coût d'un bouclier baissé tôt, souffle encaissé | 0,75 / 0,3 / 0,35 | 0,65 si le porteur pilier bouclier levé est trop dur à arrêter |
+| `ROLES.demi.weapon.speed` / `.gravity` | Vitesse et cloche des grenades (portée ≈ v²/g) | 30 m/s / 18 m/s² | 34 m/s pour des lobs plus tendus |
+| `ROLES.demi.weapon.blastRadius` / `blastDamageCenter` / `blastDamageEdge` / `directHitBonus` | Explosion | 3,5 m / 32 / 10 / +10 | Centre 38 pour un demi plus « tueur » |
+| `ROLES.demi.weapon.knockback` / `knockbackUp` / `knockbackEdgeMult` | Souffle au centre (vitesse MINIMALE imposée) et au bord | 10 / 6 m/s / 0,35 | 9 si le contrôle paraît trop fort ; 12 pour des projections spectaculaires |
+| `ROLES.demi.weapon.selfKnockbackMult` / `KNOCKBACK_MAX_*` | « Grenade jump » / plafonds du souffle | 0,75 / 16 et 13 m/s | 1 pour des sauts plus hauts |
+| `ROLES.demi.ability.duration` / `cooldown` / `SLOW_ZONE_RADIUS` / `SLOW_ZONE_SPEED_MULT` | Zone : durée, cooldown, taille, ralentissement | 5 s / 12 s / 4,5 m / 0,55 | 0,45 pour une vraie « boue » |
+| `SPRINT_SPEED_MULT` / `BOOST_SPEED_MULT` | Sprint (tous), sprint boosté de l'ailier — premier levier du rythme | 1,12 / 1,1 | 1,15 / 1,15 pour un jeu plus rapide (≈ +1 essai) ; 1,22 / 1,2 (avant) : ≈ +3 essais en 3v3, +2 en 5v5, porteur à 10,4–11,1 m/s |
+| `CARRIER_DAMAGE_MULT` | Dégâts subis par le porteur | 1,3 | 1,5 : même rythme en normal, mais moins de ballon porté et plus de joueurs au sol ; ≈ −3 essais contre les bots faciles (15,9 au lieu de 19,4 en 3v3) |
+| `FIELD_SCALE_3V3` | Taille du terrain 3v3 (70 % de la surface) | 0,84 | 0,9 : ≈ −1,5 essai en 3v3 ; 0,7 : ≈ +3 essais |
+| `BOT_SUPPORTERS_3V3` / `_5V5` / `BOT_COVER_MIN_DEFENDERS` / `BOT_COVER_DEPTH` / `BOT_COVER_LINE_FRACTION` / `BOT_PRESSURE_RADIUS` | Soutiens derrière le porteur, repli permanent, rayon de pression du porteur bot | 2 / 3 / 2 / 26 m / 0,9 / 9 m | Défense bot trop passive : `BOT_COVER_MIN_DEFENDERS` 3 |
+| `TEAM_ROLES_3V3` / `TEAM_ROLES_5V5` | Compositions par défaut | 1 de chaque / 1 pilier + 2 ailiers + 2 demis | 2 piliers en 5v5 pour un jeu plus « avants » |
+| `BOT_SHOTGUN_ENGAGE_DIST` / `BOT_GRENADE_ENGAGE_DIST` / `BOT_GRENADE_MIN_DIST` / `BOT_GRENADE_STANDOFF` | Portées des bots pilier / demi | 10 / 28 / 6 / 12 m | Demi trop fort : engagement 22 m |
+| `BOT_GRENADE_SELF_MARGIN` / `BOT_GRENADE_PATH_MARGIN` | Demi bot : impact loin de lui, trajectoire libre d'adversaires sur ses premiers mètres | 1 m / 0,5 m | 0,8 m de marge de trajectoire si des demis s'explosent encore au contact |
+| `BOT_SHIELD_RAISE_STABILITY_FRACTION` / `BOT_SHIELD_PANIC_STABILITY_FRACTION` / `BOT_SHIELD_CARRIER_DIST` / `BOT_SHIELD_CALM_SEC` | Quand les piliers bots lèvent / baissent le bouclier | 0,8 / 0,45 / 14 m / 0,6 s | Boucliers bots trop fréquents : 0,6 / 0,3 / 10 m |
+| `BOT_ZONE_LEAD_SEC` / `BOT_ZONE_AHEAD` / `BOT_ZONE_MAX_DIST` / `BOT_ZONE_AVOID_MARGIN` / `BOT_CARRIER_ZONE_PENALTY` | Pose et contournement des zones par les bots | 0,6 s / 3 m / 14 m / 0,8 m / 0,6 | Pénalité 0 : les porteurs foncent dans les zones |
+| `SCRUM_LOOSE_SEC` / `SCRUM_CAPTURE_SEC` / `SCRUM_TIE_EXTRA_SEC` | Mêlée : ballon libre avant déclenchement, capture, prolongation (cahier des charges : 3 s / 3 s) | 3 s / 3 s / 2 s | Prolongation 3 s si trop de tirages au sort |
+| `SCRUM_RADIUS` / `SCRUM_MIN_PLAYERS_3V3` / `_5V5` | Rayon de la zone en 5v5 (× 0,84 en 3v3) / joueurs debout requis de chaque camp | 6 m / 2 / 3 | 7 m pour des mêlées plus fréquentes et plus ouvertes |
+| `BOT_SCRUM_APPROACH_SEC` | Quand les bots se mettent à jouer la mêlée (ballon libre depuis…) | 1,6 s | 1,2 s : ≈ 4 mêlées par match en 3v3 mais bots qui tournent autour du ballon ; 2 s : ≈ 1,7 / 0,8 |
+| `BOT_SCRUM_HOLD_MARGIN` / `BOT_SCRUM_HOLD_GRACE_SEC` / `BOT_SCRUM_LEAD_MARGIN` | Zone tenue sans ramasser, abandon si la mêlée ne vient pas, majorité confortable | 1,2 m / 0,3 s / 2 | `BOT_SCRUM_LEAD_MARGIN` 1 pour plus de soutien après la mêlée |
+| `GAMEPAD_RUMBLE_EFFECTS.shieldBlock` / `.explosionNear` / `.scrumStart` / `.scrumWon` / `.scrumLost`, `RUMBLE_EXPLOSION_NEAR_MULT` | Vibrations de l'étape 7 | — / 1,5 | `strong` et `weak` à 0 pour couper |
+
+Réglages purement visuels (bouclier, grenades, explosions, zones, aperçus du demi, zone de mêlée, bannières « MÊLÉE ! » et « Mêlée gagnée
+par … ») : `src/render/palette.ts` (`PALETTE`, `STYLE`, `FX.scrumStart` / `scrumWon`).

@@ -12,15 +12,30 @@
  *    tirée en écarts-types (sans unité) puis convertie en angle selon la distance : max(aimErrorDeg,
  *    atan(aimErrorM / distance)) — de près, un décalage latéral en mètres (on rate aussi à 5 m).
  *  - Tir par rafales (BOT_BURST_SEC / pauses BOT_BURST_PAUSE_SEC + jitter, × burstPauseMult de la difficulté,
- *    × BOT_RESTRAINED_PAUSE_MULT hors « press » / « cover ») ; l'appelant ne presse FIRE que si le regard
+ *    × BOT_RESTRAINED_PAUSE_MULT hors « press » / « cover » / « scrum ») ; l'appelant ne presse FIRE que si le regard
  *    (après rotation limitée) est à moins de BOT_FIRE_CONE_DEG de la direction voulue ; AIM au-delà de BOT_ADS_DISTANCE.
  *  - Rechargement opportuniste : RELOAD après BOT_RELOAD_IDLE_SEC sans cible si le chargeur est sous
  *    BOT_RELOAD_AMMO_FRACTION.
+ *  - Étape 7 : LANCE-GRENADES (demi) : tir balistique (ballisticAimTo, parabole exacte) vers les PIEDS de la cible
+ *    anticipée (BOT_GRENADE_AIM_HEIGHT au-dessus du sol, avance = durée de vol × leadFraction, vitesse plafonnée), arc
+ *    bas de préférence ; au moment de tirer, le point d'impact prévu (predictGrenadeImpact, relief compris) doit tomber
+ *    près du point visé (BOT_GRENADE_IMPACT_TOLERANCE) et loin du demi (rayon d'explosion + BOT_GRENADE_SELF_MARGIN),
+ *    et aucun adversaire touchable ne doit être sur les premiers mètres de la parabole (jusqu'à blastRadius +
+ *    BOT_GRENADE_SELF_MARGIN de lui : la grenade lui exploserait au visage, correction de la relecture de l'étape 7),
+ *    sinon il essaie l'autre arc (mémorisé : lobHigh) et ne tire pas ce tick ; jamais sur une cible à moins de
+ *    BOT_GRENADE_MIN_DIST. FUSIL À POMPE (pilier) : visée directe comme l'ailier, portée plafonnée (world.ts).
+ *    Personne ne tire sur un pilier dont le bouclier levé lui fait face (shieldFacing : projectiles perdus).
  */
 
 import {
+  aimDir,
   aimOrigin,
   BOT_ADS_DISTANCE,
+  BOT_GRENADE_AIM_HEIGHT,
+  BOT_GRENADE_IMPACT_TOLERANCE,
+  BOT_GRENADE_PATH_MARGIN,
+  BOT_GRENADE_SELF_MARGIN,
+  BOT_LEAD_SPEED_CAP_MULT,
   BOT_AIM_ERROR_PERIOD_JITTER_SEC,
   BOT_AIM_ERROR_PERIOD_SEC,
   BOT_AIM_ERROR_SMOOTH_SEC,
@@ -34,21 +49,31 @@ import {
   BOT_RESTRAINED_PAUSE_MULT,
   canShoot,
   clamp,
+  groundHeight,
   isHittable,
   PITCH_MAX,
   PITCH_MIN,
+  PLAYER_RADIUS,
+  playerHeight,
+  predictGrenadeImpact,
+  PROJECTILE_ARC_SUBSTEPS,
+  PROJECTILE_HIT_RADIUS,
   rand,
   ROLES,
   secToTicks,
+  segmentCapsuleEntry,
+  shieldFacing,
   TICK_DT,
   weaponImplemented,
   type MatchState,
   type PlayerState,
+  type Vec3,
+  type WeaponStats,
 } from '../sim';
-import { aimAnglesTo, leadAimPoint } from './aim';
+import { aimAnglesTo, ballisticAimTo, leadAimPoint, type BallisticAim } from './aim';
 import type { BotMemory } from './memory';
 import { reactionTicks } from './perception';
-import { dist2, engageRange } from './world';
+import { cappedVelocity, dist2, engageRange, minEngageRange } from './world';
 
 const DEG = Math.PI / 180;
 /** Facteur de lissage par tick de l'erreur de visée (1 − e^(−dt/τ)). */
@@ -86,6 +111,80 @@ export function pickTarget(state: Readonly<MatchState>, me: PlayerState, range: 
   const pref = state.players[preferredId];
   if (pref === undefined || pref.team === me.team || pref.status !== 'active') return null;
   return dist2(pref.pos.x, pref.pos.z, me.pos.x, me.pos.z) <= range * range ? pref : null;
+}
+
+/** Tir balistique vers une cible : regard et point visé (pieds de la cible anticipée). */
+interface GrenadeAim extends BallisticAim {
+  point: Vec3;
+}
+
+/**
+ * Tir balistique (lance-grenades) vers les pieds de `target` anticipée (PURE) : trois passes (la durée de vol dépend du
+ * point visé), vitesse de la cible plafonnée (BOT_LEAD_SPEED_CAP_MULT × runSpeed : une esquive n'est pas suivie).
+ */
+function grenadeAim(state: Readonly<MatchState>, me: PlayerState, target: PlayerState, w: WeaponStats, lead: number, high: boolean): GrenadeAim | null {
+  const v = cappedVelocity(target, ROLES[target.role].runSpeed * BOT_LEAD_SPEED_CAP_MULT);
+  let px = target.pos.x;
+  let pz = target.pos.z;
+  let res: GrenadeAim | null = null;
+  for (let i = 0; i < 3; i++) {
+    const point = { x: px, y: groundHeight(state.field, px, pz) + BOT_GRENADE_AIM_HEIGHT, z: pz };
+    const sol = ballisticAimTo(me, point, w.speed, w.gravity, high);
+    if (sol === null) return null;
+    res = { ...sol, point };
+    px = target.pos.x + v.x * sol.time * lead;
+    pz = target.pos.z + v.z * sol.time * lead;
+  }
+  return res;
+}
+
+/**
+ * Un adversaire touchable sur les premiers mètres de la parabole partie de `o` à la vitesse `v` (jusqu'à `reach` m du
+ * tireur, horizontalement) ? Même découpage en cordes que la simulation (PROJECTILE_ARC_SUBSTEPS par tick), capsules
+ * élargies de BOT_GRENADE_PATH_MARGIN. PURE.
+ */
+function grenadePathBlocked(state: Readonly<MatchState>, me: PlayerState, w: WeaponStats, o: Vec3, v: Vec3, reach: number): boolean {
+  const n = Math.max(1, PROJECTILE_ARC_SUBSTEPS);
+  const h = TICK_DT / n;
+  const hs = Math.sqrt(v.x * v.x + v.z * v.z);
+  const steps = Math.min(Math.ceil(reach / Math.max(hs, 1) / h) + 1, secToTicks(1) * n);
+  const r = PLAYER_RADIUS + PROJECTILE_HIT_RADIUS + BOT_GRENADE_PATH_MARGIN;
+  const a = { x: o.x, y: o.y, z: o.z };
+  const b = { x: 0, y: 0, z: 0 };
+  let vy = v.y;
+  for (let k = 0; k < steps; k++) {
+    b.x = a.x + v.x * h;
+    b.y = a.y + vy * h - 0.5 * w.gravity * h * h;
+    b.z = a.z + v.z * h;
+    for (const p of state.players) {
+      if (p.team === me.team || !isHittable(p)) continue;
+      if (segmentCapsuleEntry(a, b, p.pos, playerHeight(p), r) >= 0) return true;
+    }
+    if (dist2(b.x, b.z, me.pos.x, me.pos.z) > reach * reach) return false;
+    a.x = b.x;
+    a.y = b.y;
+    a.z = b.z;
+    vy -= w.gravity * h;
+  }
+  return false;
+}
+
+/**
+ * Le tir balistique `a` est-il sûr et utile ? Impact prévu (relief compris, sans les joueurs) près du point visé et loin
+ * du tireur, et aucun adversaire sur les premiers mètres de la trajectoire (il y exploserait, au visage du tireur). PURE.
+ */
+function grenadeClear(state: Readonly<MatchState>, me: PlayerState, w: WeaponStats, a: GrenadeAim): boolean {
+  const d = aimDir(a.yaw, a.pitch);
+  const o = aimOrigin(me.pos, a.yaw);
+  const v = { x: d.x * w.speed, y: d.y * w.speed, z: d.z * w.speed };
+  const impact = predictGrenadeImpact(state.field, o, v, w);
+  const near = (impact.x - a.point.x) ** 2 + (impact.y - a.point.y) ** 2 + (impact.z - a.point.z) ** 2;
+  const self = w.blastRadius + BOT_GRENADE_SELF_MARGIN;
+  return (
+    near <= BOT_GRENADE_IMPACT_TOLERANCE * BOT_GRENADE_IMPACT_TOLERANCE &&
+    dist2(impact.x, impact.z, me.pos.x, me.pos.z) > self * self &&
+    !grenadePathBlocked(state, me, w, o, v, self)
+  );
 }
 
 /** Visée voulue pour ce tick. */
@@ -130,6 +229,7 @@ export function aimTick(mem: BotMemory, state: Readonly<MatchState>, me: PlayerS
     mem.acquireTicks = reactionTicks(mem);
     mem.burstTicks = 0;
     mem.pauseTicks = 0;
+    mem.lobHigh = false;
   }
   let firing = false;
   if (mem.acquireTicks > 0) {
@@ -139,7 +239,7 @@ export function aimTick(mem: BotMemory, state: Readonly<MatchState>, me: PlayerS
     mem.burstTicks--;
     if (mem.burstTicks === 0) {
       const role = mem.decision.role;
-      const restrained = role !== 'press' && role !== 'cover' ? BOT_RESTRAINED_PAUSE_MULT : 1;
+      const restrained = role !== 'press' && role !== 'cover' && role !== 'scrum' ? BOT_RESTRAINED_PAUSE_MULT : 1;
       const pause = (BOT_BURST_PAUSE_SEC + rand(mem) * BOT_BURST_PAUSE_JITTER_SEC) * diff.burstPauseMult * restrained;
       mem.pauseTicks = secToTicks(pause);
     }
@@ -149,9 +249,32 @@ export function aimTick(mem: BotMemory, state: Readonly<MatchState>, me: PlayerS
     mem.burstTicks = Math.max(1, secToTicks(BOT_BURST_SEC)) - 1;
     firing = true;
   }
-  const origin = aimOrigin(me.pos, Math.atan2(target.pos.x - me.pos.x, target.pos.z - me.pos.z));
-  const ideal = aimAnglesTo(me, leadAimPoint(origin, target, w.speed, diff.leadFraction));
   const dist = Math.sqrt(dist2(target.pos.x, target.pos.z, me.pos.x, me.pos.z));
+  let ideal: { yaw: number; pitch: number } | null = null;
+  if (w.projectile === 'grenade') {
+    // Lance-grenades : tir en cloche vers les pieds de la cible anticipée ; trajectoire vérifiée au moment de tirer.
+    if (dist < minEngageRange(me)) firing = false;
+    let a = grenadeAim(state, me, target, w, diff.leadFraction, mem.lobHigh);
+    if (a === null) {
+      mem.lobHigh = !mem.lobHigh;
+      firing = false;
+    } else if (firing && me.fireCd === 0 && me.ammo > 0 && me.reloadTicks === 0 && !grenadeClear(state, me, w, a)) {
+      // Trajectoire bouchée (butte, muret) ou impact trop près de lui : essayer l'autre arc au prochain tick.
+      const other = grenadeAim(state, me, target, w, diff.leadFraction, !mem.lobHigh);
+      if (other !== null && grenadeClear(state, me, w, other)) {
+        mem.lobHigh = !mem.lobHigh;
+        a = other;
+      }
+      firing = false;
+    }
+    ideal = a;
+  }
+  if (ideal === null) {
+    const origin = aimOrigin(me.pos, Math.atan2(target.pos.x - me.pos.x, target.pos.z - me.pos.z));
+    ideal = aimAnglesTo(me, leadAimPoint(origin, target, w.speed, diff.leadFraction));
+  }
+  // Bouclier levé face à lui : projectiles perdus, il attend (ou un coéquipier le prend de flanc).
+  if (shieldFacing(target, me.pos.x, me.pos.z)) firing = false;
   const errScale = aimErrorScale(mem, dist);
   return {
     targetId: target.id,
@@ -160,7 +283,7 @@ export function aimTick(mem: BotMemory, state: Readonly<MatchState>, me: PlayerS
     idealYaw: ideal.yaw,
     idealPitch: ideal.pitch,
     firing: firing && usable && isHittable(target),
-    ads: dist > BOT_ADS_DISTANCE,
+    ads: dist > BOT_ADS_DISTANCE && w.projectile !== 'grenade',
     reload: false,
   };
 }

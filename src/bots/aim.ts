@@ -48,3 +48,45 @@ export function aimAnglesTo(me: PlayerState, p: Vec3): { yaw: number; pitch: num
   }
   return { yaw, pitch };
 }
+
+/**
+ * Angle d'élévation (rad) qui envoie un projectile de vitesse `speed` et de gravité `g` (parabole exacte) à la distance
+ * horizontale `dist` avec un dénivelé `dy` (> 0 : plus haut) ; arc bas (`high` faux, plus rapide) ou arc haut (« en
+ * cloche », passe au-dessus d'un obstacle). null si le point est hors de portée. Sans gravité : visée directe. PURE.
+ */
+export function ballisticPitch(dist: number, dy: number, speed: number, g: number, high: boolean): number | null {
+  if (g <= 0) return Math.atan2(dy, dist);
+  if (dist < 1e-6) return null;
+  const v2 = speed * speed;
+  const disc = v2 * v2 - g * (g * dist * dist + 2 * dy * v2);
+  if (disc < 0) return null;
+  const root = Math.sqrt(disc);
+  return Math.atan((v2 + (high ? root : -root)) / (g * dist));
+}
+
+/** Tir balistique : regard (yaw, pitch) et durée de vol (s) jusqu'au point visé. */
+export interface BallisticAim {
+  yaw: number;
+  pitch: number;
+  time: number;
+}
+
+/**
+ * Regard qui fait partir un projectile balistique de `me` (depuis aimOrigin, décalage d'épaule compris : deux passes)
+ * vers le point `p`, arc bas ou haut ; null hors de portée. PURE.
+ */
+export function ballisticAimTo(me: PlayerState, p: Vec3, speed: number, g: number, high: boolean): BallisticAim | null {
+  let yaw = Math.atan2(p.x - me.pos.x, p.z - me.pos.z);
+  let res: BallisticAim | null = null;
+  for (let i = 0; i < 2; i++) {
+    const o = aimOrigin(me.pos, yaw);
+    const dx = p.x - o.x;
+    const dz = p.z - o.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    yaw = Math.atan2(dx, dz);
+    const pitch = ballisticPitch(dist, p.y - o.y, speed, g, high);
+    if (pitch === null) return null;
+    res = { yaw, pitch, time: dist / Math.max(1e-6, speed * Math.cos(pitch)) };
+  }
+  return res;
+}

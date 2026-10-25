@@ -26,14 +26,16 @@ describe('bots : déterminisme d’un match complet', () => {
 });
 
 /**
- * Bornes de rythme (difficulté normale, moyenne sur les seeds) : un match qui ressemble à du rugby arcade. Mesuré
- * (harnais de relecture de l'étape 6, seeds 1 à 4) : 3v3 ≈ 30 essais, ballon porté ≈ 70 % du jeu, ≈ 10 % de joueurs
- * au sol, ≈ 3 coups de pied ; 5v5 ≈ 16 essais, porté ≈ 55 %, ≈ 12 % au sol. Avant correction : porté 31–42 %, au sol
- * 21–30 %, 25–43 coups de pied. En 3v3, le demi (désarmé jusqu'à l'étape 7) pèse plus : plus d'essais qu'en 5v5.
+ * Bornes de rythme (difficulté normale, moyenne sur les seeds, composition du jeu par défaut) : un match qui ressemble à
+ * du rugby arcade, OBJECTIF ≈ 4 à 12 essais par match de 6 min. Historique : étape 6 ≈ 33 / 16,5 essais (3v3 / 5v5) ;
+ * étape 7 avant réglage ≈ 28 / 17. Réglage de la correction de l'étape 7 (docs/ARCHITECTURE.md §15, 24 seeds) : 3v3
+ * ≈ 13 essais (9 à 18), ballon porté ≈ 59 %, ≈ 14 % de joueurs au sol, ≈ 2 coups de pied ; 5v5 ≈ 10 essais (6 à 15),
+ * porté ≈ 47 %, ≈ 16 % au sol, ≈ 1,5 coup de pied. Seeds 1 à 3 de ce test : 3v3 ≈ 14,7 essais, porté 59 %, 14 % au sol ;
+ * 5v5 ≈ 9,7 essais, porté 47,5 %, 16 % au sol.
  */
-const PACE: Record<3 | 5, { maxTries: number; minCarried: number; maxDown: number; maxKicks: number }> = {
-  3: { maxTries: 40, minCarried: 0.6, maxDown: 0.14, maxKicks: 15 },
-  5: { maxTries: 25, minCarried: 0.48, maxDown: 0.16, maxKicks: 15 },
+const PACE: Record<3 | 5, { minTries: number; maxTries: number; minCarried: number; maxDown: number; maxKicks: number }> = {
+  3: { minTries: 4, maxTries: 18, minCarried: 0.5, maxDown: 0.17, maxKicks: 10 },
+  5: { minTries: 4, maxTries: 14, minCarried: 0.4, maxDown: 0.19, maxKicks: 10 },
 };
 
 describe.each([
@@ -77,7 +79,7 @@ describe.each([
     const n = runs.length;
     const pace = PACE[size];
     const tries = total((r) => r.events.try ?? 0) / n;
-    expect(tries, info).toBeGreaterThanOrEqual(3);
+    expect(tries, info).toBeGreaterThanOrEqual(pace.minTries);
     expect(tries, info).toBeLessThanOrEqual(pace.maxTries);
     expect(total((r) => r.carriedTicks) / total((r) => r.playTicks), info).toBeGreaterThanOrEqual(pace.minCarried);
     expect(total((r) => r.playerDownTicks) / total((r) => r.playerPlayTicks), info).toBeLessThanOrEqual(pace.maxDown);

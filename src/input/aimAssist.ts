@@ -20,15 +20,29 @@ import {
   AIM_ASSIST_TRACKING,
   aimDir,
   angleDiff,
+  canShoot,
   clamp,
   PLAYER_RADIUS,
+  ROLES,
   segmentSegment,
+  type MatchState,
+  type PlayerState,
   type PlayerStatus,
   type TeamId,
   type Vec3,
 } from '../sim';
 
 const DEG = Math.PI / 180;
+
+/**
+ * L'aide à la visée s'applique-t-elle au joueur `me` ? Seulement s'il peut tirer (canShoot : actif, non porteur, ni
+ * glissade / plongeon / grimpe, ni bouclier levé — le pilier qui tourne son bouclier vers la menace ne doit pas voir sa
+ * caméra « accrocher ») et si son arme tire en ligne droite : une grenade se lobe AU-DESSUS de la cible, l'aide (rayon
+ * droit vers le corps) ralentirait la caméra au mauvais endroit (étape 7). PURE.
+ */
+export function aimAssistApplies(state: Readonly<MatchState>, me: Readonly<PlayerState>): boolean {
+  return canShoot(state, me) && ROLES[me.role].weapon.gravity <= 0;
+}
 
 /** Un joueur vu par l'aide à la visée (positions INTERPOLÉES de la frame). */
 export interface AssistCandidate {

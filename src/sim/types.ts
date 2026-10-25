@@ -311,13 +311,19 @@ export interface Zone {
   ttl: number;
 }
 
+/**
+ * Mêlée en cours (étape 7, scrum.ts) : zone de capture autour du ballon 'scrum'. Capture de
+ * secToTicks(SCRUM_CAPTURE_SEC) ticks, puis prolongation (« premier qui mène ») tant que `ticks` reste sous
+ * capture + secToTicks(SCRUM_TIE_EXTRA_SEC) : `scrumInOvertime`, `scrumTicksLeft`.
+ */
 export interface ScrumState {
-  /** Centre de la zone de capture (au sol). */
+  /** Centre de la zone de capture (au sol, sous le ballon). */
   center: Vec3;
+  /** Rayon de la zone (m) : SCRUM_RADIUS × échelle du terrain. */
   radius: number;
-  /** Ticks écoulés depuis le début de la capture. */
+  /** Ticks écoulés depuis le début de la capture (0 au tick du déclenchement). */
   ticks: number;
-  /** Joueurs actifs de chaque équipe dans la zone au dernier tick. */
+  /** Joueurs ACTIFS de chaque équipe dans la zone au dernier tick. */
   counts: [number, number];
 }
 
@@ -362,8 +368,12 @@ export type MatchEvent =
   | { type: 'try'; team: TeamId; scorerId: number }
   | { type: 'kickoff'; team: TeamId }
   | { type: 'play' }
+  /** Mêlée déclenchée (étape 7) : `pos` = centre de la zone, au sol. */
   | { type: 'scrum_start'; pos: Vec3 }
+  /** Mêlée gagnée : `playerId` (de l'équipe `team`) porte désormais le ballon. */
   | { type: 'scrum_won'; team: TeamId; playerId: number }
+  /** Mêlée sans vainqueur (0 contre 0 à la fin de la prolongation) : ballon rendu libre au centre `pos`. */
+  | { type: 'scrum_released'; pos: Vec3 }
   | { type: 'last_minute' }
   | { type: 'match_end'; score: [number, number] };
 

@@ -52,9 +52,11 @@ export const sameSituation = (a: Situation, b: Situation): boolean =>
  *  - mark    : défenseur qui marque le receveur le plus dangereux (entre lui et son en-but) ;
  *  - cover   : repli entre le porteur et son en-but quand personne ne le couvre ;
  *  - chase   : va au ballon libre / au point de chute ;
- *  - shape   : garde une forme d'équipe pendant un ballon libre.
+ *  - shape   : garde une forme d'équipe pendant un ballon libre ;
+ *  - scrum   : entre dans la zone d'une mêlée (en approche ou pendant la capture) pour peser sur le décompte et y
+ *              tire sur les adversaires (étape 7, scrumBrain.ts).
  */
-export type TacticalRole = 'idle' | 'carrier' | 'support' | 'space' | 'receive' | 'press' | 'mark' | 'cover' | 'chase' | 'shape';
+export type TacticalRole = 'idle' | 'carrier' | 'support' | 'space' | 'receive' | 'press' | 'mark' | 'cover' | 'chase' | 'shape' | 'scrum';
 
 /** Plan du porteur : courir, préparer une passe (regard vers le receveur), préparer un coup de pied. */
 export type CarrierPlan = 'run' | 'pass' | 'kick';
@@ -126,6 +128,20 @@ export interface BotMemory {
   pauseTicks: number;
   /** Ticks consécutifs sans cible (rechargement opportuniste). */
   idleTicks: number;
+  /** Demi : tir en cloche par l'arc HAUT (arc bas bouché par le relief), remis à faux à chaque nouvelle cible. */
+  lobHigh: boolean;
+
+  // Mêlée (étape 7).
+  /** Approche d'une mêlée vue au tick précédent (scrumBrain.ts, scrumApproaching) : son changement déclenche une décision. */
+  scrumAlert: boolean;
+
+  // Capacités de rôle (étape 7).
+  /** Pilier : ticks consécutifs bouclier levé sans menace (baisser le bouclier après BOT_SHIELD_CALM_SEC). */
+  shieldCalmTicks: number;
+  /** Demi : ticks restants pour poser la zone préparée (0 : aucune), et point de pose voulu. */
+  zonePlanTicks: number;
+  zoneX: number;
+  zoneZ: number;
 
   // Réflexes.
   lastStability: number;
@@ -205,6 +221,12 @@ export function createBotMemory(
     burstTicks: 0,
     pauseTicks: 0,
     idleTicks: 0,
+    lobHigh: false,
+    scrumAlert: false,
+    shieldCalmTicks: 0,
+    zonePlanTicks: 0,
+    zoneX: 0,
+    zoneZ: 0,
     lastStability: 0,
     underFireTicks: 0,
     hitReactTicks: 0,

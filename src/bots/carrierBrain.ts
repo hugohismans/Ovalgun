@@ -31,6 +31,7 @@ import {
   BOT_CARRIER_DIR_STICKY,
   BOT_CARRIER_DIRECTIONS,
   BOT_CARRIER_LOOKAHEAD_SEC,
+  BOT_CARRIER_ZONE_PENALTY,
   BOT_CONTACT_DISTANCE,
   BOT_CONTACT_REFLEX_MULT,
   BOT_DIFFICULTY,
@@ -68,7 +69,6 @@ import {
   BOT_PRESSURE_RADIUS,
   BOT_WALL_MARGIN,
   Buttons,
-  abilityImplemented,
   angleDiff,
   canCarrierAct,
   distanceToTryLine,
@@ -147,7 +147,8 @@ export function pathClear(state: Readonly<MatchState>, me: PlayerState, dx: numb
 
 /**
  * Direction de course du porteur (PURE) : éventail vers l'en-but adverse, note = progression − risque × poids
- * − sortie du terrain + hystérésis sur la direction précédente (prevX, prevZ). Près de la ligne (BOT_LINE_RUSH_DIST),
+ * − sortie du terrain + hystérésis sur la direction précédente (prevX, prevZ) − BOT_CARRIER_ZONE_PENALTY si la course
+ * projetée traverse une zone de ralentissement adverse (étape 7). Près de la ligne (BOT_LINE_RUSH_DIST),
  * l'évitement est multiplié par BOT_LINE_RUSH_AVOID_MULT : il fonce.
  */
 export function chooseRunDirection(state: Readonly<MatchState>, me: PlayerState, prevX: number, prevZ: number): RunChoice {
@@ -179,10 +180,22 @@ export function chooseRunDirection(state: Readonly<MatchState>, me: PlayerState,
       }
       risk += worst * worst;
     }
+    // Étape 7 : une course qui traverse une zone de ralentissement adverse est pénalisée (il la contourne).
+    let slowed = 0;
+    for (const zn of state.zones) {
+      if (zn.team === me.team) continue;
+      for (let k = 1; k <= LOOKAHEAD_SAMPLES; k++) {
+        const t = (k / LOOKAHEAD_SAMPLES) * BOT_CARRIER_LOOKAHEAD_SEC;
+        if (dist2(me.pos.x + dx * speed * t, me.pos.z + dz * speed * t, zn.pos.x, zn.pos.z) <= zn.radius * zn.radius) {
+          slowed = BOT_CARRIER_ZONE_PENALTY;
+          break;
+        }
+      }
+    }
     const endX = me.pos.x + dx * speed * BOT_CARRIER_LOOKAHEAD_SEC;
     const out = Math.max(0, Math.abs(endX) - halfW) / Math.max(1, speed * BOT_CARRIER_LOOKAHEAD_SEC);
     const sticky = dx * prevX + dz * prevZ > Math.cos((BOT_CARRIER_DIR_SPREAD_DEG * DEG) / Math.max(1, n - 1)) ? BOT_CARRIER_DIR_STICKY : 0;
-    const score = dz * dir - avoidW * risk - out + sticky;
+    const score = dz * dir - avoidW * risk - out + sticky - slowed;
     if (score > bestScore) {
       bestScore = score;
       bestX = dx;
@@ -485,7 +498,7 @@ export function carrierTick(
   }
   // Sprint boosté (ailier) en terrain libre, loin de la ligne.
   if (
-    abilityImplemented(me) &&
+    me.role === 'ailier' &&
     me.abilityCd === 0 &&
     me.abilityTicks === 0 &&
     d.pathClear &&
