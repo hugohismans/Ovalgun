@@ -1,7 +1,8 @@
 /**
  * Rendu Three.js du match. Lit deux MatchState (précédent / courant) et interpole avec alpha ;
- * n'écrit JAMAIS dans l'état. Style flat coloré : ciel en dégradé vif, lumières hémisphérique +
- * directionnelle, brouillard léger, couleurs saturées (palette.ts).
+ * n'écrit JAMAIS dans l'état. Style flat coloré : lumières hémisphérique + directionnelle, brouillard léger, couleurs
+ * saturées (palette.ts). Décor (ciel avec soleil et nuages, stade, foule, ville) : src/render/environment ; la foule
+ * s'excite sur un essai et quand un porteur approche de l'en-but adverse (`updateCrowd`).
  * Étape 4 : indicateurs du porteur local (cible de la passe assistée recalculée à chaque frame avec le yaw
  * courant, cône de passe, point de chute du coup de pied) et effets des événements (`handleEvents`).
  * Étape 5 : traceurs, flashs, étincelles, éclats de plaquage (CombatFxView), joueur touché qui clignote,
@@ -47,7 +48,8 @@ import { FieldView } from './FieldView';
 import { localFade, occluderFade, pointSegmentDistance, segmentSegmentDistance, type Point3 } from './fadeMath';
 import { FxView } from './FxView';
 import { lerpPos, lerpYaw } from './interpolate';
-import { PALETTE, STYLE } from './palette';
+import { Environment } from './environment';
+import { ENVIRONMENT, PALETTE, STYLE } from './palette';
 import { PassIndicatorView, type PassIndicatorFrame } from './PassIndicatorView';
 import { characterLibrary } from './characters/CharacterLibrary';
 import { PlayerAssets, PlayerView, type PlayerFrame } from './PlayerView';
@@ -81,95 +83,6 @@ export function passRiskOf(openness: number): PassRisk {
   return openness >= BOT_PASS_MIN_OPENNESS ? 0 : openness >= BOT_PASS_MIN_OPENNESS_OWN_THIRD ? 1 : 2;
 }
 
-/** Ciel : sphère à dégradé vertical (haut / horizon / bas), sans brouillard. */
-function createSky(): THREE.Mesh {
-  const mat = new THREE.ShaderMaterial({
-    side: THREE.BackSide,
-    depthWrite: false,
-    fog: false,
-    uniforms: {
-      uTop: { value: new THREE.Color(PALETTE.skyTop) },
-      uHorizon: { value: new THREE.Color(PALETTE.skyHorizon) },
-      uBottom: { value: new THREE.Color(PALETTE.skyBottom) },
-    },
-    vertexShader: [
-      'varying vec3 vDir;',
-      'void main() {',
-      '  vDir = normalize(position);',
-      '  vec4 p = projectionMatrix * modelViewMatrix * vec4(position, 1.0);',
-      '  gl_Position = p.xyww;', // toujours au fond
-      '}',
-    ].join('\n'),
-    fragmentShader: [
-      'uniform vec3 uTop; uniform vec3 uHorizon; uniform vec3 uBottom;',
-      'varying vec3 vDir;',
-      'void main() {',
-      '  float h = vDir.y;',
-      '  vec3 c = h > 0.0 ? mix(uHorizon, uTop, pow(clamp(h, 0.0, 1.0), 0.6)) : mix(uHorizon, uBottom, clamp(-h * 4.0, 0.0, 1.0));',
-      '  gl_FragColor = vec4(c, 1.0);',
-      '}',
-    ].join('\n'),
-  });
-  const sky = new THREE.Mesh(new THREE.SphereGeometry(500, 32, 16), mat);
-  sky.frustumCulled = false;
-  sky.renderOrder = -10;
-  return sky;
-}
-
-/**
- * Décor : tribunes en gradins autour de l'arène (couleurs d'équipe derrière les en-buts, violet / rose
- * le long des touches), loin des murs invisibles. Purement décoratif.
- */
-function createBackdrop(width: number, length: number): THREE.Group {
-  const g = new THREE.Group();
-  const box = new THREE.BoxGeometry(1, 1, 1);
-  const mats = new Map<string, THREE.MeshLambertMaterial>();
-  const mat = (c: string): THREE.MeshLambertMaterial => {
-    let m = mats.get(c);
-    if (m === undefined) {
-      m = new THREE.MeshLambertMaterial({ color: c });
-      mats.set(c, m);
-    }
-    return m;
-  };
-  const gap = STYLE.standsGap; // distance entre la bordure et le premier gradin (m)
-  const tiers = STYLE.standsTiers;
-  const depth = STYLE.standsDepth;
-  const rise = STYLE.standsRise;
-  // side : 0 = −Z (équipe 0), 1 = +Z (équipe 1), 2 = −X, 3 = +X.
-  for (let side = 0; side < 4; side++) {
-    const alongZ = side >= 2;
-    const span = (alongZ ? length : width) + 2 * gap;
-    const base = (alongZ ? width : length) / 2 + gap;
-    const colors =
-      side === 0
-        ? [PALETTE.teams[0].main, PALETTE.teams[0].light]
-        : side === 1
-          ? [PALETTE.teams[1].main, PALETTE.teams[1].light]
-          : [PALETTE.backdropA, PALETTE.backdropB];
-    const sign = side === 0 || side === 2 ? -1 : 1;
-    for (let t = 0; t < tiers; t++) {
-      const m = new THREE.Mesh(box, mat(colors[t % 2]));
-      const h = rise * (t + 1);
-      const len = span + 2 * depth * t;
-      const off = sign * (base + depth * (t + 0.5));
-      if (alongZ) {
-        m.scale.set(depth, h, len);
-        m.position.set(off, h / 2, 0);
-      } else {
-        m.scale.set(len, h, depth);
-        m.position.set(0, h / 2, off);
-      }
-      g.add(m);
-    }
-  }
-  g.userData.dispose = () => {
-    box.dispose();
-    for (const m of mats.values()) m.dispose();
-  };
-  return g;
-}
-
 export class Renderer {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene = new THREE.Scene();
@@ -180,7 +93,10 @@ export class Renderer {
   /** Personnages 3D (chargés en tâche de fond ; capsules en attendant). */
   private readonly characters = characterLibrary();
   private field: FieldView | null = null;
-  private backdrop: THREE.Group | null = null;
+  /** Décor : ciel, stade, foule, ville (src/render/environment) ; reconstruit seulement si la taille du terrain change. */
+  private readonly environment = new Environment();
+  /** Excitation de la foule laissée par le dernier essai (1 à l'essai, tenue pendant la pause, puis redescend). */
+  private tryHype = 0;
   private players: PlayerView[] = [];
   private readonly ball = new BallView();
   private readonly passIndicator = new PassIndicatorView();
@@ -190,7 +106,6 @@ export class Renderer {
   private readonly scrum = new ScrumView();
   private readonly aimPreview: AimPreviewFrame = { zone: null, grenade: null, team: 0 };
   private readonly zonePreviewPos: Vec3 = { x: 0, y: 0, z: 0 };
-  private readonly sky = createSky();
   /** Cible de la passe assistée affichée à la dernière frame (-1 : aucune, ou le joueur local ne porte pas). */
   passTargetId = -1;
   /** Risque de cette passe (passRiskOf ; 0 sans cible). */
@@ -227,12 +142,13 @@ export class Renderer {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.shoulder = new ShoulderCamera(1);
 
-    this.scene.background = new THREE.Color(PALETTE.skyHorizon);
+    this.scene.background = new THREE.Color(ENVIRONMENT.skyHorizon);
     this.scene.fog = new THREE.Fog(PALETTE.fog, STYLE.fogNear, STYLE.fogFar);
-    this.scene.add(this.sky);
+    this.scene.add(this.environment.group);
     this.scene.add(new THREE.HemisphereLight(PALETTE.hemiSky, PALETTE.hemiGround, STYLE.hemiIntensity));
+    // Même direction que le soleil dessiné dans le ciel (ENVIRONMENT.sunDirection).
     const sun = new THREE.DirectionalLight(PALETTE.sun, STYLE.sunIntensity);
-    sun.position.set(18, 30, -10);
+    sun.position.copy(this.environment.sunDirection).multiplyScalar(40);
     this.scene.add(sun);
     this.scene.add(this.ball.group, this.passIndicator.group, this.fx.group, this.combatFx.group, this.zones.group, this.scrum.group);
     this.resize();
@@ -246,8 +162,8 @@ export class Renderer {
     this.ball.reset();
     this.field = new FieldView(state.field);
     this.scene.add(this.field.group);
-    this.backdrop = createBackdrop(state.field.width, state.field.length);
-    this.scene.add(this.backdrop);
+    this.environment.build(state.field.width, state.field.length);
+    this.tryHype = 0;
     this.players = state.players.map((p) => {
       const v = new PlayerView(this.assets, p.id, p.team, p.role, p.id === humanId, this.characters);
       this.scene.add(v.root, v.groundGroup, v.marker, v.bar);
@@ -292,11 +208,6 @@ export class Renderer {
       this.field.dispose();
       this.field = null;
     }
-    if (this.backdrop !== null) {
-      this.scene.remove(this.backdrop);
-      (this.backdrop.userData.dispose as () => void)();
-      this.backdrop = null;
-    }
     for (const v of this.players) {
       this.scene.remove(v.root, v.groundGroup, v.marker, v.bar);
       v.dispose();
@@ -307,6 +218,7 @@ export class Renderer {
   /** Préférence système « animations réduites » : halo d'invulnérabilité sans pulsation. */
   setReducedMotion(reduced: boolean): void {
     this.assets.reducedMotion = reduced;
+    this.environment.setReducedMotion(reduced);
   }
 
   /**
@@ -404,8 +316,27 @@ export class Renderer {
     this.updateFades(view);
     for (const v of this.players) v.faceCamera(this.shoulder.camera.quaternion);
 
-    this.sky.position.copy(this.shoulder.camera.position);
+    this.updateCrowd(curr, carrierId, dt);
+    this.environment.update(dt, timeSec, this.shoulder.camera);
     this.renderer.render(this.scene, this.shoulder.camera);
+  }
+
+  /**
+   * Excitation de la foule (décor) : au maximum à l'essai (événement 'try', tenue pendant la pause d'essai) puis
+   * redescend en ENVIRONMENT.crowdTryDecaySec ; monte aussi quand un porteur approche de l'en-but adverse (à moins de
+   * crowdNearTryDist m de la ligne d'essai qu'il attaque).
+   */
+  private updateCrowd(curr: MatchState, carrierId: number, dt: number): void {
+    if (curr.phase === 'try') this.tryHype = 1;
+    else this.tryHype = Math.max(0, this.tryHype - dt / ENVIRONMENT.crowdTryDecaySec);
+    let near = 0;
+    const c = carrierId >= 0 ? curr.players[carrierId] : undefined;
+    if (c !== undefined && curr.phase === 'play') {
+      // L'équipe 0 marque en z >= +tryLineZ, l'équipe 1 en z <= −tryLineZ.
+      const dist = c.team === 0 ? curr.field.tryLineZ - c.pos.z : c.pos.z + curr.field.tryLineZ;
+      near = 1 - Math.min(1, Math.max(0, dist / ENVIRONMENT.crowdNearTryDist));
+    }
+    this.environment.setExcitement(Math.max(ENVIRONMENT.crowdIdleExcitement, this.tryHype, near * ENVIRONMENT.crowdNearTryExcitement));
   }
 
   /**
@@ -518,6 +449,7 @@ export class Renderer {
       // Le demi lance sa zone de ralentissement : même geste de bras que la passe.
       if (e.type === 'ability' && e.role === 'demi') this.players[e.playerId]?.gesture('pass');
       if (e.type === 'blocked') this.players[e.targetId]?.shieldFlash(timeSec);
+      if (e.type === 'try') this.tryHype = 1;
       this.scrum.handleEvent(e);
     }
     this.combatFx.handleEvents(events, state, prev, timeSec, this.humanId);
@@ -532,8 +464,7 @@ export class Renderer {
     this.zones.dispose();
     this.scrum.dispose();
     this.assets.dispose();
-    this.sky.geometry.dispose();
-    (this.sky.material as THREE.Material).dispose();
+    this.environment.dispose();
     this.renderer.dispose();
     // Libère aussi le contexte WebGL (sinon ils s'accumulent à chaque rechargement à chaud de Vite).
     this.renderer.forceContextLoss();

@@ -1093,3 +1093,40 @@ glTF du pack Quaternius, déclarer le fichier dans `CHARACTER_MODELS` et une ski
 | `heartbeatBelow` | Seuil de stabilité des battements de cœur | 35 % | ↓ alerte plus tardive |
 | `maxVoices` | Voix simultanées max | 28 | ↓ si le mixage sature |
 | `SYNTH_LEVEL.<son>` | Niveau d'un son | — | monter / baisser un son précis |
+
+## Décor : ville et ciel
+
+### Comment tester
+
+- Menu (`npm run dev`, http://localhost:5173/) : derrière le match bots contre bots, tribunes pleines, toit rose et
+  blanc, ville au-dessus du toit, ciel bleu avec nuages. En partie (`?debug`, puis `?debug&size=5`) : tribunes aux
+  couleurs des équipes derrière les en-buts, panneaux publicitaires lisibles le long du terrain, écran « OVALGUN »
+  derrière chaque en-but, 4 pylônes aux coins, ville qui dépasse des tribunes, dirigeable, montgolfières, oiseaux.
+  En levant les yeux (côté +X / −Z) : soleil plat avec liseré et halo.
+- Foule : elle sautille doucement ; marquer un essai (`G` = ballon pour moi, puis courir dans l'en-but) la fait sauter
+  bras levés quelques secondes ; elle s'agite aussi quand un porteur approche de l'en-but adverse. En console
+  (`?debug`) : `__ovalgun.session.renderer.tryHype = 1`.
+- Le terrain et les joueurs restent lisibles : le décor est au-delà des tribunes, à 10 m des murs au moins, et la
+  caméra ne le traverse jamais (même plaquée contre la bordure).
+- Coût : en console, `__ovalgun.session.renderer.renderer.info.render.calls`, avec et sans
+  `__ovalgun.session.renderer.environment.group.visible = false` (≈ 20 appels de dessin pour tout le décor).
+- `npx vitest run tests/render/environment.test.ts` : placement déterministe, rien dans la place du stade, portée de la
+  caméra, budget d'appels de dessin, reconstruction et libération, excitation de la foule.
+
+### Réglages (`ENVIRONMENT` dans src/render/palette.ts ; brouillard : `PALETTE.fog`, `STYLE.fogNear` / `fogFar`)
+
+| Réglage | Effet | Valeur | Piste |
+|---|---|---|---|
+| `sunDirection` | Direction du soleil (ciel ET lumière directionnelle) | (18, 16, −10), ≈ 38° | ↑ y : soleil plus haut, ombrage plus vertical |
+| `skyTop` / `skyMid` / `skyHorizon` | Dégradé du ciel (l'horizon = brouillard) | bleu vif → bleu pâle | garder `PALETTE.fog` = `skyHorizon` |
+| `STYLE.fogNear` / `fogFar` | Brume de la ville | 110 / 480 m | ↓ fogFar : ville plus fondue, moins chargée |
+| `standsGap` | Distance bordure -> tribunes | 10 m | ne pas descendre sous ≈ 8 m (caméra épaule) |
+| `standsRows` / `standsRowDepth` / `standsRowRise` | Gradins | 9 / 1,5 m / 0,7 m | ↑ rangs : stade plus haut, ville moins visible |
+| `crowdFill` / `crowdSpacing` | Densité de la foule (coût en triangles) | 0,68 / 0,9 m | ↓ fill si la carte graphique peine |
+| `jumpIdle` / `jumpMax` / `jumpRate` | Bonds au repos / en délire, cadence | 0,06 / 0,6 m / 7 rad/s | — |
+| `crowdTryDecaySec` / `crowdNearTryDist` / `crowdNearTryExcitement` | Excitation après un essai, près de l'en-but | 4,5 s / 18 m / 0,55 | — |
+| `heightNear` / `heightFar` / `towerShareFar` | Hauteurs de la ville, part de tours au loin | 10–22 / 34–95 m / 0,24 | ↓ pour une skyline plus calme |
+| `windowLitShare` / `windowGlow` | Fenêtres allumées | 0,1 / 0,35 | ↑ ville plus « vivante », plus de scintillement |
+| `facades` / `towerFacades` / `roofs` | Couleurs de la ville | pastel / verre teinté / toits vifs | — |
+| `cloudCount` / `cloudDriftRate` | Nuages, dérive | 18 / 0,004 rad/s | — |
+| `glowSize` / `glowOpacity` | Halo des projecteurs | 11 m / 0,32 | ↓ si les halos gênent en regardant vers un coin |

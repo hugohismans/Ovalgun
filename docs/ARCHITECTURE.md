@@ -13,7 +13,7 @@ cahier des charges · 5. Rendu · 6. Vérification · 7. Simulation (étape 2) �
 10. Tir, stabilité, plaquage (étape 5) · 11. Boucle de match (étape 6) · 12. Bots (étape 6) · 13. Pilier et demi (étape 7) ·
 14. Mêlée (étape 7) · 15. Correction de l'étape 7 : rythme · 16. HUD et menus (étape 8) · 17. Passe finale : simulation et
 bots · 18. Passe finale : client, caméra et UI · 19. Passe finale : documentation, CI et contrôle final · 20. Brancher le
-mode online.
+mode online · 21. Personnages 3D · 22. Son · 23. Mode en ligne · 24. Décor : ville et ciel.
 
 ## 1. Vue d'ensemble des modules
 
@@ -222,6 +222,8 @@ Voir l'en-tête de `src/sim/vec.ts`.
 - Le yaw/pitch de la caméra du joueur local utilise la valeur souris courante (pas interpolée) pour une visée réactive.
 - Style flat coloré : `MeshLambertMaterial`/`MeshToonMaterial`, couleurs saturées, équipe 0 orange, équipe 1 bleu.
 - Placeholders géométriques uniquement (capsules, ellipsoïde, boîtes), pas d'assets externes.
+- Décor (ciel, stade, foule, ville) : `render/environment/`, géométries procédurales et shaders, réglages
+  `ENVIRONMENT` (palette.ts) ; voir §24.
 - Le marqueur du porteur est rendu sans test de profondeur (visible à travers le relief).
 - Les valeurs purement visuelles (couleurs, épaisseurs de contour, durée de la traînée…) sont dans `render/palette.ts` ;
   tout ce qui touche au feeling (caméra, sensibilités, manette, vibrations) reste dans `src/sim/constants.ts`.
@@ -1741,7 +1743,63 @@ Mode d'emploi et mise en place : `docs/ONLINE.md`.
 - **Client** : `NetClient` (WebSocket, entrées par paquets de `INPUT_BATCH`, ping), session en mode `online`
   (`GameSession.onlineFrame`) : les entrées partent à 30 Hz, l'affichage suit le serveur avec `ONLINE_INTERP_TICKS` de
   retard (interpolation entre les deux instantanés qui l'encadrent, horloge recalée en douceur), les événements sont
-  joués quand l'affichage atteint leur tick (FX, son, vibrations, HUD alignés sur l'image). Pas de prédiction locale
-  pour l'instant. UI : bloc « En ligne » du menu, écran Salon (`Lobby.svelte`), pause et fin adaptées.
+  joués quand l'affichage atteint leur tick (FX, son, vibrations, HUD alignés sur l'image).
+- **Prédiction côté client** (`src/net/predict.ts`, testé) : copie locale complète de l'état ; chaque entrée locale y
+  est appliquée tout de suite (`advance`, autres joueurs en entrée neutre) ; à chaque instantané, on repart de l'état
+  du serveur et on rejoue les entrées non encore accusées (`snap.acks[id]` = numéro de la dernière entrée appliquée,
+  numéros portés par les paquets `input`). Seul le joueur local est affiché depuis la prédiction (interpolé entre ses
+  deux derniers ticks locaux) ; l'écart après réconciliation est résorbé en douceur (`correction`), sauf au-delà de
+  3 m (téléportation, remise en jeu). Gestes du joueur local (tir, saut, esquive, glissade, plongeon, rechargement,
+  capacité) : retours son / FX immédiats, ignorés quand le serveur les renvoie. UI : bloc « En ligne » du menu, écran Salon (`Lobby.svelte`), pause et fin adaptées.
 - **Déploiement** : le workflow Pages déploie le Worker si les secrets Cloudflare existent et injecte son adresse au
   build (`VITE_OVALGUN_SERVER`) ; `?server=` force une adresse (tests en local).
+
+## 24. Décor : ville et ciel
+
+Module `src/render/environment/`, purement visuel (aucune règle, aucune collision, aucune caméra ne change). Le
+Renderer crée un `Environment` une fois (à la place de l'ancien ciel en dégradé et des tribunes en blocs) et appelle
+`build(width, length)` à chaque `setMatch` : stade et ville ne sont reconstruits (instances seulement, l'ancien décor
+libéré) que si la taille du terrain change ; géométries de base, matériaux et atlas sont partagés et libérés au
+`dispose`.
+
+| Fichier | Rôle |
+|---|---|
+| `layout.ts` | PUR (testé) : dimensions du stade (`stadiumLayout`), pylônes, ville déterministe (`cityLayout`). |
+| `rng.ts` | PRNG local (mulberry32) : placement déterministe, sans `Math.random` ni le PRNG de la sim. |
+| `Stadium.ts` | Gradins, escaliers, mur du fond, toits des tribunes latérales, pylônes + projecteurs + halos, panneaux, écrans géants, foule. |
+| `City.ts` | Sol (place, rues, trottoirs), parcs, immeubles, tours, équipements de toit, arbres, voitures, silhouettes lointaines. |
+| `Sky.ts` | Dôme en dégradé avec soleil, nuages low-poly, oiseaux, dirigeable « OVALGUN », montgolfières. |
+| `materials.ts` | Shaders (onBeforeCompile sur Lambert / Basic) : fenêtres, foule, sol, arbres, voitures, halos, silhouettes. |
+| `atlas.ts` | Logo des écrans et 12 publicités inventées dessinés sur un canvas (CanvasTexture, aucune image). |
+
+Décisions :
+
+- **Hors de portée de la caméra** : les tribunes commencent à `ENVIRONMENT.standsGap` (10 m) des murs invisibles ; la
+  caméra épaule n'en sort que d'environ 6 m (testé avec `CAMERA_DISTANCE_CARRY + CAMERA_CARRY_RAISE`). Le sol du
+  FieldView s'arrête sous le premier gradin, le sol de la ville (4 cm plus bas) prend le relais.
+- **Peu d'appels de dessin** : tout ce qui se répète est en `InstancedMesh` avec couleur par instance ; toutes les boîtes
+  du stade (rangs, murs, toit, poteaux, mâts, cadres) tiennent dans UNE seule InstancedMesh, les panneaux et écrans dans
+  une géométrie fusionnée (atlas). Mesuré (`renderer.info.render.calls`, même image rendue avec et sans le décor) :
+  **20 appels de dessin** de plus (18 à 20 selon le regard, les silhouettes et le stade étant découpés par le frustum ;
+  l'ancien ciel + tribunes en coûtait 17), ≈ 160 000 triangles en 3v3 et 175 000 en 5v5 (dont 70 % pour la foule :
+  ≈ 2 200 / 2 500 spectateurs de 48 triangles).
+- **Fenêtres sans texture** : calculées dans le repère de chaque instance (dimensions lues dans `instanceMatrix`, donc
+  en mètres, alignées sur les arêtes : les largeurs sont des multiples de la travée), toit plat coloré tiré par hachage,
+  socle et acrotère sans fenêtres, fenêtres allumées par hachage ; au loin le motif est remplacé par sa couverture
+  moyenne (`fwidth`), sans moiré.
+- **Foule** : le vertex shader fait sauter chaque spectateur (phase et cadence tirées de sa position) d'autant plus haut
+  que l'excitation est forte, et une part croissante lève les bras. Le Renderer calcule l'excitation (`updateCrowd`) :
+  1 à l'événement `'try'` (tenue pendant la pause d'essai) puis descente en `crowdTryDecaySec`, et jusqu'à
+  `crowdNearTryExcitement` quand un porteur est à moins de `crowdNearTryDist` m de la ligne d'essai qu'il attaque ;
+  `Environment` la lisse (montée rapide, descente lente). Animations réduites : bonds à 30 %.
+- **Soleil cohérent** : `ENVIRONMENT.sunDirection` oriente à la fois le disque du ciel et la lumière directionnelle
+  (élévation abaissée de 55° à 38° pour qu'on voie le soleil en levant les yeux). Le brouillard prend la couleur de
+  l'horizon du ciel (`PALETTE.fog` = `ENVIRONMENT.skyHorizon`) et s'étend plus loin (110 -> 480 m) : la ville se fond
+  dans l'horizon, le terrain et les tribunes restent nets.
+- **Ville** : grille d'îlots ; la place autour du stade est calée sur le bord d'une rue (aucun îlot coupé), hauteurs
+  qui croissent avec la distance à la place, tours seulement au-delà de 30 % du rayon, parcs, arbres d'alignement,
+  voitures qui roulent dans le vertex shader sur les rues qui ne traversent pas la place. Mêmes graine et grille pour
+  les deux terrains (seuls stade et place changent).
+- **Limites connues** : la foule ne réagit qu'à l'excitation (pas de couleur de l'équipe qui marque) ; les écrans géants
+  affichent un logo fixe (pas le score) ; les sauts de la foule ne bougent pas ses normales ; vu de l'extérieur (jamais
+  en jeu), l'arrière des tribunes est un simple mur.

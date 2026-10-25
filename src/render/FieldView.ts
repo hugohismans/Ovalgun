@@ -11,7 +11,7 @@
 
 import * as THREE from 'three';
 import { groundHeight, type FieldLayout, type RampFeature, type TerrainFeature, type WallFeature } from '../sim';
-import { PALETTE, STYLE } from './palette';
+import { ENVIRONMENT, PALETTE, STYLE } from './palette';
 
 /** Couleur d'équipe du camp dans lequel se trouve un relief (équipe 0 défend −Z). */
 const sideColor = (f: TerrainFeature): string => PALETTE.teams[f.z < 0 ? 0 : 1].main;
@@ -149,8 +149,10 @@ export class FieldView {
 
   private buildGround(): void {
     const f = this.field;
+    // Sol jusque sous le premier gradin ; au-delà, le sol de la ville (src/render/environment) prend le relais.
+    const margin = 2 * (ENVIRONMENT.standsGap + 1);
     const ground = new THREE.Mesh(
-      this.track(new THREE.PlaneGeometry(f.width * 6, f.length * 4)),
+      this.track(new THREE.PlaneGeometry(f.width + margin, f.length + margin)),
       this.mat(createGroundMaterial(f, false)),
     );
     ground.rotation.x = -Math.PI / 2;

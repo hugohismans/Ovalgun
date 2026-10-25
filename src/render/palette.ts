@@ -20,10 +20,8 @@ export const PALETTE = {
     { main: '#1f8cff', dark: '#0a55c2', light: '#86c6ff' },
   ] as const satisfies readonly [TeamColors, TeamColors],
 
-  skyTop: '#2a6cff',
-  skyHorizon: '#a8eaff',
-  skyBottom: '#d9f6ff',
-  fog: '#c4ecff',
+  /** Brouillard : même teinte que l'horizon du ciel (ENVIRONMENT.skyHorizon) pour fondre la ville au loin. */
+  fog: '#c9ecff',
   hemiSky: '#e8f7ff',
   hemiGround: '#4f8a3c',
   sun: '#fff1d6',
@@ -113,10 +111,6 @@ export const PALETTE = {
   scrumRim: '#ffffff',
   scrumOvertime: '#ffd23e',
   fxScrum: '#ffffff',
-
-  /** Décor lointain autour de l'arène. */
-  backdropA: '#7b5cff',
-  backdropB: '#ff4fa3',
 } as const;
 
 /** Dimensions et réglages purement visuels. */
@@ -162,17 +156,15 @@ export const STYLE = {
   playerShadowMinScale: 0.55,
   ballShadowMinScale: 0.5,
 
-  /** Brouillard : début et fin (m). */
-  fogNear: 70,
-  fogFar: 260,
+  /**
+   * Brouillard : début et fin (m). Le terrain et les tribunes (< 90 m) restent nets ; la ville se fond dans l'horizon
+   * (≈ 50 % de brume à 300 m, fondue dans l'horizon au bord de la ville vers 480 m).
+   */
+  fogNear: 110,
+  fogFar: 480,
   /** Intensités des lumières hémisphérique et directionnelle (soleil). */
   hemiIntensity: 1.5,
   sunIntensity: 1.9,
-  /** Tribunes : distance à la bordure (m), nombre de gradins, profondeur et hauteur d'un gradin (m). */
-  standsGap: 10,
-  standsTiers: 4,
-  standsDepth: 3.2,
-  standsRise: 1.6,
 
   /** Ballon porté : inclinaison (rad, pointe vers le haut). */
   carriedBallTilt: -0.35,
@@ -590,4 +582,243 @@ export const CHARACTER_STYLE = {
   gunForward: 0.08,
   /** Échelle de l'arme tenue (armes « jouet » volumineuses, lisibles de loin). */
   gunScale: 1.45,
+} as const;
+
+/**
+ * Décor autour du terrain (src/render/environment) : ciel, stade, foule et ville. Purement visuel, géométries
+ * procédurales uniquement (aucun asset). Distances en mètres, angles en radians sauf mention contraire. Les couleurs
+ * des équipes viennent de PALETTE.teams. Le décor reste au-delà de `standsGap` mètres des murs invisibles : la caméra
+ * épaule (au plus ≈ 6 m hors du terrain) ne le traverse jamais.
+ */
+export const ENVIRONMENT = {
+  // --- Ciel ---
+  /**
+   * Direction VERS le soleil (normalisée dans le code) : partagée par le disque du ciel et la lumière directionnelle
+   * (Renderer), pour que l'éclairage et le soleil visible concordent. Élévation ≈ 38°, côté +X / −Z.
+   */
+  sunDirection: { x: 18, y: 16, z: -10 },
+  /** Rayon de la sphère du ciel (m ; elle suit la caméra et se dessine toujours au fond). */
+  skyRadius: 500,
+  /** Dégradé du ciel : zénith, milieu, horizon (= brouillard), sous l'horizon. */
+  skyTop: '#1b56f5',
+  skyMid: '#3f9bff',
+  skyHorizon: '#c9ecff',
+  skyBelow: '#d4f1ff',
+  /** Hauteurs (composante verticale de la direction, 0..1) où le milieu, puis le zénith, sont atteints. */
+  skyMidHeight: 0.2,
+  skyTopHeight: 0.85,
+  /** Soleil : cœur, liseré, halo ; rayon du disque et du liseré (degrés). */
+  sunCore: '#fffdf2',
+  sunRim: '#ffe48a',
+  sunHalo: '#fff2c4',
+  sunDiskDeg: 2.4,
+  sunRimDeg: 3.1,
+  /** Halo : exposant (↑ = plus serré) et intensité ; lueur chaude de l'horizon du côté du soleil (intensité). */
+  sunHaloPower: 14,
+  sunHaloStrength: 0.5,
+  sunGlow: '#ffe6c4',
+  sunGlowStrength: 0.45,
+  /** Anneau plat et discret autour du soleil (style cartoon) : rayon (degrés), intensité. */
+  sunRingDeg: 9,
+  sunRingStrength: 0.12,
+
+  /** Nuages : nombre, boules par nuage (min, max), distance au centre, altitude, rayon d'une boule (m). */
+  cloudCount: 18,
+  cloudPuffs: [4, 7] as const,
+  cloudDistance: [170, 430] as const,
+  cloudHeight: [85, 150] as const,
+  cloudPuffSize: [9, 20] as const,
+  /** Nuages : face au soleil / à l'ombre (ombrage plat, sans brouillard) ; dérive (rotation autour du stade, rad/s). */
+  cloudLit: '#ffffff',
+  cloudShade: '#c3d3f7',
+  cloudDriftRate: 0.004,
+
+  /** Oiseaux qui tournent au-dessus du stade : nombre, envergure (m), rayon de l'orbite, altitude, vitesse (rad/s), battements (rad/s). */
+  birdCount: 11,
+  birdSpan: 1.9,
+  birdOrbit: [45, 95] as const,
+  birdHeight: [32, 55] as const,
+  birdSpeed: [0.1, 0.18] as const,
+  birdFlapRate: 9,
+  birdColor: '#2a2643',
+
+  /** Dirigeable : longueur (m), rayon de l'orbite, altitude, vitesse angulaire (rad/s), couleurs. */
+  blimpLength: 28,
+  blimpOrbit: 210,
+  blimpHeight: 82,
+  blimpSpeed: 0.016,
+  blimpBody: '#ffffff',
+  blimpFin: '#1f8cff',
+  blimpNose: '#ff7417',
+  blimpGondola: '#2a2643',
+
+  /** Montgolfières au loin : rayon de l'enveloppe (m), distance, altitude, dérive (rad/s), couleurs (bandes alternées avec le blanc). */
+  balloonRadius: 9,
+  balloonDistance: [240, 330] as const,
+  balloonHeight: [55, 105] as const,
+  balloonDrift: 0.01,
+  balloonColors: ['#ff4fa3', '#ffe12e', '#3dffa0', '#7b5cff'] as const,
+  balloonBasket: '#8a5a3c',
+
+  // --- Stade ---
+  /** Distance entre la bordure du terrain et le premier gradin (m) : la caméra épaule ne va jamais jusque-là. */
+  standsGap: 10,
+  /** Gradins : nombre de rangs, profondeur et hauteur d'un rang, hauteur du muret avant (porte les panneaux). */
+  standsRows: 9,
+  standsRowDepth: 1.5,
+  standsRowRise: 0.7,
+  standsFrontWall: 1.3,
+  /** Mur du fond : hauteur au-dessus du dernier rang, épaisseur. */
+  backWallExtra: 1.8,
+  backWallThickness: 0.8,
+  /** Sièges des tribunes latérales (alternés par rang) ; muret avant ; mur du fond et son bandeau haut. */
+  sidelineSeats: ['#7b5cff', '#ff4fa3'] as const,
+  frontWallColor: '#2a2643',
+  backWallColor: '#ece7ff',
+  backWallBand: '#2a2643',
+  /** Escaliers : un tous les `aisleEvery` m, largeur, couleur. */
+  aisleEvery: 16,
+  aisleWidth: 1.3,
+  aisleColor: '#f4f1ff',
+  /**
+   * Toit des tribunes latérales (le long des touches) : hauteur au-dessus du dernier rang, part des gradins couverte
+   * (depuis le fond), épaisseur, inclinaison (bord avant relevé), bandeau avant (hauteur, couleur), poteaux (espacement).
+   */
+  roofLift: 5.5,
+  roofCover: 0.72,
+  roofThickness: 0.45,
+  roofTilt: 0.1,
+  roofColor: '#f7f5ff',
+  roofFasciaHeight: 1.3,
+  roofFascia: '#ff4fa3',
+  roofColumnEvery: 12,
+  roofColumnColor: '#d6d0f0',
+  /**
+   * Éclaircissement émissif des boîtes du stade (fraction de leur couleur) : partout (faces à l'ombre moins ternes) et
+   * en plus sur les faces tournées vers le bas (dessous du toit : la lumière hémisphérique du sol, verte, le salissait).
+   */
+  standsLift: 0.22,
+  undersideLift: 0.55,
+  /** Pylônes d'éclairage aux 4 coins : hauteur, recul derrière l'angle des tribunes, couleurs du mât et de la tête. */
+  pylonHeight: 34,
+  pylonOffset: 4,
+  pylonColor: '#d3d6ea',
+  pylonHeadColor: '#2a2643',
+  /** Projecteurs : grille (colonnes × rangées), couleur, inclinaison de la tête vers le terrain. */
+  lampCols: 4,
+  lampRows: 3,
+  lampColor: '#fffbe3',
+  pylonTilt: 0.42,
+  /** Halo des projecteurs (billboard additif) : couleur, taille (m), opacité. */
+  glowColor: '#fff4c2',
+  glowSize: 11,
+  glowOpacity: 0.32,
+  /** Panneaux publicitaires sur le muret avant : longueur, hauteur, espace entre deux panneaux. */
+  adLength: 5.4,
+  adHeight: 0.95,
+  adGap: 0.12,
+  /** Écrans géants derrière les en-buts : largeur max (m) et part de la largeur du terrain, rapport hauteur / largeur, hauteur au-dessus du mur, cadre. */
+  screenWidth: 18,
+  screenWidthShare: 0.42,
+  screenAspect: 0.42,
+  screenLift: 0.6,
+  screenFrame: '#17142a',
+
+  // --- Foule ---
+  /** Espacement des spectateurs le long d'un rang (m), taux de remplissage (0..1), échelle (personnages cartoon un peu grands). */
+  crowdSpacing: 0.9,
+  crowdFill: 0.68,
+  crowdScale: 1.2,
+  /** Derrière les en-buts : part des supporters à la couleur de l'équipe qui défend cet en-but ; le long des touches : par équipe. */
+  crowdTeamShareEnds: 0.72,
+  crowdTeamShareSides: 0.28,
+  /** Maillots des spectateurs neutres ; teints de peau ; pantalons. */
+  crowdColors: ['#ffe12e', '#3dffa0', '#ff4fa3', '#7b5cff', '#ffffff', '#2bd9ff', '#ff3d5a', '#b5ff4d'] as const,
+  skinTones: ['#ffd9b8', '#e0a979', '#9c6a46'] as const,
+  pantsColor: '#2a2643',
+  /** Éclaircissement émissif de la foule (fraction de sa couleur) : souvent à contre-jour, elle reste vive. */
+  crowdLift: 0.32,
+  /** Bonds (m) : au repos (une partie de la foule), à l'excitation max ; cadence (rad/s). */
+  jumpIdle: 0.06,
+  jumpMax: 0.6,
+  jumpRate: 7,
+  /** Excitation : au repos, après un essai (1) qui redescend en `crowdTryDecaySec` s, porteur à moins de `crowdNearTryDist` m de l'en-but adverse. */
+  crowdIdleExcitement: 0.12,
+  crowdTryDecaySec: 4.5,
+  crowdNearTryDist: 18,
+  crowdNearTryExcitement: 0.55,
+  /** Lissage de l'excitation : montée, descente (1/s). */
+  crowdRiseRate: 5,
+  crowdFallRate: 1.2,
+
+  // --- Ville ---
+  /** Graine du placement (PRNG local, déterministe). */
+  citySeed: 20261025,
+  /** Marge entre l'arrière des tribunes et la ville (la place est ensuite calée sur la grille des rues). */
+  plazaMargin: 12,
+  /** Grille : pas des îlots (rue comprise), largeur des rues, des trottoirs ; rayon de la ville. */
+  cityBlock: 36,
+  cityStreet: 9,
+  citySidewalk: 1.8,
+  cityRadius: 340,
+  /** Part des îlots en parcs. */
+  parkShare: 0.12,
+  /** Hauteurs (m) : près de la place (min, max), au bord de la ville (min, max). */
+  heightNear: [10, 22] as const,
+  heightFar: [34, 95] as const,
+  /**
+   * Tours : probabilité près / loin (aucune avant `towerMinT` : part du chemin entre la place et le bord de la ville),
+   * multiplicateur de hauteur et hauteur ajoutée (m).
+   */
+  towerShareNear: 0,
+  towerShareFar: 0.24,
+  towerMinT: 0.3,
+  towerBoost: 1.5,
+  towerExtra: 14,
+  /** Fenêtres (shader) : largeur d'une travée et hauteur d'un étage (m), socle sans fenêtres, acrotère. */
+  windowCell: [2.6, 3.4] as const,
+  windowBase: 3.6,
+  windowParapet: 1.1,
+  /** Fenêtres allumées : part (0..1), intensité émissive. */
+  windowLitShare: 0.1,
+  windowGlow: 0.35,
+  /** Vitres (sombre, reflet du ciel), fenêtre allumée, assombrissement du socle (facteur). */
+  glass: '#5563bf',
+  glassHi: '#bdf1ff',
+  windowLit: '#ffe39a',
+  baseShade: 0.8,
+  /** Éclaircissement émissif des façades (fraction de leur couleur) : les faces à l'ombre restent pastel. */
+  facadeLift: 0.18,
+  /** Façades des immeubles (pastel et saturées), des tours (verre teinté) ; toits plats colorés. */
+  facades: ['#ffd3df', '#ffe7b3', '#c4f1e2', '#cddfff', '#e4d2ff', '#fff3c9', '#ff9f73', '#7fd0ff', '#a594ff', '#62d4a8'] as const,
+  towerFacades: ['#5fa8ff', '#7ee0e8', '#9f8cff', '#ff8fb8', '#5ccfb4'] as const,
+  roofs: ['#ff4fa3', '#ffd23e', '#3dd6a0', '#8f7bff'] as const,
+  /** Équipements de toit (climatiseurs, réservoirs, antennes). */
+  roofProps: ['#f2efff', '#c9c3e6', '#ff7a5c', '#2a2643'] as const,
+  /** Sol : chaussée, marquage, trottoir, parcelle, place du stade (dallage en damier), parc. */
+  road: '#5d5a7a',
+  roadMark: '#f4f1ff',
+  sidewalk: '#dad4ea',
+  lot: '#ebe2d3',
+  plazaA: '#f0eaf7',
+  plazaB: '#e3dbf0',
+  park: '#79d16a',
+  /** Arbres : feuillages (verts, plus quelques cerisiers roses), tronc ; espacement le long de la place (m). */
+  treeGreens: ['#4fc95c', '#3fb65a', '#6fdc5f', '#2fa676', '#ff9fc6'] as const,
+  trunk: '#8a5a3c',
+  treeSpacing: 9,
+  /** Voitures : couleurs, vitesse (m/s, min et max), voitures par voie. */
+  carColors: ['#ff4d6d', '#ffe12e', '#1f8cff', '#ffffff', '#3dffa0', '#ff7417', '#7b5cff'] as const,
+  carSpeed: [7, 13] as const,
+  carsPerLane: 3,
+  /**
+   * Silhouettes lointaines (sans brouillard) : nombre, distance, largeur, hauteur, couleurs du sommet ; le pied se fond
+   * dans la couleur de l'horizon (`skylineHaze` : part de l'horizon au sommet).
+   */
+  skylineCount: 56,
+  skylineDistance: [500, 650] as const,
+  skylineWidth: [14, 34] as const,
+  skylineHeight: [40, 150] as const,
+  skylineColors: ['#93b2e6', '#a3b5ea', '#8eaee0', '#a9c0ee'] as const,
+  skylineHaze: 0.25,
 } as const;

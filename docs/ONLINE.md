@@ -11,8 +11,9 @@
   bots qui complètent les équipes, puis lance la partie. Jusqu'à 10 joueurs humains (5v5). À la fin du match, retour au
   salon pour la revanche. Un joueur qui part en cours de match est remplacé par un bot.
 - Pas encore de comptes ni de liste de salons publique (Firebase, plus tard) : on joue entre amis avec le lien.
-- Pas encore de prédiction côté client : tes déplacements s'affichent avec le ping + ~170 ms (la caméra, elle, suit la
-  souris sans retard). Suffisant pour tester ; la prédiction est la prochaine étape si le ressenti l'exige.
+- **Prédiction côté client** : ton personnage réagit immédiatement (le client applique tes entrées tout de suite et se
+  recale en douceur sur le serveur à chaque instantané). Les autres joueurs, le ballon, les tirs et les plaquages
+  restent décidés par le serveur et s'affichent avec ~170 ms de retard lissé.
 
 ## À faire une fois (≈ 10 minutes)
 

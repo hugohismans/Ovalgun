@@ -447,5 +447,12 @@ export class CharacterModel {
     this.mixer.uncacheRoot(this.model);
     for (const m of this.materials) m.dispose();
     for (const g of this.geometries) g.dispose();
+    // Squelettes clonés (SkeletonUtils.clone) : leur texture d'os GPU n'est libérée que par skeleton.dispose()
+    // (sinon ~10 textures fuient par joueur à chaque match). Le contour partage le squelette de son maillage.
+    const skeletons = new Set<THREE.Skeleton>();
+    this.model.traverse((o) => {
+      if (o instanceof THREE.SkinnedMesh) skeletons.add(o.skeleton);
+    });
+    for (const sk of skeletons) sk.dispose();
   }
 }
