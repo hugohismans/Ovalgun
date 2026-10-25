@@ -79,6 +79,9 @@ describe('effets et indicateurs du porteur (étape 4)', () => {
     expect(fxForEvent({ type: 'dive', playerId: 1 }, s)?.rings).toBe(FX.dive);
     expect(fxForEvent({ type: 'pass', fromId: 1, toId: 2 }, s)?.rings).toBe(FX.pass);
     expect(fxForEvent({ type: 'pass_denied', playerId: 1 }, s)?.rings).toBe(FX.passDenied);
+    // Étape 6 : essai, ancré sur le marqueur.
+    expect(fxForEvent({ type: 'try', team: 1, scorerId: 4 }, s)?.rings).toBe(FX.try);
+    expect(fxForEvent({ type: 'try', team: 1, scorerId: 4 }, s)?.ground).toEqual({ x: 3, y: 0, z: -2 });
     expect(fxForEvent({ type: 'jump', playerId: 1, air: false }, s)).toBeNull();
     expect(fxForEvent({ type: 'pickup', playerId: 99 }, s)).toBeNull();
   });

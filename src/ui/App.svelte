@@ -1,14 +1,25 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { GameSession, type FrameSnapshot } from '../game/session';
+  import { GameSession, DEFAULT_BOT_DIFFICULTY, type BotDifficulty, type FrameSnapshot, type TeamSize } from '../game/session';
+  import { TEAM_COLORS } from '../game/matchHud';
   import { actionLabel, ACTION_LABELS, DEFAULT_KEYMAP, loadLayoutLabels, type Action, type LayoutLabels } from '../input/keymap';
   import { DEFAULT_GAMEPAD_MAP, padActionGlyph, type GamepadAction } from '../input/gamepadMap';
 
   // Étape 3 : partie fixe 3v3, humain ailier, seed fixe. Le menu de lancement arrive à l'étape 8.
+  // Étape 6 : vrai match (chrono, essais, fin) ; ?training => mode entraînement (chrono figé, outils de test).
   const PARAMS = new URLSearchParams(window.location.search);
   const DEBUG = PARAMS.has('debug');
-  // Étape 5 : adversaires = tourelles d'entraînement qui tirent ; ?dummies=off => cibles passives.
-  const DUMMIES = PARAMS.get('dummies') !== 'off';
+  const TRAINING = PARAMS.has('training');
+  // Étape 6 : tous les autres joueurs sont des bots ; ?dummies=off => joueurs passifs (réglage du plaquage).
+  const PASSIVE = PARAMS.get('dummies') === 'off';
+  // Difficulté des bots (en attendant le menu de l'étape 8) : ?difficulty=facile|normal|difficile.
+  const DIFFICULTY_PARAM = PARAMS.get('difficulty');
+  const DIFFICULTY: BotDifficulty =
+    DIFFICULTY_PARAM === 'facile' || DIFFICULTY_PARAM === 'normal' || DIFFICULTY_PARAM === 'difficile' ? DIFFICULTY_PARAM : DEFAULT_BOT_DIFFICULTY;
+  // ?debug&autopilot : le joueur 0 est aussi un bot (observer un match bots contre bots).
+  const AUTOPILOT = DEBUG && PARAMS.has('autopilot');
+  // Taille d'équipe (en attendant le menu de l'étape 8) : ?size=5 pour du 5v5.
+  const TEAM_SIZE: TeamSize = PARAMS.get('size') === '5' ? 5 : 3;
 
   let canvas: HTMLCanvasElement;
   let session: GameSession | null = null;
@@ -27,7 +38,16 @@
   let hud = $state<FrameSnapshot | null>(null);
 
   onMount(() => {
-    const s = new GameSession(canvas, { teamSize: 3, humanRole: 'ailier', seed: 1234, training: true, debug: DEBUG, dummies: DUMMIES });
+    const s = new GameSession(canvas, {
+      teamSize: TEAM_SIZE,
+      humanRole: 'ailier',
+      seed: 1234,
+      training: TRAINING,
+      debug: DEBUG,
+      difficulty: DIFFICULTY,
+      passive: PASSIVE,
+      autopilot: AUTOPILOT,
+    });
     session = s;
     s.onFrame = (snap) => {
       // Drapeaux d'overlay : immédiats. Texte de debug : ~10 Hz.
@@ -94,6 +114,24 @@
     session?.requestPlay();
   }
 
+  /** Écran de fin : relance un match (bouton, Entrée / Espace ; A à la manette est géré par la session). */
+  function replay(): void {
+    if (session === null || !session.ended || !(hud?.match.final?.canReplay ?? false)) return;
+    session.restart();
+    session.requestPlay();
+  }
+
+  function onWindowKey(e: KeyboardEvent): void {
+    if (e.repeat || hud?.match.final == null) return;
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      replay();
+    }
+  }
+
+  const OUTCOME: Record<string, string> = { win: 'VICTOIRE', loss: 'DÉFAITE', draw: 'ÉGALITÉ' };
+  const acc = (a: number | null): string => (a === null ? '—' : `${Math.round(a * 100)} %`);
+
   /** Libellé d'un cooldown : « prêt » ou secondes restantes. */
   const cd = (sec: number, ready = 'prêt'): string => (sec > 0.05 ? sec.toFixed(1) + ' s' : ready);
   const pct = (x: number): string => `${Math.max(0, Math.min(1, x)) * 100}%`;
@@ -108,9 +146,82 @@
   };
 </script>
 
+<svelte:window onkeydown={onWindowKey} />
+
 <canvas bind:this={canvas}></canvas>
 
-{#if !paused && hud}
+{#if !paused && hud && !hud.match.final}
+  {@const m = hud.match}
+  <div class="scorebar" style:--t0={TEAM_COLORS[0]} style:--t1={TEAM_COLORS[1]}>
+    <span class="team t0" class:mine={m.localTeam === 0}>{m.teamNames[0]}</span>
+    <b class="sc t0">{m.score[0]}</b>
+    <span class="clock" class:last={m.lastMinute}>{m.training ? 'ENTRAÎNEMENT' : m.clock}</span>
+    <b class="sc t1">{m.score[1]}</b>
+    <span class="team t1" class:mine={m.localTeam === 1}>{m.teamNames[1]}</span>
+  </div>
+  {#if m.lastMinute && !m.training}
+    <div class="lmtag">DERNIÈRE MINUTE</div>
+  {/if}
+  {#if m.lastMinuteBanner}
+    <div class="banner lm">DERNIÈRE MINUTE</div>
+  {/if}
+  {#if m.countdown > 0}
+    <div class="countdown">
+      {#key m.countdown}<span class="num">{m.countdown}</span>{/key}
+      <span class="sub" style:color={TEAM_COLORS[m.kickoffTeam]}>
+        Coup d’envoi : {m.teamNames[m.kickoffTeam]}{m.kickoffTeam === m.localTeam ? ' (ton équipe)' : ''}
+      </span>
+    </div>
+  {:else if m.playCall}
+    <div class="countdown"><span class="num go">JOUEZ !</span></div>
+  {/if}
+  {#if m.tryBanner}
+    {@const t = m.tryBanner}
+    <div class="banner try" style:--tc={TEAM_COLORS[t.team]}>
+      <span class="big">ESSAI !</span>
+      <span class="who">{t.teamName} · {t.mine ? 'toi !' : t.scorerLabel}</span>
+      <span class="sc"><b style:color={TEAM_COLORS[0]}>{t.score[0]}</b> – <b style:color={TEAM_COLORS[1]}>{t.score[1]}</b></span>
+    </div>
+  {/if}
+{/if}
+
+{#if hud?.match.final}
+  {@const f = hud.match.final}
+  {@const m = hud.match}
+  <div class="overlay end">
+    <div class="card endcard">
+      <h1 class="outcome {f.outcome}">{OUTCOME[f.outcome]}</h1>
+      <div class="final">
+        <span style:color={TEAM_COLORS[0]}>{m.teamNames[0]}</span>
+        <b>{f.score[0]}</b><span class="dash">–</span><b>{f.score[1]}</b>
+        <span style:color={TEAM_COLORS[1]}>{m.teamNames[1]}</span>
+      </div>
+      <table class="stats">
+        <thead>
+          <tr><th>Joueur</th><th>Essais</th><th>Plaquages</th><th>Passes</th><th>Interc.</th><th>Précision</th></tr>
+        </thead>
+        <tbody>
+          {#each f.players as p (p.id)}
+            <tr class:me={p.local} style:--tc={TEAM_COLORS[p.team]}>
+              <td class="who"><i></i>{p.roleLabel} #{p.id}{p.local ? ' (toi)' : ''}</td>
+              <td>{p.tries}</td>
+              <td>{p.tackles}</td>
+              <td>{p.passes}</td>
+              <td>{p.interceptions}</td>
+              <td>{acc(p.accuracy)}</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+      <button class="replay" disabled={!f.canReplay} onclick={replay}>Rejouer</button>
+      <p class="hint">
+        {#if showPad}<kbd>{padActionGlyph(DEFAULT_GAMEPAD_MAP, 'jump', padStyle)}</kbd> pour rejouer{:else}<kbd>Entrée</kbd> ou clic pour rejouer{/if}
+      </p>
+    </div>
+  </div>
+{/if}
+
+{#if !paused && hud && !hud.match.final}
   {#if hud.combat.vignette > 0.01}
     <div class="vignette" style:opacity={hud.combat.vignette}></div>
   {/if}
@@ -514,6 +625,219 @@
       transform: translateX(-50%) scale(1);
       opacity: 1;
     }
+  }
+  /* Boucle de match (étape 6) : score / chrono, compte à rebours, bannières, écran de fin. */
+  .scorebar {
+    position: fixed;
+    left: 50%;
+    top: 12px;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 5px 14px;
+    border-radius: 12px;
+    background: #0d1030c8;
+    color: #fff;
+    font: 800 15px/1.2 system-ui, sans-serif;
+    pointer-events: none;
+    white-space: nowrap;
+  }
+  .scorebar .team {
+    opacity: 0.85;
+  }
+  .scorebar .team.mine {
+    opacity: 1;
+    text-decoration: underline 2px;
+    text-underline-offset: 3px;
+  }
+  .scorebar .t0 {
+    color: var(--t0);
+  }
+  .scorebar .t1 {
+    color: var(--t1);
+  }
+  .scorebar .sc {
+    min-width: 22px;
+    text-align: center;
+    font: 900 24px/1 system-ui, sans-serif;
+  }
+  .scorebar .clock {
+    min-width: 64px;
+    padding: 2px 8px;
+    border-radius: 8px;
+    background: #ffffff1c;
+    text-align: center;
+    font: 900 20px/1.1 ui-monospace, monospace;
+  }
+  .scorebar .clock.last {
+    color: #ff6b84;
+    animation: low-pulse 0.6s ease-in-out infinite alternate;
+  }
+  .lmtag {
+    position: fixed;
+    left: 50%;
+    top: 52px;
+    transform: translateX(-50%);
+    padding: 2px 10px;
+    border-radius: 8px;
+    background: #ff3d5acc;
+    color: #fff;
+    font: 900 12px/1.3 system-ui, sans-serif;
+    letter-spacing: 1px;
+    pointer-events: none;
+  }
+  .countdown {
+    position: fixed;
+    left: 50%;
+    top: 24%;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    pointer-events: none;
+    color: #fff;
+    text-shadow:
+      0 4px 0 #0d1030,
+      0 0 18px #0d1030aa;
+  }
+  .countdown .num {
+    font: 900 96px/1 system-ui, sans-serif;
+    animation: count-pop 0.35s ease-out;
+  }
+  .countdown .num.go {
+    font-size: 72px;
+    color: #3dffa0;
+  }
+  .countdown .sub {
+    padding: 3px 12px;
+    border-radius: 10px;
+    background: #0d1030c8;
+    font: 800 16px/1.3 system-ui, sans-serif;
+    text-shadow: none;
+  }
+  @keyframes count-pop {
+    from {
+      transform: scale(1.6);
+      opacity: 0;
+    }
+    to {
+      transform: scale(1);
+      opacity: 1;
+    }
+  }
+  .banner {
+    position: fixed;
+    left: 50%;
+    transform: translateX(-50%);
+    pointer-events: none;
+    color: #fff;
+    text-align: center;
+    animation: count-pop 0.3s ease-out;
+  }
+  .banner.lm {
+    top: 40%;
+    padding: 6px 22px;
+    border-radius: 12px;
+    background: #ff3d5ad8;
+    font: 900 34px/1.2 system-ui, sans-serif;
+    letter-spacing: 2px;
+  }
+  .banner.try {
+    top: 20%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 10px 34px 12px;
+    border-radius: 18px;
+    background: #0d1030d8;
+    box-shadow: inset 0 0 0 4px var(--tc);
+  }
+  .banner.try .big {
+    font: 900 72px/1 system-ui, sans-serif;
+    color: var(--tc);
+    text-shadow: 3px 3px 0 #fff3;
+  }
+  .banner.try .who {
+    font: 800 20px/1.2 system-ui, sans-serif;
+  }
+  .banner.try .sc {
+    font: 900 30px/1.2 system-ui, sans-serif;
+  }
+  .overlay.end {
+    cursor: default;
+  }
+  .endcard {
+    min-width: 480px;
+  }
+  .outcome.win {
+    color: #19b86b;
+  }
+  .outcome.loss {
+    color: #e0294a;
+  }
+  .outcome.draw {
+    color: #6b6890;
+  }
+  .final {
+    display: flex;
+    justify-content: center;
+    align-items: baseline;
+    gap: 12px;
+    margin: 10px 0 14px;
+    font: 900 22px/1.2 system-ui, sans-serif;
+  }
+  .final b {
+    font-size: 40px;
+  }
+  .final .dash {
+    opacity: 0.5;
+  }
+  .stats {
+    width: 100%;
+    font-size: 14px;
+  }
+  .stats th {
+    padding: 2px 8px;
+    font: 700 12px/1.4 system-ui, sans-serif;
+    opacity: 0.6;
+    text-align: right;
+  }
+  .stats th:first-child,
+  .stats td.who {
+    text-align: left;
+  }
+  .stats td {
+    text-align: right;
+  }
+  .stats td.who i {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    margin-right: 6px;
+    border-radius: 50%;
+    background: var(--tc);
+  }
+  .stats tr.me {
+    font-weight: 800;
+    background: #ffe12e44;
+  }
+  .replay {
+    margin-top: 16px;
+    padding: 10px 34px;
+    border: 0;
+    border-radius: 12px;
+    background: #ff7417;
+    color: #fff;
+    font: 900 20px/1.2 system-ui, sans-serif;
+    box-shadow: 0 5px 0 #c94a00;
+    cursor: pointer;
+  }
+  .replay:disabled {
+    opacity: 0.5;
+    cursor: default;
   }
   .overlay {
     position: fixed;

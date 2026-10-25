@@ -8,7 +8,8 @@
  *
  * Événements branchés : atterrissage brutal (étape 3) ; réception / ramassage du ballon, interception
  * réussie, passe interceptée (étape 4 ; un coup de pied réceptionné par l'adversaire n'en est pas une) ;
- * tir reçu (léger), plaquage subi (fort), plaquage réussi (court) — étape 5. L'essai arrive à l'étape 6.
+ * tir reçu (léger), plaquage subi (fort), plaquage réussi (court) — étape 5 ; essai marqué par son équipe / encaissé,
+ * fin du match — étape 6.
  */
 
 import {
@@ -37,6 +38,8 @@ export function rumbleCueFor(e: MatchEvent, localId: number, localTeam: TeamId):
       return e.playerId === localId ? 'catch' : null;
     case 'try':
       return e.team === localTeam ? 'try' : 'tryConceded';
+    case 'match_end':
+      return 'matchEnd';
     case 'land':
       return e.playerId === localId && e.speed >= RUMBLE_HARD_LANDING_SPEED ? 'hardLanding' : null;
     default:

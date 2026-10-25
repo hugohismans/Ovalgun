@@ -403,3 +403,83 @@ Porteur ailier boosté au sprint : ≈ 13,9 m/s, contre 10,7 m/s pour un ailier 
 
 Réglages purement visuels (traceurs, convergence vers le canon, flashs, étincelles, clignotement, barres de stabilité, chute,
 étoiles, durées du hitmarker et des indicateurs, seuil de la vignette) : `src/render/palette.ts` (`PALETTE`, `STYLE`, `FX`).
+
+## Étape 6 — boucle de match complète et bots
+
+Un vrai match de 6 minutes : coup d'envoi, essais, remises en jeu, chrono, dernière minute, fin et « Rejouer ». Tous les joueurs non
+humains (tes coéquipiers ET les adversaires) sont des bots qui lisent l'état du match et produisent une entrée comme toi (section BOTS
+de `src/sim/constants.ts`). Clavier/souris et manette marchent partout, y compris sur l'écran de fin.
+
+### Comment tester
+
+1. **Tests automatiques** : `npm test`. Boucle de match : `tests/sim/rules.test.ts` (placement 3v3 / 5v5, décomptes au tick près — 3 s au
+   premier coup d'envoi, 2 s aux remises en jeu —, essais en courant et en plongeon pour les deux équipes, **plaqué au tick où il franchit
+   la ligne = essai**, plaqué avant = ballon lâché, ballon ramassé dans l'en-but, pause d'essai, remise à zéro, receveur désigné
+   `kickoffReceivers`, entrée à −0, chrono, dernière minute, fin, entraînement, match complet scripté déterministe) et
+   `tests/game/matchHud.test.ts` (HUD). Bots : `tests/bots` (pureté, déterminisme d'un match complet, matchs de 6 min en 3v3 et 5v5 sur trois
+   seeds avec **bornes de rythme** — essais, part du ballon porté, joueurs au sol, coups de pied —, état et mémoires sans NaN / −0,
+   comportements construits — passe sous pression, coup de pied encerclé, plongeon, esquive, pression, marquage, course au ballon, **joueur
+   humain externe** —, difficulté : précision, réaction, écart de score entre niveaux).
+2. **Match complet** : `npm run dev`, ouvrir l'URL (`?debug` pour jouer sans pointer lock). Clic (ou A à la manette) : décompte « 3, 2, 1 »
+   (joueurs figés, on peut regarder autour), « JOUEZ ! ». **Tu reçois le ballon** au coup d'envoi (et à chaque remise en jeu de ton équipe).
+   Cours (ZQSD / stick gauche, sprint Maj maintenu / L3), esquive (Maj tapé / B), passe en arrière (E / RB), coup de pied (F / Y), plongeon
+   (C / X).
+3. **Essai** : franchir la ligne adverse avec le ballon (ou plonger sur les derniers mètres). Bannière « ESSAI ! », anneaux dorés,
+   vibration ; 2 s plus tard, remise en jeu (« 2, 1 ») : l'équipe qui a encaissé reçoit sur sa ligne, l'autre se replace derrière la
+   médiane, ta caméra est retournée face à l'en-but adverse.
+4. **Dernière minute et fin** : en `?debug`, dans la console : `__ovalgun.session.state.clockTicks = 1900` (chrono rouge, bannière
+   « DERNIÈRE MINUTE »), puis `= 30` (fin dans une seconde). Écran de fin : résultat, score, statistiques par joueur. **Rejouer** : bouton
+   (souris), Entrée / Espace, ou A à la manette (après 1 s). À la fin, ni Échap / Start ni une manette débranchée ne mettent en pause.
+5. **Difficultés** : `?difficulty=facile|normal|difficile` (défaut normal) ; `&size=5` pour du 5v5.
+6. **Observer** : `?debug&autopilot` — ton joueur est aussi un bot, la caméra le suit (match bots contre bots). Combiner avec `&size=5` et
+   `&difficulty=…` pour comparer. `?dummies=off` : tous les autres joueurs passifs (réglage du plaquage, comme à l'étape 5) ; `?training` :
+   entraînement (chrono figé, G / B pour le ballon).
+
+### Ce qu'on doit voir / ressentir
+
+- Le chrono ne bouge pas pendant les décomptes et les pauses d'essai ; rouge à 1:00. Un essai dans la dernière seconde compte. Plaqué
+  pile en franchissant la ligne, l'essai est accordé (tu tombes après).
+- Porteur bot : il avance en contournant les défenseurs, sprinte quand c'est libre, esquive quand on lui tire dessus ou au contact, passe
+  en arrière quand il est pressé et qu'un soutien est libre, tape rarement (encerclé, sans passe, et seulement vers un point où son équipe
+  arrive la première — jamais dans l'en-but), plonge pour marquer.
+- Défense : un dernier défenseur reste toujours devant le porteur et lui tire dessus ; un ou deux défenseurs convergent ; les autres
+  collent les receveurs côté en-but. Juste après une remise en jeu, un seul défenseur monte : on a le temps de lancer le jeu.
+- Ballon libre : deux joueurs de chaque équipe sprintent au ballon sans tirer (ils ne tirent que s'ils sont battus de vitesse) ; les
+  autres gardent leur place. Le feu est surtout concentré sur le porteur : peu de joueurs au sol.
+- Tes coéquipiers savent que tu es humain : si tu restes en retrait, un bot presse ou va au ballon à ta place.
+- **Mesures** (bots contre bots, 6 min, seeds 1 à 4, normal ; avant -> après la correction de l'étape 6) : 3v3 ≈ 33 essais par match
+  (26 avant), ballon porté 74 % du temps de jeu (41 %), 10 % de joueurs au sol (21 %), 27 % du temps réel figé (31 %), ≈ 3 coups de pied
+  (43), 64 % des plaquages sur le porteur (13 %), précision 58 % (73 %). 5v5 ≈ 16,5 essais (18), porté 56 % (34 %), au sol 12 % (25 %), figé
+  16 % (24 %), ≈ 4 coups de pied (27). Précision facile / normal / difficile ≈ 45 / 57 / 65 %. Entre niveaux voisins, le plus faible marque
+  ≈ 15–40 % des points du plus fort. En 3v3 le rythme reste très arcade tant que le demi n'a pas d'arme (étape 7).
+
+### Constantes utiles pour ajuster le feeling
+
+| Constante | Effet | Valeur actuelle | Piste de réglage |
+|---|---|---|---|
+| `MATCH_DURATION_SEC` | Durée d'un match | 360 s | 180 pour des parties de test rapides |
+| `FIRST_KICKOFF_FREEZE_SEC` / `KICKOFF_FREEZE_SEC` | Décompte du premier coup d'envoi / des remises en jeu (figés) | 3 s / 2 s | 1,5 s aux remises en jeu pour relancer encore plus vite |
+| `TRY_PAUSE_SEC` | Pause de célébration après un essai (figés) | 2 s | 3 s si l'essai ne « respire » pas assez |
+| `KICKOFF_RECEIVE_OFFSET` / `KICKOFF_DEFEND_OFFSET` | Lignes de la remise en jeu (×échelle) : devant sa ligne / derrière la médiane | 4 m / 6 m | Défense à 8 m pour plus d'espace à la première course |
+| `TRY_POINTS` / `FIRST_KICKOFF_TEAM` | Points d'un essai / équipe du premier coup d'envoi | 5 / 0 (la tienne) | 1 pour commencer en défense |
+| `LAST_MINUTE_SEC` / `LAST_MINUTE_COOLDOWN_MULT` / `LAST_MINUTE_BALL_SPEED_MULT` | Dernière minute | 60 s / 0,7 / 1,12 | Cooldowns 0,6 pour une fin plus frénétique |
+| `BOT_DIFFICULTY.<niveau>.reactionSec` | Temps de réaction (possession, nouvelle cible, premier réflexe) | 0,5 / 0,32 / 0,22 s | Facile trop dur : 0,65 s |
+| `BOT_DIFFICULTY.<niveau>.aimErrorDeg` / `.aimErrorM` | Erreur de visée (angle plancher / décalage latéral de près) | 5 / 3,5 / 2,5° ; 1 / 0,7 / 0,5 m | Le levier principal de la précision (cible : ≈ 35 / 50 / 65 %) |
+| `BOT_DIFFICULTY.<niveau>.engageRangeMult` / `.burstPauseMult` | Portée de tir / pauses entre rafales | 0,75 / 0,85 / 0,95 ; × 1,3 / 1 / 0,9 | Pauses plus longues = moins de pression |
+| `BOT_DIFFICULTY.<niveau>.dodgeReflex` / `.leadFraction` / `.turnRateDeg` | Esquive sous le feu / avance sur cible / rotation | 0,4 / 0,8 / 1,2 par s ; 40 / 80 / 100 % ; 300 / 420 / 600 °/s | Écart entre niveaux trop grand : rapprocher ces valeurs (elles se cumulent) |
+| `BOT_COVER_MIN_DEFENDERS` / `BOT_COVER_DEPTH` | Dernier défenseur toujours gardé (dès N bots) / sa profondeur (×échelle) | 3 / 18 m | Trop d'essais : profondeur 22 m ; défense trop passive : MIN 4 |
+| `BOT_PRESSERS_3V3` / `_5V5` / `BOT_PRESSERS_OWN_THIRD` | Défenseurs qui convergent / juste après une remise en jeu | 2 / 2 / 1 | 1 en 3v3 pour une défense moins étouffante |
+| `BOT_ROLE_HYSTERESIS_M` / `BOT_LEAD_SPEED_CAP_MULT` | Stabilité des rôles / anticipation plafonnée (pas de suivi des esquives) | 1,5 m / 1,2 | Rôles qui « clignotent » : 2,5 m |
+| `BOT_RESTRAINED_PAUSE_MULT` / `BOT_ESCORT_THREAT_DIST` | Discipline de tir hors pression / distance d'une menace directe | 2,5 / 8 m | Trop de joueurs au sol : 3,5 / 6 m |
+| `BOT_MARK_SHOOT_CARRIER_DIST` | Un marqueur tire sur le porteur plus proche que ça | 14 m | Baisser pour laisser plus de champ au porteur |
+| `BOT_BALL_CHASERS_3V3` / `_5V5` / `BOT_CHASE_SHOOT_MARGIN_SEC` | Chasseurs du ballon libre / ils ne tirent que battus de cette avance | 2 / 2 / 0,3 s | Fusillade au ballon : marge 0,6 s |
+| `BOT_ENCIRCLED_RADIUS` / `BOT_ENCIRCLED_COUNT` / `_5V5` | Quand le porteur envisage de taper (sans passe) | 3,5 m / 2 / 3 | Plus de coups de pied : rayon 5 m |
+| `BOT_KICK_MIN_ADVANTAGE_SEC` / `BOT_KICK_LAND_MIN_LINE_DIST` / `BOT_KICK_AFTER_KICK_SEC` | Coup de pied seulement si son équipe arrive avant / pas dans l'en-but / pas de ping-pong | 0,4 s / 8 m / 1,5 s | Plus de jeu au pied : avance 0 s |
+| `BOT_PASS_MIN_OPENNESS` / `BOT_PASS_MIN_OPENNESS_OWN_THIRD` / `BOT_PRESSURE_RADIUS` | Démarquage exigé pour passer (normal / dans son tiers) / rayon de pression | 0,45 / 0,3 / 7 m | Plus de passes : rayon 9 m |
+| `BOT_SUPPORTERS_3V3` / `_5V5` | Soutiens derrière le porteur (les autres partent devant) | 1 / 2 | 2 en 3v3 pour plus de passes |
+| `BOT_DIVE_TRY_DISTANCE` | Distance de la ligne où le porteur plonge | 4,5 m | ≤ 6 m (longueur du plongeon) |
+| `BOT_FIRE_CONE_DEG` / `BOT_BURST_SEC` / `BOT_BURST_PAUSE_SEC` | Rythme de tir | 3° / 0,7 s / 0,25 s | Pauses plus longues pour moins de pression |
+| `GAMEPAD_RUMBLE_EFFECTS.try` / `.tryConceded` / `.matchEnd` | Vibrations : essai marqué / encaissé, fin | — | `strong` et `weak` à 0 pour couper |
+
+Réglages purement visuels (durée de « JOUEZ ! », de la bannière de dernière minute, délai avant « Rejouer », anneaux de l'essai) :
+`STYLE.playCallSec`, `STYLE.lastMinuteBannerSec`, `STYLE.endScreenInputDelaySec`, `FX.try` dans `src/render/palette.ts`.

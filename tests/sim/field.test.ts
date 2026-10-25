@@ -233,7 +233,8 @@ describe('échelle 3v3', () => {
       }
       expect(Math.abs(p.pos.x)).toBeLessThan(m.field.width / 2);
     }
-    expect(m.ball.mode).toBe('loose');
-    expect(m.phase).toBe('play');
+    // Étape 6 : le match commence par un coup d'envoi (ballon porté), détaillé dans rules.test.ts.
+    expect(m.phase).toBe('kickoff');
+    expect(m.ball.mode).toBe('carried');
   });
 });

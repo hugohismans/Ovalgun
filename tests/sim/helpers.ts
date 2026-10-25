@@ -3,8 +3,13 @@
  */
 import {
   ALL_BUTTONS,
+  BALL_DROP_HORIZONTAL_SPEED,
   Buttons,
   createMatch,
+  KICKOFF_DEFEND_OFFSET,
+  placeTeamInFormation,
+  startPlayNow,
+  type MatchConfig,
   debugGiveBall,
   debugResetBall,
   makeInput,
@@ -29,8 +34,30 @@ export const ROLES_3: [Role[], Role[]] = [
   ['ailier', 'demi', 'pilier'],
 ];
 
+/**
+ * Match « EN JEU » tel que le créait createMatch avant l'étape 6 (départ des tests des étapes 2 à 5) : phase 'play'
+ * (coup d'envoi sauté par startPlayNow), les deux équipes alignées à KICKOFF_DEFEND_OFFSET × échelle de la médiane
+ * dans leur camp, ballon LIBRE lâché au centre (BALL_DROP_HEIGHT) avec une petite vitesse horizontale de direction
+ * tirée au sort sur state.rng (un tirage, comme avant), aucun événement en attente. Les règles de l'étape 6 restent
+ * actives (chrono, essai si un porteur entre dans l'en-but adverse).
+ */
+export function createPlayMatch(config: MatchConfig): MatchState {
+  const s = createMatch(config);
+  startPlayNow(s);
+  const dist = KICKOFF_DEFEND_OFFSET * s.field.scale;
+  placeTeamInFormation(s, 0, dist);
+  placeTeamInFormation(s, 1, dist);
+  debugResetBall(s);
+  s.ball.lastTeam = -1;
+  const a = rand(s) * Math.PI * 2;
+  s.ball.vel = { x: Math.sin(a) * BALL_DROP_HORIZONTAL_SPEED, y: 0, z: Math.cos(a) * BALL_DROP_HORIZONTAL_SPEED };
+  s.events = [];
+  return s;
+}
+
+/** Match « en jeu » (createPlayMatch) avec les rôles de test. */
 export function newMatch(teamSize: TeamSize = 5, seed = 1): MatchState {
-  return createMatch({ teamSize, seed, roles: teamSize === 3 ? ROLES_3 : ROLES_5 });
+  return createPlayMatch({ teamSize, seed, roles: teamSize === 3 ? ROLES_3 : ROLES_5 });
 }
 
 /**
@@ -43,7 +70,7 @@ export function soloMatch(role: Role, features: TerrainFeature[] = [], x = 0, z 
     [role, 'demi', 'demi', 'demi', 'demi'],
     ['demi', 'demi', 'demi', 'demi', 'demi'],
   ];
-  const s = createMatch({ teamSize: 5, seed: 7, roles });
+  const s = createPlayMatch({ teamSize: 5, seed: 7, roles });
   s.field.features = features;
   const backZ = s.field.length / 2 - 1.5;
   for (const p of s.players) {

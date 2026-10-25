@@ -38,13 +38,25 @@ export const LAST_MINUTE_COOLDOWN_MULT = 0.7;
 /** Multiplicateur de vitesse du ballon (passes, coups de pied) pendant la dernière minute. */
 export const LAST_MINUTE_BALL_SPEED_MULT = 1.12;
 
-/** Compte à rebours de remise en jeu, joueurs figés (s). */
+/**
+ * Compte à rebours du PREMIER coup d'envoi, joueurs figés (s) : seule la visée bouge, le HUD affiche « 3, 2, 1, JOUEZ ! »
+ * (secondes entières restantes). ↑ = plus de temps pour lire le placement au début du match.
+ */
+export const FIRST_KICKOFF_FREEZE_SEC = 3.0;
+/**
+ * Compte à rebours d'une REMISE EN JEU après un essai, joueurs figés (s) : le HUD affiche « 2, 1, JOUEZ ! ».
+ * Correction de l'étape 6 : 3 -> 2 s (avec TRY_PAUSE_SEC 3 -> 2, un essai coûte 4 s figées au lieu de 6 ; le placement
+ * est toujours le même, on le lit vite). ↑ = plus de temps pour lire le placement, ↓ = jeu relancé plus vite.
+ */
 export const KICKOFF_FREEZE_SEC = 2.0;
-/** Pause de célébration après un essai avant la remise en jeu (s). */
-export const TRY_PAUSE_SEC = 3.0;
+/**
+ * Pause de célébration après un essai avant la remise en jeu (s), joueurs figés. Correction de l'étape 6 : 3 -> 2 s.
+ * ↑ = célébration plus longue (plus de temps figé par essai).
+ */
+export const TRY_PAUSE_SEC = 2.0;
 /** Équipe qui reçoit le ballon au premier coup d'envoi (0 = équipe du joueur humain en solo). */
 export const FIRST_KICKOFF_TEAM: TeamId = 0;
-/** Points pour un essai. */
+/** Points pour un essai (le porteur franchit la ligne d'essai adverse, plongeon compris). */
 export const TRY_POINTS = 5;
 
 // ============================================================================
@@ -356,9 +368,15 @@ export const BALL_CARRY_SIDE = 0.5;
 /** Ballon porté : hauteur du centre du ballon au-dessus des pieds (m). ↑ = ballon tenu plus haut. */
 export const BALL_CARRY_HEIGHT = 1.05;
 
-/** Prototype (étape 2) : hauteur du lâcher du ballon au centre au début du match (m). ↑ = premiers rebonds plus hauts. */
+/**
+ * Hauteur du lâcher du ballon au centre (m) : outil de test « ballon au centre » (debugResetBall) et match « en jeu »
+ * des tests (tests/sim/helpers.ts). Depuis l'étape 6, un vrai match commence par un coup d'envoi. ↑ = premiers rebonds plus hauts.
+ */
 export const BALL_DROP_HEIGHT = 3;
-/** Prototype (étape 2) : vitesse horizontale initiale du ballon lâché, direction tirée au sort (m/s). ↑ = le ballon s'éloigne plus du centre. */
+/**
+ * Vitesse horizontale initiale du ballon lâché au centre, direction tirée au sort (m/s) : match « en jeu » des tests
+ * (tests/sim/helpers.ts, départ des étapes 2 à 5). Plus utilisée par un vrai match (coup d'envoi). ↑ = le ballon s'éloigne plus du centre.
+ */
 export const BALL_DROP_HORIZONTAL_SPEED = 1.2;
 
 /**
@@ -763,36 +781,418 @@ export const SCRUM_TIE_EXTRA_SEC = 2;
 //  REMISE EN JEU
 // ============================================================================
 
-/** Distance devant sa propre ligne d'essai où l'équipe qui reçoit est placée (m, ×échelle). */
+/**
+ * Distance devant sa propre ligne d'essai où l'équipe qui reçoit est alignée (m, ×échelle), ballon au joueur le plus
+ * central. Doit rester > FIELD_TRY_LINE_CLEARANCE (sur du plat). ↑ = départ moins acculé (moins de terrain à remonter).
+ */
 export const KICKOFF_RECEIVE_OFFSET = 4;
-/** Distance derrière la médiane où l'autre équipe est placée (m, ×échelle). */
+/**
+ * Distance derrière la médiane où l'autre équipe est alignée (m, ×échelle). Doit rester < FIELD_CENTER_CLEARANCE
+ * (sur du plat). ↑ = défense plus reculée (plus d'espace pour la première course du porteur).
+ */
 export const KICKOFF_DEFEND_OFFSET = 6;
 
 // ============================================================================
 //  BOTS (lu uniquement par src/bots)
 // ============================================================================
+//
+// Les bots (étape 6, src/bots) sont des producteurs de PlayerInput : ils LISENT le MatchState et renvoient une
+// entrée, comme un humain. Leur aléatoire passe par leur PROPRE PRNG (mémoire du bot, jamais MatchState).
+// Distances en mètres « joueur » (non mises à l'échelle) sauf mention « ×échelle » (× field.scale : 0,7 en 3v3).
 
 export type BotDifficulty = 'facile' | 'normal' | 'difficile';
 
+/** Difficulté par défaut des bots (client : ?difficulty=facile|normal|difficile, menu à l'étape 8). */
+export const DEFAULT_BOT_DIFFICULTY: BotDifficulty = 'normal';
+
 export interface BotDifficultyStats {
   label: string;
-  /** Temps de réaction (s) : délai avant de prendre en compte un changement de situation. */
+  /**
+   * Temps de réaction (s) : un changement de situation (possession, porteur, mode du ballon, cible de passe, phase)
+   * n'est pris en compte qu'après ce délai (± BOT_REACTION_JITTER) ; idem pour l'acquisition d'une nouvelle cible de
+   * tir et le premier réflexe d'esquive après un tir reçu. ↑ = bots plus lents à réagir (plus faciles).
+   */
   reactionSec: number;
-  /** Erreur de visée (écart-type approx., degrés). */
+  /**
+   * Erreur de visée (écart-type approx., degrés) : un décalage tiré au PRNG du bot qui varie LENTEMENT (nouvelle valeur
+   * visée toutes les BOT_AIM_ERROR_PERIOD_SEC, rejointe en douceur), pas un bruit blanc par tick. ↑ = moins précis.
+   */
   aimErrorDeg: number;
-  /** Vitesse maximale de rotation de la visée (degrés/s). */
+  /** Vitesse maximale de rotation de la visée / du regard (degrés/s). ↑ = suit mieux une cible rapide, se retourne plus vite. */
   turnRateDeg: number;
-  /** Intervalle entre deux décisions tactiques (s). */
+  /** Intervalle entre deux décisions tactiques (rôle, point visé, cible, passe / coup de pied) (s). ↑ = bots plus lents à s'adapter. */
   decisionSec: number;
-  /** Distance d'engagement max (fraction de la portée de l'arme). */
+  /** Distance d'engagement max (fraction de la portée de l'arme). ↑ = tirent de plus loin. */
   engageRangeMult: number;
-  /** Probabilité de réagir (esquive) quand il est touché, par seconde. */
+  /**
+   * Réflexe d'esquive : probabilité PAR SECONDE d'esquiver tant qu'il est sous le feu (après le temps de réaction).
+   * Au contact d'un défenseur, le porteur l'applique × BOT_CONTACT_REFLEX_MULT. ↑ = esquive plus souvent.
+   */
   dodgeReflex: number;
+  /**
+   * Erreur de visée exprimée en DÉCALAGE LATÉRAL au point visé (écart-type approx., m), convertie en angle par
+   * atan(aimErrorM / distance) ; l'erreur appliquée est le plus grand de cet angle et de aimErrorDeg. Correction de
+   * l'étape 6 : avec une erreur en degrés seule, presque tout touchait à 4–8 m (60–77 % de précision même en facile).
+   * ↑ = rate plus souvent de près.
+   */
+  aimErrorM: number;
+  /**
+   * Part de l'avance prise sur une cible qui court (0 = vise sa position actuelle, 1 = position prévue à l'arrivée de
+   * la balle, aim.ts). ↑ = touche mieux les cibles qui courent.
+   */
+  leadFraction: number;
+  /** Multiplicateur des pauses entre deux rafales (BOT_BURST_PAUSE_SEC + jitter). ↑ = tire moins souvent (moins de pression). */
+  burstPauseMult: number;
 }
 
+export const BOT_DIFFICULTY: Record<BotDifficulty, BotDifficultyStats> = {
+  facile: {
+    label: 'Facile',
+    reactionSec: 0.5,
+    aimErrorDeg: 5,
+    aimErrorM: 1.0,
+    turnRateDeg: 300,
+    decisionSec: 0.5,
+    engageRangeMult: 0.75,
+    dodgeReflex: 0.4,
+    leadFraction: 0.4,
+    burstPauseMult: 1.3,
+  },
+  normal: {
+    label: 'Normal',
+    reactionSec: 0.32,
+    aimErrorDeg: 3.5,
+    aimErrorM: 0.7,
+    turnRateDeg: 420,
+    decisionSec: 0.4,
+    engageRangeMult: 0.85,
+    dodgeReflex: 0.8,
+    leadFraction: 0.8,
+    burstPauseMult: 1,
+  },
+  difficile: {
+    label: 'Difficile',
+    reactionSec: 0.22,
+    aimErrorDeg: 2.5,
+    aimErrorM: 0.5,
+    turnRateDeg: 600,
+    decisionSec: 0.3,
+    engageRangeMult: 0.95,
+    dodgeReflex: 1.2,
+    leadFraction: 1,
+    burstPauseMult: 0.9,
+  },
+};
+
+/** Variation aléatoire (± fraction) du temps de réaction, tirée à chaque changement perçu. ↑ = réactions moins régulières. */
+export const BOT_REACTION_JITTER = 0.25;
+/** Variation aléatoire (± fraction) de l'intervalle de décision (les bots ne décident pas tous au même tick). ↑ = plus désynchronisés. */
+export const BOT_DECISION_JITTER = 0.2;
+
+// --- Visée et tir -------------------------------------------------------------
+
+/** Période moyenne (s) entre deux tirages de l'erreur de visée visée par le bot. ↓ = erreur qui change plus souvent. */
+export const BOT_AIM_ERROR_PERIOD_SEC = 0.7;
+/** Supplément aléatoire (s, entre 0 et cette valeur) ajouté à chaque période d'erreur. ↑ = rythme moins régulier. */
+export const BOT_AIM_ERROR_PERIOD_JITTER_SEC = 0.5;
+/** Constante de temps (s) avec laquelle l'erreur courante rejoint l'erreur tirée (lissage). ↑ = erreur plus « molle », plus lente à changer. */
+export const BOT_AIM_ERROR_SMOOTH_SEC = 0.3;
+/** Part de l'erreur de visée appliquée au pitch (vertical), relative au yaw. ↑ = tirs plus souvent trop hauts / trop bas. */
+export const BOT_AIM_PITCH_ERROR_MULT = 0.5;
+/**
+ * Le bot ne tire que si son regard est à moins de cet angle (degrés) de la direction qu'il VEUT viser (erreur de
+ * visée comprise : il ne connaît pas son erreur). ↑ = tire plus tôt en tournant (plus de balles perdues).
+ */
+export const BOT_FIRE_CONE_DEG = 3;
+/** Durée d'une rafale (s) ; le pilier tire un coup par fireInterval tant qu'elle dure. ↑ = rafales plus longues (plus de pression). */
+export const BOT_BURST_SEC = 0.7;
+/**
+ * Pause entre deux rafales (s), plus un supplément aléatoire (BOT_BURST_PAUSE_JITTER_SEC), × burstPauseMult de la
+ * difficulté, × BOT_RESTRAINED_PAUSE_MULT hors pression / repli. ↑ = moins de pression.
+ */
+export const BOT_BURST_PAUSE_SEC = 0.25;
+/** Supplément de pause tiré au sort entre 0 et cette valeur (s). ↑ = rythme de tir moins prévisible. */
+export const BOT_BURST_PAUSE_JITTER_SEC = 0.35;
+/**
+ * Discipline de tir (correction de l'étape 6 : tout le monde tirait sur tout le monde, 85–90 % des plaquages tombaient
+ * sur des NON-porteurs) : seuls les rôles « press » et « cover » tirent en continu (sur le porteur) ; les autres ne
+ * tirent que sur une menace directe, avec des pauses multipliées par cette valeur. ↑ = feu plus rare hors pression.
+ */
+export const BOT_RESTRAINED_PAUSE_MULT = 2.5;
+/**
+ * Menace directe (m) : en attaque sans ballon (soutien, espace), on ne tire que sur un défenseur à moins de cette
+ * distance de NOTRE porteur (protection du porteur) ; en défense, un marqueur ne tire sur son receveur que si celui-ci
+ * est à moins de cette distance du porteur (passe imminente). ↑ = feu plus fréquent hors pression (plus de plaquages
+ * de non-porteurs, plus de joueurs au sol).
+ */
+export const BOT_ESCORT_THREAT_DIST = 8;
+/** Au-delà de cette distance (m), le bot vise (AIM : dispersion réduite, déplacement ralenti). ↓ = vise plus souvent. */
+export const BOT_ADS_DISTANCE = 20;
+/** Rechargement opportuniste : après ce temps sans cible (s)… ↓ = recharge plus vite hors combat. */
+export const BOT_RELOAD_IDLE_SEC = 0.8;
+/** …si le chargeur est sous cette fraction. ↑ = recharge plus souvent (chargeur plus souvent plein en entrant au combat). */
+export const BOT_RELOAD_AMMO_FRACTION = 0.6;
+
+// --- Déplacement --------------------------------------------------------------
+
+/** Rayon (m) autour du point visé où le bot s'arrête. ↑ = positionnement moins précis, moins de piétinement. */
+export const BOT_ARRIVE_RADIUS = 1.2;
+/** Rayon (m) en deçà duquel il ralentit en approchant du point visé. ↑ = approches plus douces. */
+export const BOT_SLOW_RADIUS = 3.5;
+/** Inclinaison minimale de l'entrée de déplacement en approche (0..1). ↑ = approches plus rapides. */
+export const BOT_MIN_MOVE_INPUT = 0.35;
+/** Le bot sprinte vers un point visé s'il en est à plus de cette distance (m). ↓ = sprinte plus souvent. */
+export const BOT_SPRINT_MIN_DIST = 5;
+/** Distance (m) en deçà de laquelle un coéquipier le repousse (pas d'agglutinement). ↑ = équipe plus étalée. */
+export const BOT_TEAMMATE_SPACING = 3.5;
+/** Poids de la répulsion entre coéquipiers (relatif à la direction voulue). ↑ = s'écartent plus franchement. */
+export const BOT_TEAMMATE_REPULSION = 1.2;
+/** Marge (m) aux murs invisibles : les points visés sont ramenés à l'intérieur. ↑ = jouent plus loin des bords. */
+export const BOT_WALL_MARGIN = 1.5;
+/** Blocage : vitesse horizontale (m/s) sous laquelle un bot qui veut avancer est « bloqué ». ↑ = détecte plus tôt. */
+export const BOT_STUCK_SPEED = 1.0;
+/** Blocage : durée (s) avant de réagir (saut + détour). ↓ = réagit plus vite (mais plus de faux blocages). */
+export const BOT_STUCK_SEC = 0.5;
+/** Détour après un blocage : durée (s) pendant laquelle la direction est tournée. ↑ = détours plus longs. */
+export const BOT_DETOUR_SEC = 0.8;
+/** Détour après un blocage : angle de rotation de la direction (degrés, côté tiré au sort). ↑ = contourne plus large. */
+export const BOT_DETOUR_ANGLE_DEG = 70;
+/** Inclinaison (0..1) au-delà de laquelle le bot « veut avancer » (suivi du blocage). ↑ = moins de faux blocages en approche lente. */
+export const BOT_STUCK_MIN_MOVE_MAG = 0.5;
+/** Répulsion des coéquipiers (0..1) sous laquelle un bot arrivé ne bouge pas (évite de piétiner). ↑ = reste plus volontiers sur place. */
+export const BOT_IDLE_PUSH_MIN = 0.25;
+
+// --- Réflexes -----------------------------------------------------------------
+
+/** Durée (s) pendant laquelle un bot touché se considère « sous le feu » (réflexe d'esquive possible). ↑ = esquives plus tardives possibles. */
+export const BOT_UNDER_FIRE_SEC = 0.6;
+/** Esquive : part de la composante « vers l'avant » (vers son but / son point visé) mêlée à l'esquive latérale. ↑ = esquive plus en avant. */
+export const BOT_DODGE_FORWARD_MIX = 0.5;
+/** Porteur : distance (m) d'un défenseur devant lui en deçà de laquelle il tente une esquive de contact. ↑ = esquive plus tôt. */
+export const BOT_CONTACT_DISTANCE = 3;
+/** Porteur au contact : multiplicateur du réflexe d'esquive (dodgeReflex). ↑ = esquive plus souvent au contact. */
+export const BOT_CONTACT_REFLEX_MULT = 3;
+
+// --- Porteur ------------------------------------------------------------------
+
+/** Porteur : nombre de directions de course évaluées à chaque décision (en éventail vers l'en-but adverse). ↑ = choix plus fin, plus coûteux. */
+export const BOT_CARRIER_DIRECTIONS = 9;
+/** Porteur : demi-ouverture (degrés) de l'éventail des directions évaluées. ↑ = n'hésite pas à courir en travers. */
+export const BOT_CARRIER_DIR_SPREAD_DEG = 75;
+/** Porteur : horizon (s) sur lequel il projette sa course et celle des adversaires. ↑ = anticipe de plus loin. */
+export const BOT_CARRIER_LOOKAHEAD_SEC = 1.0;
+/** Porteur : rayon (m) dans lequel un adversaire (projeté) pénalise une direction. ↑ = contourne la défense de plus loin. */
+export const BOT_CARRIER_AVOID_RADIUS = 6;
+/** Porteur : poids de l'évitement des adversaires face à la progression (poids 1). ↑ = préfère contourner qu'avancer droit. */
+export const BOT_CARRIER_AVOID_WEIGHT = 1.6;
+/** Porteur : bonus de la direction choisie à la décision précédente (hystérésis). ↑ = change moins souvent de direction. */
+export const BOT_CARRIER_DIR_STICKY = 0.1;
+/** Porteur : chemin « libre » (sprint) si aucun adversaire à moins de cette distance (m) dans le cône devant lui. ↑ = sprinte moins souvent. */
+export const BOT_PATH_CLEAR_DIST = 10;
+/** Porteur : demi-angle (degrés) du cône dans lequel le chemin doit être libre. ↑ = sprinte moins souvent. */
+export const BOT_PATH_CLEAR_HALF_ANGLE_DEG = 35;
+/** Porteur : « pressé » si un adversaire est à moins de cette distance (m), devant ou à côté de lui. ↑ = passe plus tôt. */
+export const BOT_PRESSURE_RADIUS = 7;
+/**
+ * Porteur : un adversaire jusqu'à cette distance (m) DERRIÈRE lui (le long du terrain) compte encore comme « à côté »
+ * (pression, esquive de contact). ↑ = se sent pressé par des poursuivants plus en retrait.
+ */
+export const BOT_PRESSURE_BESIDE_TOLERANCE = 2;
+/** Porteur : « pressé » aussi s'il est sous le feu avec une stabilité sous cette fraction. ↑ = passe plus tôt quand on lui tire dessus. */
+export const BOT_PASS_STABILITY_FRACTION = 0.65;
+/** Passe : démarquage minimal du receveur (openness de selectPassTarget, 0..1). ↓ = passes plus risquées. */
+export const BOT_PASS_MIN_OPENNESS = 0.45;
+/** Passe : distance minimale (m) au receveur. ↑ = évite les passes « dans les mains » à un coéquipier collé. */
+export const BOT_PASS_MIN_RANGE = 3;
+/** Passe : nombre de regards (yaws) essayés pour trouver le receveur voulu avec la visée assistée. ↑ = plus fin, plus coûteux. */
+export const BOT_PASS_YAW_SAMPLES = 13;
+/** Passe / coup de pied : abandon si le geste n'est pas parti après ce délai (s) de préparation (rotation du regard). ↑ = insiste plus longtemps sur un geste préparé. */
+export const BOT_ACTION_MAX_PREP_SEC = 0.5;
+/** Pas de passe à moins de cette distance (m) de la ligne d'essai adverse : il fonce (et plonge). ↑ = fonce de plus loin. */
+export const BOT_NO_PASS_LINE_DIST = 8;
+/**
+ * Porteur : « encerclé » si au moins BOT_ENCIRCLED_COUNT(_5V5) adversaires sont à moins de cette distance (m).
+ * Correction de l'étape 6 : 5 -> 3,5 (les deux défenseurs qui pressent étaient presque toujours à moins de 5 m :
+ * 31–49 % des possessions finissaient au pied). ↑ = tape plus tôt.
+ */
+export const BOT_ENCIRCLED_RADIUS = 3.5;
+/** Porteur : nombre d'adversaires proches pour être « encerclé » en 3v3 (coup de pied s'il n'a pas de passe). ↓ = tape plus souvent. */
+export const BOT_ENCIRCLED_COUNT = 2;
+/** Idem en 5v5 (plus de défenseurs, donc plus souvent deux au contact). ↓ = tape plus souvent. */
+export const BOT_ENCIRCLED_COUNT_5V5 = 3;
+/** Coup de pied aussi (sans passe) si le porteur est sous le feu avec une stabilité sous cette fraction. ↑ = tape plus tôt quand on le plaque. */
+export const BOT_KICK_STABILITY_FRACTION = 0.25;
+/** Pas de coup de pied à moins de cette distance (m, ×échelle) de la ligne adverse (il fonce). ↑ = tape moins près de la ligne. */
+export const BOT_KICK_MIN_LINE_DIST = 14;
+/** Coup de pied : nombre de directions évaluées (point de chute prédit). ↑ = choix plus fin. */
+export const BOT_KICK_DIRECTIONS = 7;
+/** Coup de pied : demi-ouverture (degrés) de l'éventail des directions évaluées. ↑ = tape plus en travers vers l'espace libre. */
+export const BOT_KICK_SPREAD_DEG = 45;
+/**
+ * Coup de pied : le point de chute est noté par l'AVANCE de la première arrivée de l'équipe du botteur (s) : min des temps
+ * de course des adversaires − min de ceux de son équipe (botteur compris). Poids de ce terme face à la progression.
+ * ↑ = tape vers là où son équipe arrive la première plutôt que loin.
+ */
+export const BOT_KICK_ADVANTAGE_WEIGHT = 1.0;
+/** Coup de pied : avance (s) au-delà de laquelle un point de chute est totalement favorable (terme d'avance borné à ±1). ↑ = exige plus d'avance pour la note maximale. */
+export const BOT_KICK_ADVANTAGE_SEC = 1.0;
+/**
+ * Coup de pied : on ne tape que si l'avance du meilleur point de chute dépasse cette valeur (s) : son équipe y arrive la
+ * première. ↓ = tape plus souvent (ballon rendu plus souvent à l'adversaire).
+ */
+export const BOT_KICK_MIN_ADVANTAGE_SEC = 0.4;
+/**
+ * Coup de pied : point de chute au moins à cette distance (m, ×échelle) devant la ligne adverse (directions plus longues
+ * écartées). Correction de l'étape 6 : un coup de pied dans l'en-but, récupéré par l'équipe du botteur, était un essai
+ * quasi gratuit (7 à 9 essais par match). ↓ = coups de pied plus profonds (plus d'essais sur coup de pied).
+ */
+export const BOT_KICK_LAND_MIN_LINE_DIST = 8;
+/** Coup de pied : pénalité de sortie du terrain du point de chute, par mètre dehors / cette distance (m). ↓ = évite plus les bords. */
+export const BOT_KICK_OUT_DIST = 10;
+/**
+ * Coup de pied : direction écartée si un adversaire (projeté selon sa vitesse) passe à moins de KICK_CHARGE_DOWN_RADIUS
+ * + cette marge (m) de la trajectoire de départ (risque de contre). ↑ = tape moins souvent au contact.
+ */
+export const BOT_KICK_CHARGE_MARGIN = 1.0;
+/** Coup de pied : la trajectoire de départ est vérifiée pendant KICK_CHARGE_DOWN_SEC + ce supplément (s). ↑ = plus prudent. */
+export const BOT_KICK_CHARGE_EXTRA_SEC = 0.15;
+/**
+ * Coup de pied : pas de nouveau coup de pied pendant ce délai (s) après avoir vu un coup de pied en vol (pas de
+ * « ping-pong » : le receveur d'un coup de pied relance à la main). ↑ = moins de coups de pied enchaînés.
+ */
+export const BOT_KICK_AFTER_KICK_SEC = 1.5;
+/** Coup de pied : pitch du regard au moment de taper (degrés ; l'élévation = KICK_ELEVATION_DEG + pitch × KICK_PITCH_INFLUENCE). ↑ = chandelle plus haute. */
+export const BOT_KICK_PITCH_DEG = 0;
+/** Coup de pied / passe : tolérance (degrés) sur le regard voulu au moment de déclencher. ↑ = geste plus rapide, moins précis. */
+export const BOT_ACTION_YAW_TOLERANCE_DEG = 4;
+/** Plongeon d'essai : le porteur plonge à moins de cette distance (m) de la ligne d'essai adverse (dash ≈ 6 m). ↑ = plonge de plus loin. */
+export const BOT_DIVE_TRY_DISTANCE = 4.5;
+/** Plongeon d'évasion : sous le feu, esquive en recharge, stabilité sous cette fraction => plongeon (invulnérable). ↑ = plonge plus tôt. */
+export const BOT_DIVE_ESCAPE_STABILITY_FRACTION = 0.3;
+/** Fonce droit vers la ligne (évitement réduit) à moins de cette distance (m) de la ligne d'essai adverse. ↑ = fonce de plus loin. */
+export const BOT_LINE_RUSH_DIST = 8;
+/** Près de la ligne (BOT_LINE_RUSH_DIST) : multiplicateur du poids de l'évitement. ↓ = fonce plus droit. */
+export const BOT_LINE_RUSH_AVOID_MULT = 1 / 3;
+/**
+ * Porteur dans son propre tiers (distance à la ligne adverse > BOT_OWN_THIRD_FRACTION × distance entre les lignes) :
+ * avant de taper, il accepte une passe moins démarquée (openness ≥ cette valeur). ↓ = relance à la main plus souvent.
+ */
+export const BOT_PASS_MIN_OPENNESS_OWN_THIRD = 0.3;
+/** Sprint boosté (ailier porteur) seulement à plus de cette distance (m) de la ligne adverse, chemin libre. ↑ = boost gardé pour les longues courses. */
+export const BOT_BOOST_MIN_LINE_DIST = 12;
+
+// --- Attaque sans ballon -----------------------------------------------------
+
+/** Soutiens par équipe en 3v3 (les autres coéquipiers cherchent l'espace devant). ↑ = plus de solutions de passe, moins de course devant. */
+export const BOT_SUPPORTERS_3V3 = 1;
+/** Soutiens par équipe en 5v5. ↑ = plus de solutions de passe, moins de course devant. */
+export const BOT_SUPPORTERS_5V5 = 2;
+/** Soutien : marge minimale (m) entre son point visé et la touche (sinon il passe de l'autre côté du porteur). ↑ = soutiens moins collés aux bords. */
+export const BOT_SUPPORT_TOUCH_MARGIN = 2;
+/** Soutien : décalage latéral (m, ×échelle) par rapport au porteur. ↑ = soutiens plus écartés (passes plus longues). */
+export const BOT_SUPPORT_LATERAL = 7;
+/** Soutien : retrait (m) derrière le porteur (cône de passe arrière). ↑ = soutiens plus en retrait (passes plus sûres, terrain perdu). */
+export const BOT_SUPPORT_DEPTH = 3.5;
+/** Soutien : anticipation (s) de la course du porteur pour placer le soutien. ↑ = soutiens qui « suivent » mieux un porteur rapide. */
+export const BOT_SUPPORT_LEAD_SEC = 0.5;
+/** Espace : avance (m, ×échelle) devant le porteur du joueur qui ouvre la défense. ↑ = plus loin devant. */
+export const BOT_SPACE_AHEAD = 10;
+/** Espace : décalage latéral (m, ×échelle) du joueur qui ouvre la défense. ↑ = plus près de la touche. */
+export const BOT_SPACE_LATERAL = 9;
+/** Receveur d'une passe : il garde sa ligne si son entrée précédente dépassait cette inclinaison (0..1), sinon il va au point de chute. ↑ = va plus souvent au ballon. */
+export const BOT_RECEIVE_KEEP_LINE_MIN_MAG = 0.3;
+
+// --- Défense ------------------------------------------------------------------
+
+/** Défenseurs qui convergent vers le porteur en 3v3 (les autres marquent). ↑ = pression plus forte, receveurs plus libres. */
+export const BOT_PRESSERS_3V3 = 2;
+/** Défenseurs qui convergent vers le porteur en 5v5. ↑ = pression plus forte, receveurs plus libres. */
+export const BOT_PRESSERS_5V5 = 2;
+/**
+ * Porteur adverse dans SON propre tiers (distance à notre ligne > BOT_OWN_THIRD_FRACTION × distance entre les lignes,
+ * typiquement juste après une remise en jeu) : un seul défenseur presse, les autres tiennent leur ligne (marquage,
+ * repli). Correction de l'étape 6 : l'équipe qui recevait, prise en tenaille près de sa ligne, encaissait l'essai
+ * suivant 50–60 % du temps. ↑ = défense plus haute après la remise en jeu.
+ */
+export const BOT_PRESSERS_OWN_THIRD = 1;
+/** Fraction de la distance entre les lignes d'essai au-delà de laquelle le porteur est « dans son propre tiers ». ↓ = zone plus grande. */
+export const BOT_OWN_THIRD_FRACTION = 2 / 3;
+/** Convergence : anticipation (s) de la course du porteur. ↑ = coupe plus la trajectoire. */
+export const BOT_PRESS_LEAD_SEC = 0.4;
+/**
+ * Anticipation (pression, soutien) : vitesse du porteur plafonnée à runSpeed du rôle × cette valeur (sinon une esquive
+ * à 21 m/s faisait sauter le point visé de 8 m sur le côté : demi-tours en série). ↑ = suit mieux les esquives.
+ */
+export const BOT_LEAD_SPEED_CAP_MULT = 1.2;
+/**
+ * Hystérésis des rôles par distance (pression, course au ballon) : le bot qui tenait déjà le rôle se compte plus proche
+ * de cette distance (m) ; deux défenseurs presque à égale distance n'échangent plus pression et marquage à chaque
+ * décision. ↑ = rôles plus stables (réaffectations plus tardives).
+ */
+export const BOT_ROLE_HYSTERESIS_M = 1.5;
+/** Marquage : placement (m) entre le receveur et son propre en-but. ↑ = marquage plus lâche (moins d'interceptions, moins de percées). */
+export const BOT_MARK_GOALSIDE = 3;
+/**
+ * Marquage : un marqueur tire sur le PORTEUR plutôt que sur son receveur quand le porteur est à moins de cette
+ * distance (m) de lui (menace immédiate). ↑ = défense plus concentrée sur le porteur (receveurs plus libres).
+ */
+export const BOT_MARK_SHOOT_CARRIER_DIST = 14;
+/**
+ * Dernier défenseur : dès que l'équipe compte au moins ce nombre de bots actifs, l'un d'eux (le mieux placé devant le
+ * porteur) reste TOUJOURS en repli entre le porteur et l'en-but ; en deçà, repli seulement si personne n'est devant le
+ * porteur. Correction de l'étape 6 : sans lui, un porteur qui avait passé les presseurs filait à l'essai (43–52 % du
+ * temps porté sans aucun défenseur devant). ↓ = repli plus systématique (moins de presseurs / marqueurs).
+ */
+export const BOT_COVER_MIN_DEFENDERS = 3;
+/** Repli : profondeur (m, ×échelle) devant le porteur. ↑ = repli plus profond. */
+export const BOT_COVER_DEPTH = 18;
+/** Repli : profondeur au plus égale à cette fraction de la distance du porteur à notre ligne. ↑ = repli plus près de la ligne. */
+export const BOT_COVER_LINE_FRACTION = 0.7;
+/** Repli : x du point de repli = x du porteur × cette fraction (ramené vers le centre). ↑ = repli plus en face du porteur. */
+export const BOT_COVER_X_FRACTION = 0.7;
+/** Marquage : décalage du point de marquage vers le porteur (fraction de l'écart receveur–porteur). ↑ = marqueur plus près de la ligne de passe. */
+export const BOT_MARK_CARRIER_SHIFT = 0.15;
+/** Danger d'un receveur : poids « dans le cône de passe du porteur ». ↑ = marque d'abord les receveurs possibles. */
+export const BOT_DANGER_CONE_WEIGHT = 1.0;
+/** Danger : poids du démarquage (distance au défenseur le plus proche / BOT_DANGER_OPEN_DIST). ↑ = marque d'abord les joueurs libres. */
+export const BOT_DANGER_OPEN_WEIGHT = 0.6;
+/** Danger : distance (m) à partir de laquelle un receveur est considéré totalement libre. ↑ = un receveur doit être plus loin pour compter comme libre. */
+export const BOT_DANGER_OPEN_DIST = 8;
+/** Danger : poids de la proximité de notre en-but. ↑ = marque d'abord les joueurs avancés. */
+export const BOT_DANGER_LINE_WEIGHT = 0.5;
+
+// --- Ballon libre / en vol ---------------------------------------------------
+
+/**
+ * Bots de chaque équipe qui vont au ballon libre (ou au point de chute) en 3v3 ; les autres gardent une forme.
+ * Correction de l'étape 6 : 1 -> 2 (un ballon au sol ne dépend plus d'un seul coureur ; les chasseurs ne tirent plus,
+ * voir BOT_CHASE_SHOOT_MARGIN_SEC). ↑ = plus de monde au ballon.
+ */
+export const BOT_BALL_CHASERS_3V3 = 2;
+/** Idem en 5v5. ↑ = plus de monde au ballon. */
+export const BOT_BALL_CHASERS_5V5 = 2;
+/**
+ * Course au ballon : le chasseur ne tire (sur l'adversaire qui va arriver le premier) que si celui-ci arrive au moins
+ * cette avance (s) avant lui ; sinon il sprinte en regardant sa course (le tir coupe le sprint). ↑ = chasseurs qui tirent moins.
+ */
+export const BOT_CHASE_SHOOT_MARGIN_SEC = 0.3;
+/** Course au ballon qui roule : anticipation (s) de son roulement. ↑ = vise plus loin devant le ballon. */
+export const BOT_CHASE_ROLL_LEAD_SEC = 0.5;
+/** Course au ballon : on vise un point au-delà du ballon (m) pour le traverser sans ralentir. ↑ = traverse plus franchement. */
+export const BOT_CHASE_OVERSHOOT = 2;
+/** Forme d'équipe pendant un ballon libre : profondeur (m, ×échelle) du rideau entre le ballon et son en-but. ↑ = repli plus profond. */
+export const BOT_SHAPE_DEPTH = 8;
+/** Forme d'équipe : fraction de la largeur du terrain occupée. ↑ = plus étalée. */
+export const BOT_SHAPE_WIDTH_FRACTION = 0.6;
+/** Forme d'équipe d'un seul joueur : x = x du point de chute × cette fraction. ↑ = plus en face du ballon. */
+export const BOT_SHAPE_SINGLE_X_FRACTION = 0.5;
+/** Forme d'équipe après notre coup de pied / lâcher : profondeur × cette fraction (on monte en soutien). ↑ = reste plus en retrait. */
+export const BOT_SHAPE_OWN_KICK_DEPTH_FRACTION = 0.5;
+
 /*
- * Cible d'entraînement « tourelle » (src/bots/turret.ts, étape 5, remplacée par de vrais bots à l'étape 6) :
- * un adversaire immobile qui se tourne vers l'ennemi actif le plus proche à portée et tire par rafales.
+ * Cible d'entraînement « tourelle » (src/bots/turret.ts, étape 5) : un adversaire immobile qui se tourne vers l'ennemi
+ * actif le plus proche à portée et tire par rafales. Remplacée dans le jeu par les bots de l'étape 6 ; gardée pour les
+ * tests (et comme exemple minimal d'InputProvider).
  */
 /** Tourelle : portée d'engagement (fraction de la portée de l'arme). ↑ = elle tire de plus loin. */
 export const TURRET_ENGAGE_RANGE_MULT = 0.85;
@@ -817,36 +1217,6 @@ export const TURRET_FIRE_CONE_DEG = 5;
  * prévue à l'arrivée de la balle). ↓ = plus facile à esquiver en courant.
  */
 export const TURRET_LEAD_FRACTION = 1;
-
-export const BOT_DIFFICULTY: Record<BotDifficulty, BotDifficultyStats> = {
-  facile: {
-    label: 'Facile',
-    reactionSec: 0.55,
-    aimErrorDeg: 7,
-    turnRateDeg: 240,
-    decisionSec: 0.6,
-    engageRangeMult: 0.6,
-    dodgeReflex: 0.3,
-  },
-  normal: {
-    label: 'Normal',
-    reactionSec: 0.32,
-    aimErrorDeg: 3.5,
-    turnRateDeg: 420,
-    decisionSec: 0.4,
-    engageRangeMult: 0.8,
-    dodgeReflex: 0.8,
-  },
-  difficile: {
-    label: 'Difficile',
-    reactionSec: 0.18,
-    aimErrorDeg: 1.6,
-    turnRateDeg: 720,
-    decisionSec: 0.25,
-    engageRangeMult: 1.0,
-    dodgeReflex: 1.6,
-  },
-};
 
 // ============================================================================
 //  CAMÉRA (lu uniquement par le rendu — regroupé ici pour régler le feeling au même endroit)
@@ -980,6 +1350,7 @@ export type RumbleCue =
   | 'interceptionSuffered'
   | 'try'
   | 'tryConceded'
+  | 'matchEnd'
   | 'hardLanding';
 
 export interface RumbleEffect {
@@ -1011,6 +1382,8 @@ export const GAMEPAD_RUMBLE_EFFECTS: Readonly<Record<RumbleCue, Readonly<RumbleE
   try: { durationSec: 0.6, strong: 0.7, weak: 0.9, priority: 5 },
   /** Essai encaissé : sourd. */
   tryConceded: { durationSec: 0.3, strong: 0.4, weak: 0.0, priority: 3 },
+  /** Fin du match (coup de sifflet final) : longue, la plus prioritaire. */
+  matchEnd: { durationSec: 0.8, strong: 0.6, weak: 0.6, priority: 6 },
   /** Réception d'un saut à grande vitesse verticale. */
   hardLanding: { durationSec: 0.06, strong: 0.25, weak: 0.0, priority: 1 },
 };

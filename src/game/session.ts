@@ -15,15 +15,25 @@
  *    texte temporaires (feedback.ts).
  *  - Outils de test (?debug ou entraînement seulement) : G / View = ballon pour moi, B = ballon au centre,
  *    appliqués ENTRE deux ticks via debugGiveBall / debugResetBall de la sim (jamais d'écriture directe dans l'état).
- *  - Étape 5 : adversaires pilotés par des tourelles d'entraînement (src/bots/turret.ts ; passives avec
- *    `dummies: false`, ?dummies=off), retours de visée (combatHud.ts : hitmarker, direction des tirs reçus,
- *    vignette) et mini-HUD (stabilité, munitions, capacité) dans l'instantané.
+ *  - Étape 5 : retours de visée (combatHud.ts : hitmarker, direction des tirs reçus, vignette) et mini-HUD
+ *    (stabilité, munitions, capacité) dans l'instantané.
+ *  - Étape 6 : boucle de match complète (coup d'envoi, essai, remise en jeu, chrono, fin) ; HUD de match
+ *    (matchHud.ts : score, chrono, « 3, 2, 1, JOUEZ ! », bannière d'essai, dernière minute, écran de fin) dans
+ *    l'instantané. À chaque remise en jeu, la caméra du joueur local est retournée vers l'en-but adverse. À la fin :
+ *    pointer lock relâché (sans mise en pause), A / Entrée / bouton « Rejouer » => `restart()` (nouveau match).
+ *    Producteurs d'entrées (bots) installés par `installProviders()` à chaque match.
+ *  - Étape 6 (bots) : chaque joueur non humain (coéquipiers ET adversaires) est piloté par un bot (src/bots, createBot)
+ *    de la difficulté choisie (`difficulty`, ?difficulty=facile|normal|difficile), qui sait quel joueur est humain
+ *    (`externalIds`) ; le joueur humain reçoit le ballon aux coups d'envoi de son équipe (`kickoffReceivers`) ; `passive`
+ *    (?dummies=off) : joueurs passifs (entrée neutre). `autopilot` (?debug&autopilot) : le joueur 0 est aussi un bot (match bots contre bots
+ *    observé depuis sa caméra ; clavier / souris / manette ignorés pour lui).
  */
 
 import {
   abilityActive,
   abilityImplemented,
   aimOrigin,
+  attackYaw,
   Buttons,
   canShoot,
   cloneState,
@@ -47,22 +57,29 @@ import {
   type MoveMode,
   type PlayerInput,
   type PlayerStatus,
+  type BotDifficulty,
   type Role,
   type TeamSize,
+  DEFAULT_BOT_DIFFICULTY,
+  lerpAngle,
 } from '../sim';
 import type { InputProvider } from '../bots';
-import { createTurret } from '../bots/turret';
+import { createBot } from '../bots';
 import type { AssistCandidate } from '../input/aimAssist';
 import type { GamepadStyle } from '../input/gamepadMap';
 import { Haptics } from '../input/haptics';
 import { CombatHud, type CombatHudFrame } from './combatHud';
 import { FEEDBACK_SEC, feedbackFor, type Feedback } from './feedback';
+import { MatchHud, type MatchHudFrame } from './matchHud';
 import { InputManager, type InputDevice } from '../input/InputManager';
 import { lerpPos } from '../render/interpolate';
 import { STYLE } from '../render/palette';
 import { Renderer } from '../render/Renderer';
 import { FixedStepLoop, MAX_FRAME_DT } from './loop';
 import { assignRoles } from './roles';
+
+// Pour l'UI (qui n'importe pas la sim) : difficulté des bots et taille d'équipe lues dans l'URL.
+export { DEFAULT_BOT_DIFFICULTY, type BotDifficulty, type TeamSize } from '../sim';
 
 export interface SessionOptions {
   teamSize: TeamSize;
@@ -71,11 +88,12 @@ export interface SessionOptions {
   training?: boolean;
   /** Mode debug (?debug) : clavier sans pointer lock, pas de pause, session exposée sur window. */
   debug?: boolean;
-  /**
-   * Étape 5 : les adversaires sont des tourelles d'entraînement qui tirent (défaut : vrai) ; faux = cibles
-   * passives (?dummies=off). L'étape 6 les remplacera par de vrais bots.
-   */
-  dummies?: boolean;
+  /** Difficulté des bots (défaut : DEFAULT_BOT_DIFFICULTY ; ?difficulty=facile|normal|difficile). */
+  difficulty?: BotDifficulty;
+  /** Joueurs non humains passifs (entrée neutre qui garde leur visée) au lieu de bots (?dummies=off) : réglage du plaquage. */
+  passive?: boolean;
+  /** Le joueur 0 est aussi piloté par un bot (?debug&autopilot) : match bots contre bots, vu depuis sa caméra. */
+  autopilot?: boolean;
 }
 
 /** Instantané pour l'UI, produit à chaque frame. */
@@ -132,6 +150,8 @@ export interface FrameSnapshot {
   feedback: (Feedback & { seq: number }) | null;
   /** Outils de test disponibles (?debug ou entraînement). */
   debugTools: boolean;
+  /** Étape 6 : score, chrono, coup d'envoi, essai, dernière minute, écran de fin. */
+  match: MatchHudFrame;
 }
 
 export class GameSession {
@@ -143,11 +163,15 @@ export class GameSession {
   readonly renderer: Renderer;
   readonly haptics = new Haptics();
   readonly combatHud = new CombatHud();
+  readonly matchHud = new MatchHud();
   /** Producteurs d'entrées des autres joueurs (bots, étape 6), appelés avec (état, id). Absent => entrée neutre. */
   readonly inputProviders = new Map<number, InputProvider>();
   onFrame: ((s: FrameSnapshot) => void) | null = null;
 
   paused: boolean;
+  private readonly options: SessionOptions;
+  /** Nombre de matchs relancés (la seed du match suivant en dépend : options.seed + matchIndex). */
+  private matchIndex = 0;
   private readonly debug: boolean;
   /** Outils de test (ballon pour moi / au centre) : seulement en ?debug ou en entraînement. */
   readonly debugTools: boolean;
@@ -166,14 +190,10 @@ export class GameSession {
   private readonly tmpFeet = { x: 0, y: 0, z: 0 };
 
   constructor(canvas: HTMLCanvasElement, options: SessionOptions) {
+    this.options = options;
     this.debug = options.debug ?? false;
     this.debugTools = this.debug || (options.training ?? false);
-    this.state = createMatch({
-      teamSize: options.teamSize,
-      seed: options.seed,
-      roles: assignRoles(options.teamSize, options.humanRole),
-      training: options.training ?? false,
-    });
+    this.state = this.newMatch();
     this.prev = cloneState(this.state);
     this.renderer = new Renderer(canvas);
     this.renderer.setMatch(this.state, this.humanId);
@@ -182,20 +202,85 @@ export class GameSession {
     this.input.setOrientation(me.yaw, me.pitch);
     this.input.onPointerLockChange = (locked) => {
       if (locked) this.setPaused(false);
-      else if (!this.debug && this.input.activeDevice === 'keyboard') this.setPaused(true);
+      else if (!this.debug && this.input.activeDevice === 'keyboard' && !this.ended) this.setPaused(true);
     };
     this.paused = !this.debug;
-    // Étape 5 : adversaires = tourelles d'entraînement (PRNG propre à chacune, dérivé de la seed et de l'id).
-    const humanTeam = this.state.players[this.humanId].team;
-    const dummies = options.dummies ?? true;
-    for (const p of this.state.players) {
-      if (p.team !== humanTeam) this.inputProviders.set(p.id, createTurret(options.seed, p.id, dummies));
-    }
+    this.installProviders();
     for (const p of this.state.players) {
       this.candidates.push({ id: p.id, team: p.team, status: p.status, x: 0, y: 0, z: 0, height: 0 });
     }
     window.addEventListener('resize', this.onResize);
     if (this.debug) (window as unknown as { __ovalgun?: { session: GameSession } }).__ovalgun = { session: this };
+  }
+
+  /** Vrai quand le match est terminé (écran de fin). */
+  get ended(): boolean {
+    return this.state.phase === 'ended';
+  }
+
+  /** Nouveau match (seed = options.seed + matchIndex), en phase de coup d'envoi. */
+  private newMatch(): MatchState {
+    const o = this.options;
+    // Le joueur humain reçoit le ballon aux coups d'envoi de son équipe (sinon il ne le touchait jamais : le receveur
+    // par défaut est le plus central de la formation, toujours un bot). En autopilote : défaut (le plus central).
+    const humanIndex = this.humanId % o.teamSize;
+    const humanTeam = this.humanId < o.teamSize ? 0 : 1;
+    const receivers: [number, number] = [-1, -1];
+    if (!this.autopilot) receivers[humanTeam] = humanIndex;
+    return createMatch({
+      teamSize: o.teamSize,
+      seed: o.seed + this.matchIndex,
+      roles: assignRoles(o.teamSize, o.humanRole),
+      training: o.training ?? false,
+      kickoffReceivers: receivers,
+    });
+  }
+
+  /** Vrai si le joueur 0 est piloté par un bot (?debug&autopilot). */
+  get autopilot(): boolean {
+    return this.options.autopilot ?? false;
+  }
+
+  /**
+   * Producteurs d'entrées des joueurs non humains (coéquipiers ET adversaires ; le joueur 0 aussi en autopilote),
+   * recréés à chaque match : un bot par joueur (createBot), mémoire et PRNG propres dérivés de la seed du match et de
+   * l'id. `passive` : aucun bot (entrée neutre qui garde la visée, voir tick()).
+   */
+  private installProviders(): void {
+    this.inputProviders.clear();
+    if (this.options.passive ?? false) return;
+    const seed = this.options.seed + this.matchIndex;
+    const difficulty = this.options.difficulty ?? DEFAULT_BOT_DIFFICULTY;
+    // Les bots savent quel joueur est humain : ils se répartissent les rôles (pression, course au ballon, repli…)
+    // sans compter sur lui (bots/tactics.ts). En autopilote, tout le monde est un bot.
+    const externalIds = this.autopilot ? [] : [this.humanId];
+    for (const p of this.state.players) {
+      if (p.id !== this.humanId || this.autopilot) this.inputProviders.set(p.id, createBot(p.id, difficulty, seed, { externalIds }));
+    }
+  }
+
+  /**
+   * Relance un match (bouton « Rejouer » / A sur l'écran de fin) : nouvel état, nouveaux producteurs d'entrées, rendu
+   * reconstruit, HUD remis à zéro, entrées relâchées (le A qui relance ne fait pas sauter). Au clavier, l'UI demande
+   * ensuite le pointer lock (`requestPlay`, dans le geste utilisateur).
+   */
+  restart(): void {
+    this.matchIndex++;
+    this.state = this.newMatch();
+    this.prev = cloneState(this.state);
+    this.renderer.setMatch(this.state, this.humanId);
+    this.installProviders();
+    this.combatHud.reset();
+    this.matchHud.reset();
+    this.feedback = null;
+    this.pendingGiveBall = false;
+    this.pendingResetBall = false;
+    this.input.releaseAll();
+    const me = this.state.players[this.humanId];
+    this.input.setOrientation(me.yaw, me.pitch);
+    this.loopStep.reset();
+    // Au clavier (hors ?debug), on attend le pointer lock demandé par l'UI : l'overlay de pause sert de repli.
+    if (!this.debug && this.input.activeDevice === 'keyboard') this.setPaused(true);
   }
 
   start(): void {
@@ -239,10 +324,12 @@ export class GameSession {
     if (dt > 0) this.fps += (1 / dt - this.fps) * 0.05;
 
     const padLost = this.input.pollGamepad();
-    // Manette active débranchée en jeu (batterie, câble) : pause, comme sur console.
-    if (padLost && !this.paused && !this.debug) this.setPaused(true);
-    if (this.input.consumePauseRequest()) this.setPaused(!this.paused);
-    if (this.input.consumeConfirm() && this.paused) this.setPaused(false);
+    // Manette active débranchée en jeu (batterie, câble) : pause, comme sur console (pas sur l'écran de fin).
+    if (padLost && !this.paused && !this.debug && !this.ended) this.setPaused(true);
+    if (this.input.consumePauseRequest() && !this.ended) this.setPaused(!this.paused);
+    const confirm = this.input.consumeConfirm();
+    if (confirm && this.paused) this.setPaused(false);
+    else if (confirm && this.ended && this.matchHud.canReplay(now)) this.restart();
     const me = this.state.players[this.humanId];
     this.input.setCarrier(isCarrier(this.state, me));
 
@@ -259,16 +346,25 @@ export class GameSession {
     }
 
     const alpha = this.loopStep.alpha;
-    this.renderer.render(
-      this.prev,
-      this.state,
-      alpha,
-      { localId: this.humanId, yaw: this.input.yaw, pitch: this.input.pitch, aiming: this.input.aiming },
-      dt,
-      now,
-    );
+    this.renderer.render(this.prev, this.state, alpha, this.view(alpha), dt, now);
     this.onFrame?.(this.snapshot());
   };
+
+  /**
+   * Regard de la caméra locale : celui de la souris / manette (non interpolé, visée réactive) ; en autopilote, celui du
+   * bot (yaw / pitch du joueur 0 interpolés entre les deux derniers ticks).
+   */
+  private view(alpha: number): { localId: number; yaw: number; pitch: number; aiming: boolean } {
+    if (!this.autopilot) return { localId: this.humanId, yaw: this.input.yaw, pitch: this.input.pitch, aiming: this.input.aiming };
+    const pc = this.state.players[this.humanId];
+    const pp = this.prev.players[this.humanId] ?? pc;
+    return {
+      localId: this.humanId,
+      yaw: lerpAngle(pp.yaw, pc.yaw, alpha),
+      pitch: pp.pitch + (pc.pitch - pp.pitch) * alpha,
+      aiming: (pc.lastButtons & Buttons.AIM) !== 0,
+    };
+  }
 
   /** Un tick de simulation : outils de test en attente, entrées de tous les joueurs, puis step. */
   private tick(nowSec: number): void {
@@ -276,7 +372,7 @@ export class GameSession {
     this.prev = cloneState(this.state);
     const frame: Record<number, PlayerInput> = {};
     for (const p of this.state.players) {
-      if (p.id === this.humanId) {
+      if (p.id === this.humanId && !this.autopilot) {
         frame[p.id] = this.input.sample();
         continue;
       }
@@ -286,6 +382,16 @@ export class GameSession {
     step(this.state, frame as InputFrame);
     const me = this.state.players[this.humanId];
     const events = this.state.events;
+    this.matchHud.handleEvents(events, this.state, nowSec);
+    for (const e of events) {
+      // Remise en jeu : la caméra du joueur local regarde l'en-but adverse (la sim applique ce yaw au tick suivant).
+      if (e.type === 'kickoff') this.input.setOrientation(attackYaw(me.team), 0);
+      // Fin du match : tout est relâché, la souris redevient libre pour l'écran de fin (sans mise en pause).
+      if (e.type === 'match_end') {
+        this.input.releaseAll();
+        this.input.exitPointerLock();
+      }
+    }
     this.haptics.handleEvents(events, me.id, me.team, nowSec, this.input.activeDevice === 'gamepad' ? this.input.activeGamepad : null);
     this.renderer.handleEvents(events, this.state, nowSec, this.prev);
     this.combatHud.handleEvents(events, this.state, this.humanId, nowSec);
@@ -300,8 +406,8 @@ export class GameSession {
    * Passent par les fonctions pures de la sim (debugGiveBall / debugResetBall), déterministes.
    */
   private applyDebugTools(nowSec: number): void {
-    if (this.pendingResetBall) {
-      debugResetBall(this.state);
+    // Refusés hors du jeu (pause d'essai, fin ; « au centre » aussi pendant le décompte) : pas de message alors.
+    if (this.pendingResetBall && debugResetBall(this.state)) {
       this.showFeedback({ text: 'Ballon au centre', kind: 'info' }, nowSec);
     }
     if (this.pendingGiveBall && debugGiveBall(this.state, this.humanId)) {
@@ -389,6 +495,7 @@ export class GameSession {
       passTarget: this.renderer.passTargetId,
       feedback: this.feedback !== null && this.lastTime < this.feedbackUntil ? { ...this.feedback, seq: this.feedbackSeq } : null,
       debugTools: this.debugTools,
+      match: this.matchHud.frame(s, this.humanId, this.lastTime),
     };
   }
 

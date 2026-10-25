@@ -45,6 +45,8 @@ export function fxForEvent(e: MatchEvent, state: MatchState): FxRequest | null {
       return at(e.playerId, FX.getup);
     case 'ability':
       return at(e.playerId, FX.ability);
+    case 'try':
+      return at(e.scorerId, FX.try, state.ball.pos);
     default:
       return null;
   }

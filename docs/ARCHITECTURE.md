@@ -47,11 +47,17 @@ NEUTRAL_INPUT, makeInput(partial), Buttons, constantes, types…
 createField, groundHeight, supportHeight, groundNormal, faceContact      // terrain, partagé avec le rendu
 aimOrigin(feet, yaw)                                                    // origine de visée (§3), partagée avec la caméra
 carryPosition(feet, yaw, out?)                                          // position du ballon porté, partagée avec le rendu
-placeTeamInFormation, formationSlot                                     // placement (remises en jeu)
+placeTeamInFormation, formationSlot, placeForKickoff, kickoffDistance,  // placement (coup d'envoi, remises en jeu)
+kickoffCarrierIndex
+setupKickoff(state, team, freezeSec?), startPlayNow(state), isFrozenPhase // phases (étape 6 ; startPlayNow : OUTIL DE TEST, entre deux step)
+attackDir, attackYaw, opponentTeam, ownTryLineZ, opponentTryLineZ,      // lectures PURES de l'état (étape 6 : bots, HUD, tests, §11)
+distanceToTryLine, isInOpponentInGoal, isInOwnInGoal, isPlayerActive,
+teamPlayers, activePlayers, ballCarrier, possessionTeam, isLive,
+ballLandingPoint, clockSeconds, phaseSeconds
 selectPassTarget(state, carrierId, yaw) -> PassTarget | null            // visée assistée (PURE : le rendu l'appelle à chaque frame)
 passAimDirection(team, yaw), planPass, kickLaunch, predictBallLanding,  // trajectoires du porteur (PURES : rendu, bots)
 ballisticVelocity, ballSpeedMult, backwardZ, canShoot, canCarrierAct
-debugGiveBall(state, id), debugResetBall(state)                         // OUTILS DE TEST, entre deux step (?debug / entraînement)
+debugGiveBall(state, id), debugResetBall(state)                         // OUTILS DE TEST, entre deux step (?debug / entraînement) ; refusés en 'try' / 'ended' (reset : aussi en 'kickoff')
 fireOverridesSprint, fireIntervalTicks, spreadDirection, weaponImplemented // tir (étape 5, PURES : HUD, bots, tests)
 damageFalloff, damageAmount, isHittable                                 // dégâts, cible touchable
 segmentCapsuleEntry, segmentTerrainEntry                                // intersections balayées des projectiles
@@ -71,7 +77,8 @@ abilityActive, abilityImplemented                                       // capac
   `lastButtons` : un bouton encore maintenu au tick suivant ne crée pas de faux front montant (pas de double saut).
 - `state.config` est la configuration **normalisée** (`Required<MatchConfig>`) : tous les champs sont renseignés.
 - Les entrées sont **assainies** par la sim (valeurs non finies ignorées, déplacement borné à [-1, 1] puis normalisé
-  si sa norme dépasse 1, bits inconnus retirés) : aucune entrée (client, bot, réseau) ne peut injecter de NaN dans l'état.
+  si sa norme dépasse 1, bits inconnus retirés, `-0` ramené à `0`) : aucune entrée (client, bot, réseau) ne peut injecter de NaN
+  ni de `-0` dans l'état (un bot envoie souvent `direction × 0 = -0`).
 - `dt` différent de `TICK_DT` => exception (le déterminisme repose sur le pas fixe).
 - Pas de `-0` créé dans l'état statique (il deviendrait `0` après un aller-retour JSON) : on écrit `0 - v` plutôt
   que `-v` (formation, miroir du terrain, normale du sol) et un test le vérifie sur `createMatch`. Le test
@@ -80,7 +87,8 @@ abilityActive, abilityImplemented                                       // capac
 Ordre des opérations dans `step` (à respecter et documenter dans `match.ts`) :
 
 1. `events = []`, `tick++`.
-2. Phase : décompte `kickoff` -> `play` ; décompte `try` -> remise en jeu.
+2. Phase : décompte `kickoff` -> `play` ; décompte `try` -> remise en jeu. En `ended` : seules la visée (étape 3) et
+   `lastButtons` (étape 12) sont traitées, puis `step` s'arrête (rien d'autre n'avance, §11).
 3. Pour chaque joueur (ordre des ids) : lecture de l'entrée, fronts montants (`buttons & ~lastButtons`), yaw/pitch (pitch borné).
    En `kickoff`/`try`/`ended` : seule la visée est appliquée (joueurs figés).
 4. Minuteries (cooldowns ; statut down/getting_up, rechargement, délai de régénération ; durée / cooldown des capacités).
@@ -89,12 +97,14 @@ Ordre des opérations dans `step` (à respecter et documenter dans `match.ts`) :
 6. Projectiles : déplacement balayé, collisions joueurs / boucliers / terrain -> dégâts, explosions, knockback (`projectiles.ts`),
    **avant le déplacement** (capsules au début du tick, là où le tireur les voyait, §10) ; puis décompte de l'invulnérabilité
    (`tickInvulnerability` : les projectiles voient la valeur du tick précédent).
-7. Déplacement : esquive / glissade / plongeon / saut / course, gravité, terrain (marche, grimpe), murs invisibles, séparation entre joueurs.
+7. Déplacement : esquive / glissade / plongeon / saut / course, gravité, terrain (marche, grimpe), murs invisibles, séparation entre joueurs ;
+   puis essai du porteur dont les pieds viennent de franchir la ligne (`updateTryAfterMovement`, AVANT les plaquages de l'étape 8, §11).
 8. Stabilité : plaquages (statut down, lâcher du ballon), régénération (`stability.ts`).
 9. Ballon : suit le porteur, ou physique (gravité, rebonds seedés, frottement), puis ramassage / réception / interception
    (`updateBallPickup(state, from, fromMode)` reçoit la position et le mode du ballon AVANT sa physique : test balayé).
 10. Zones (ralentissement), mêlée.
-11. Règles : essai, chrono, dernière minute, fin de match.
+11. Règles (tick joué : phase `play` après l'étape 2, même si un essai de l'étape 7 l'a passée à `try`) : essai (ballon ramassé / attrapé
+    dans l'en-but à l'étape 9), PUIS chrono, dernière minute, fin de match (§11).
 12. `lastButtons = buttons` (sauf entrée manquante).
 
 ## 3. Repère, angles, visée
@@ -152,9 +162,12 @@ Voir l'en-tête de `src/sim/vec.ts`.
   pendant `PASS_PICKUP_BLOCK_SEC`.
   Détails et décisions de l'étape 4 : §9.
 - **Essai** : le porteur franchit la ligne d'essai adverse (pas besoin d'aplatir). Le plongeon sert à franchir les derniers mètres invulnérable.
-- **Remise en jeu** : l'équipe qui a encaissé est placée `KICKOFF_RECEIVE_OFFSET` devant sa ligne d'essai, ballon donné au joueur le plus central ;
-  l'autre équipe derrière la médiane (`KICKOFF_DEFEND_OFFSET`). Joueurs figés `KICKOFF_FREEZE_SEC`. Coup d'envoi initial : `FIRST_KICKOFF_TEAM`.
-- **Fin du match** : à 0 au chrono, immédiatement. Égalité possible.
+  Plaqué au tick même où ses pieds franchissent la ligne : essai accordé (vérifié après le déplacement, avant les plaquages, §11).
+- **Remise en jeu** : l'équipe qui a encaissé est placée `KICKOFF_RECEIVE_OFFSET` devant sa ligne d'essai, ballon donné au receveur désigné
+  (`config.kickoffReceivers` : le joueur humain en solo) ou, par défaut, au plus central ; l'autre équipe derrière la médiane
+  (`KICKOFF_DEFEND_OFFSET`). Joueurs figés `FIRST_KICKOFF_FREEZE_SEC` au premier coup d'envoi, `KICKOFF_FREEZE_SEC` aux remises en jeu.
+  Coup d'envoi initial : `FIRST_KICKOFF_TEAM` (`config.firstKickoffTeam`). Détails et décisions : §11.
+- **Fin du match** : à 0 au chrono, immédiatement. Égalité possible. Un essai marqué au tick même où le chrono atteint 0 compte (§11).
 - **Armes** : toutes à projectiles (rapides pour SMG/pompe, balistiques pour grenades). Visibles, esquivables, déterministes.
   Pas de tir ami. Le porteur ne tire pas. Au sol, en glissade, en plongeon, en grimpe, bouclier levé (étape 7) : pas de tir.
   Le sprint n'empêche pas de tirer : tirer coupe le sprint (§10).
@@ -164,9 +177,12 @@ Voir l'en-tête de `src/sim/vec.ts`.
   bloqué au centre, zone de capture `SCRUM_CAPTURE_SEC` ; l'équipe la plus nombreuse dans la zone gagne, ballon donné à son joueur le plus proche.
   Égalité : prolongation `SCRUM_TIE_EXTRA_SEC`, puis tirage au sort seedé.
 - **Dernière minute** : `LAST_MINUTE_COOLDOWN_MULT` sur les cooldowns, `LAST_MINUTE_BALL_SPEED_MULT` sur passes / coups de pied.
-- **Bots** : la difficulté (`BOT_DIFFICULTY`) règle temps de réaction, erreur de visée, vitesse de rotation. Leur aléatoire passe par
-  leur propre PRNG seedé (dérivé de la seed du match et de leur id), stocké dans leur mémoire interne (pas dans MatchState).
-- **Mode entraînement** (`config.training`) : chrono figé, pas de fin de match — pour régler le feeling du porteur.
+- **Bots** : la difficulté (`BOT_DIFFICULTY`) règle temps de réaction, erreur de visée, vitesse de rotation, intervalle de décision,
+  portée d'engagement, réflexe d'esquive et avance sur cible. Leur aléatoire passe par leur propre PRNG seedé (dérivé de la seed du
+  match et de leur id), stocké dans leur mémoire interne (pas dans MatchState). Détails : §12.
+- **Mode entraînement** (`config.training`) : chrono figé, pas de dernière minute ni de fin de match — pour régler le feeling du porteur.
+  Tout le reste est identique (coup d'envoi, essais, remises en jeu). Côté client : `?training` (étape 6 ; avant, le prototype était
+  toujours en entraînement).
 
 ## 5. Rendu
 
@@ -196,7 +212,7 @@ Voir l'en-tête de `src/sim/vec.ts`.
 | `body.ts` | Intégration contre le terrain (sous-pas, marche, grimpe, obstacles), gravité, murs invisibles, séparation. |
 | `ball.ts` | Ballon porté / physique (gravité, traînée, rebonds seedés, roulement, murs, faces de murets). |
 | `field.ts` | Terrain : `createField`, `groundHeight`, `supportHeight`, `groundGradient`/`groundNormal`, `faceContact`. |
-| `formation.ts` | Placement des équipes (début de match, remises en jeu de l'étape 6). |
+| `formation.ts` | Placement des équipes : formation, coup d'envoi / remises en jeu (`placeForKickoff`, étape 6). |
 | `serialize.ts` | `cloneState`, `hashState`. |
 | `carrier.ts` | **Étape 4** : passe, coup de pied, plongeon (`tryStartDive`, appelé quand le porteur presse SLIDE), ramassage, réception (§9). |
 | `playerStatus.ts` | `aimOrigin`, `isCarrier`, `playerHeight`, `cooldownTicks` (partagés par player.ts, carrier.ts et combat.ts sans import circulaire ; ré-exportés par player.ts). |
@@ -204,7 +220,8 @@ Voir l'en-tête de `src/sim/vec.ts`.
 | `projectiles.ts` | **Étape 5** : déplacement balayé des projectiles, collisions capsules / relief, points d'extension bouclier et grenade (§10). |
 | `stability.ts` | **Étape 5** : dégâts (atténuation, porteur), plaquage, lâcher du ballon, régénération (§10). |
 | `raycast.ts` | **Étape 5** : intersections segment / capsule et segment / relief (exactes ; buttes échantillonnées). |
-| `rules.ts` | Décompte kickoff -> play ; **étape 6** (vide) : essai, remise en jeu, chrono, fin. |
+| `rules.ts` | **Étape 6** : phases (coup d'envoi, essai, pause, remise en jeu, fin), chrono, dernière minute, `setupKickoff`, `startPlayNow` (§11). |
+| `queries.ts` | **Étape 6** : lectures PURES de l'état pour les bots, le HUD et les tests (sens d'attaque, lignes d'essai, joueurs actifs, possession, point de chute, §11). |
 | `abilities.ts` | **Étape 5** : sprint boosté de l'ailier (durée, cooldown, multiplicateurs) ; **étape 7** : bouclier, zones. |
 | `scrum.ts` | **Étape 7** (vide) : mêlée. |
 
@@ -238,8 +255,9 @@ Décisions prises à l'étape 2 :
   `BALL_MIN_BOUNCE_SPEED` (4 tirages `state.rng` : restitution, déviation, culbute, vrille), sinon roulement. Un ballon
   qui roulait déjà au sous-pas précédent ne rebondit jamais (pied de rampe : il suit le nouveau plan, sans tirage).
   La gravité projetée sur la pente fait descendre les pentes où `BALL_GRAVITY·sin θ > BALL_GROUND_FRICTION` (flancs des
-  buttes) ; sur une pente plus douce (rampes), un ballon arrêté reste posé. Prototype : le match démarre en `play`, ballon lâché au centre
-  (`BALL_DROP_HEIGHT`, direction tirée au sort) ; l'étape 6 le remplacera par un coup d'envoi.
+  buttes) ; sur une pente plus douce (rampes), un ballon arrêté reste posé. Prototype : le match démarrait en `play`, ballon lâché au centre
+  (`BALL_DROP_HEIGHT`, direction tirée au sort) ; remplacé à l'étape 6 par un coup d'envoi (§11). Les tests des étapes 2 à 5 gardent ce
+  départ grâce au helper `createPlayMatch` (tests/sim/helpers.ts).
 - **Manette / entrée analogique** : la sim accepte une norme de déplacement < 1 (stick peu incliné) : vitesse cible
   proportionnelle jusqu'à `MOVE_INPUT_FULL_SPEED`, pleine vitesse au-delà. Le sprint sépare **direction** et
   **inclinaison** : direction dans le cône avant (cos ≥ `SPRINT_MIN_FORWARD_COS`, la diagonale clavier à 45° sprinte, le
@@ -269,7 +287,7 @@ Décisions prises à l'étape 2 :
 | `game/roles.ts` | Composition des équipes (humain = joueur 0 de l'équipe 0). |
 | `render/CombatFxView.ts` | **Étape 5** : traceurs, flashs de bouche, étincelles, éclats de plaquage (pools préalloués). |
 | `game/combatHud.ts` | **Étape 5** : hitmarker, direction des tirs reçus, vignette (pur, testé). |
-| `bots/turret.ts` | **Étape 5** : tourelle d'entraînement (InputProvider pur, PRNG propre), remplacée par les bots de l'étape 6. |
+| `bots/turret.ts` | **Étape 5** : tourelle d'entraînement (InputProvider pur, PRNG propre), remplacée dans le jeu par les bots de l'étape 6 (§12) ; gardée pour ses tests. |
 | `bots/aim.ts` | **Étape 5** : visée des bots (`leadAimPoint` : avance sur une cible qui court ; `aimAnglesTo`), pure, réutilisée à l'étape 6. |
 
 Décisions prises à l'étape 3 :
@@ -305,7 +323,8 @@ Décisions prises à l'étape 3 :
   `AIM_ASSIST_TRACKING` × déplacement angulaire de la cible (même cible qu'à la frame précédente), seulement si un stick
   est incliné (`AIM_ASSIST_MIN_INPUT`), borné à `AIM_ASSIST_MAX_TRACK_DEG_PER_SEC`.
 - **Vibrations** : `GAMEPAD_RUMBLE_EFFECTS` (constantes) ; branché dès maintenant : atterrissage brutal
-  (`RUMBLE_HARD_LANDING_SPEED`) ; prêts : tir reçu, plaquage subi / réussi, réception, essai marqué / encaissé.
+  (`RUMBLE_HARD_LANDING_SPEED`) ; prêts : tir reçu, plaquage subi / réussi, réception, essai marqué / encaissé (branchés aux
+  étapes 4 à 6, plus la fin du match à l'étape 6).
 - **Ballon porté** : `BALL_CARRY_SIDE` porté à 0,5 m (> `PLAYER_RADIUS`) pour que le ballon sorte de la capsule ; l'arme du
   porteur est masquée (il ne tire pas). Le rendu replace le ballon porté avec `carryPosition` (la fonction de `ball.ts`) à
   partir du porteur interpolé (et du yaw courant pour le joueur local).
@@ -558,3 +577,235 @@ Décisions prises à l'étape 5 :
   `STYLE.vignetteFromFraction` de stabilité + flash à chaque tir reçu. Mini-HUD provisoire (stabilité, munitions / rechargement,
   capacité, esquive) dans `App.svelte` ; retours texte « Plaqué ! », « Plaquage ! », « Plaqué ! Ballon lâché ». Vibrations : tir
   reçu (léger), plaquage subi (fort), plaquage réussi (court) — table `GAMEPAD_RUMBLE_EFFECTS`.
+
+## 11. Étape 6 : boucle de match complète (1re partie : simulation et HUD minimal)
+
+| Fichier | Rôle |
+|---|---|
+| `sim/rules.ts` | `updatePhase` (étape 2 : décomptes `kickoff` -> `play`, `try` -> remise en jeu), `updateRules` (étape 11 : essai, chrono, dernière minute, fin), `setupKickoff` (placement + remise à zéro), `startPlayNow`, `isFrozenPhase`. |
+| `sim/formation.ts` | `placeForKickoff`, `kickoffDistance`, `kickoffCarrierIndex`. |
+| `sim/queries.ts` | Lectures PURES pour les bots / le HUD (tableau ci-dessous). |
+| `sim/match.ts` | `createMatch` démarre en `kickoff` ; `step` s'arrête après la visée en `ended`. |
+| `game/matchHud.ts` | HUD de match PUR (testé) : chrono `m:ss`, « 3, 2, 1, JOUEZ ! », bannière d'essai, dernière minute, écran de fin (stats). |
+| `game/session.ts` | Événements -> `MatchHud`, caméra retournée à chaque remise en jeu, fin (pointer lock relâché sans pause), `restart()`, `installProviders()`. |
+| `ui/App.svelte` | Score / chrono en haut, compte à rebours, bannières, écran de fin (bouton « Rejouer », Entrée, A). |
+
+Décisions :
+
+- **Cycle des phases** : `createMatch` -> `kickoff` (`setupKickoff(config.firstKickoffTeam)`) -> `play` -> essai -> `try`
+  (`TRY_PAUSE_SEC`) -> `kickoff` reçu par l'équipe qui a encaissé -> `play`… ; chrono à 0 -> `ended` (définitif).
+  Durées exactes en ticks : un `kickoff` au tick K est suivi de `play` au tick K + secToTicks(`KICKOFF_FREEZE_SEC`)
+  (`FIRST_KICKOFF_FREEZE_SEC` pour le premier ; le tick du coup de sifflet est déjà joué : on bouge et le chrono tourne) ; un essai au tick T est suivi de la remise en jeu au tick
+  T + secToTicks(`TRY_PAUSE_SEC`). L'événement `kickoff` du premier coup d'envoi est déjà dans `state.events` à la création (le client
+  peut le lire avant le premier `step`, qui vide la liste comme d'habitude).
+- **Temps figé** (correction de l'étape 6) : premier coup d'envoi `FIRST_KICKOFF_FREEZE_SEC` = 3 s (décompte « 3, 2, 1 » complet, on lit
+  le placement), remises en jeu `KICKOFF_FREEZE_SEC` = 2 s (« 2, 1 ») et pause d'essai `TRY_PAUSE_SEC` = 2 s : un essai coûte 4 s figées
+  au lieu de 6 (les matchs bots contre bots passaient ≈ 30 % du temps réel figés). `setupKickoff(state, team, freezeSec)` reçoit la durée.
+- **Placement** (`placeForKickoff`) : la formation existante (étalée sur `FORMATION_WIDTH_FRACTION` de la largeur) ; équipe qui reçoit à
+  `tryLineZ − KICKOFF_RECEIVE_OFFSET × échelle` de la médiane (4 m devant sa ligne), l'autre à `KICKOFF_DEFEND_OFFSET × échelle` derrière
+  la médiane dans son camp ; tous orientés vers l'en-but adverse (`attackYaw`). Ces positions sont sur du plat (test 3v3 / 5v5, deux
+  équipes). Ballon **porté** par le joueur le plus central de l'équipe qui reçoit (|x| minimal, égalité : plus petit id ; en 3v3 / 5v5,
+  celui du milieu). Aucun tirage aléatoire (`rng` intact). **Receveur désigné** (correction de l'étape 6) : `config.kickoffReceivers`
+  (`[équipe 0, équipe 1]`, index dans l'équipe, −1 = le plus central, validé par `normalizeConfig`) ; la session y met l'index du
+  joueur humain pour son équipe (hors autopilote) : sinon l'humain, toujours à gauche de la formation, ne recevait jamais le ballon.
+- **Remise à zéro à chaque remise en jeu** (`setupKickoff`) : mouvement (vitesse, sol, sauts, mouvement spécial) et état transitoire de
+  chaque joueur (debout, stabilité pleine, délai de régénération, invulnérabilité, cooldowns d'esquive / glissade / plongeon / tir /
+  capacité, capacité inactive, chargeur plein, pas de rechargement, ramassage autorisé, `lastHitBy`), projectiles, zones et mêlée
+  (étape 7), ballon (lanceur, cibles, vol, rotations). **Conservés** : score, chrono, `lastMinute`, `tick`, stats, `rng`,
+  `nextEntityId` (ids toujours uniques), `lastButtons` (suivi des fronts : un bouton maintenu pendant la remise en jeu ne crée pas de
+  faux appui au coup de sifflet). `yaw`/`pitch` sont remis face à l'en-but adverse puis suivent les entrées (aim libre pendant le décompte).
+- **Essai** (`checkTry`, appelé juste après le déplacement — étape 7, `updateTryAfterMovement` — puis à l'étape 11) : porteur `active` dont les PIEDS sont dans l'en-but adverse, ligne comprise (`isInOpponentInGoal` :
+  équipe 0 z ≥ +tryLineZ, équipe 1 z ≤ −tryLineZ), quel que soit son mouvement (course, glissade, esquive, saut, **plongeon** : on
+  aplatit en plongeant). Couvre le ballon ramassé / reçu dans l'en-but adverse : le ramassage (étape 9) précède les règles, donc essai au
+  même tick que `pickup` / `catch`. **Plaquage et essai au même tick** (correction de l'étape 6) : le porteur dont les pieds franchissent
+  la ligne pendant le déplacement marque AVANT les plaquages de l'étape 8, même si un projectile de l'étape 6 a vidé sa jauge ce tick
+  (il tombe ensuite à l'étape 8, après l'événement `try` ; le ballon est déjà mort : pas de `drop`). Plaqué avant d'avoir franchi la
+  ligne : pas d'essai, ballon lâché (tests dans les deux sens). Les étapes 8 à 10 du tick d'un essai continuent (ballon mort, inerte) et
+  le chrono décompte ce tick (`updateRules(state, played)`). Dans son propre en-but : rien. Effets : `score += TRY_POINTS`, `stats.tries`, événement `try`,
+  ballon `dead` posé au sol sous les mains du marqueur (`throwerId` = marqueur), projectiles retirés (rien ne touche pendant la pause),
+  `kickoffTeam` = l'équipe qui a encaissé, phase `try`. Pendant la pause : joueurs figés (seule la visée bouge), minuteries qui
+  continuent (sans effet : tout est remis à zéro à la remise en jeu).
+- **Chrono** : décompté d'un tick à chaque tick joué (phase `play` à l'étape 11), jamais en `kickoff` / `try` / `ended`, jamais en
+  entraînement. La mêlée (étape 7) est un mode du ballon pendant `play` : le chrono y tournera. **Ordre de l'étape 11** : essai, puis
+  chrono ; un essai au tick où le chrono atteint 0 compte (événements `try` puis `match_end`, score final compris) et la fin l'emporte
+  sur la pause d'essai.
+- **Dernière minute** : dès que `clockTicks ≤ secToTicks(LAST_MINUTE_SEC)`, `lastMinute = true` et un unique événement `last_minute`.
+  Les multiplicateurs existants s'appliquent à partir du tick suivant : `cooldownTicks` (esquive, glissade, plongeon, rechargement,
+  capacité — pas la cadence de tir) et `ballSpeedMult` (passes, coups de pied) ; vérifié par un test (cooldown d'esquive, vitesse du
+  coup de pied, durée de vol d'une passe).
+- **Fin** (chrono à 0) : phase `ended`, événement `match_end` avec le score (égalité possible), ballon `dead` posé au sol, projectiles
+  retirés, vitesses des joueurs à 0. Ensuite `step` ne fait plus que `tick++`, la visée et `lastButtons` (test : tout le reste du JSON
+  identique après 90 ticks d'entrées quelconques). Outils de test refusés (`debugGiveBall` / `debugResetBall` renvoient faux en `try` et
+  `ended` ; `debugResetBall` aussi pendant le décompte : un ballon lâché au centre faisait partir le coup de sifflet ballon libre, sans
+  porteur) ; `startPlayNow` n'agit qu'en `kickoff`. Côté client, « Ballon au centre » ne s'affiche que si le reset a eu lieu.
+- **Tests** : `createMatch` part désormais d'un coup d'envoi. Les tests des étapes 2 à 5, écrits pour un départ « en jeu, ballon lâché au
+  centre », utilisent `createPlayMatch` (tests/sim/helpers.ts) qui reproduit exactement l'ancien état initial (même tirage `rng`) avec les
+  règles de l'étape 6 actives. Le test « seeds différentes » compare désormais la trajectoire du ballon (une remise en jeu replace le
+  ballon à l'identique quelle que soit la seed). `tests/sim/rules.test.ts` couvre la boucle complète, dont un match entier scripté
+  (déterminisme, aller-retour JSON).
+- **Lectures pour les bots** (`queries.ts`, PURES, exportées) :
+  | Fonction | Rôle |
+  |---|---|
+  | `attackDir(team)` | +1 (équipe 0) / −1 (équipe 1) : sens d'attaque sur Z (l'opposé de `backwardZ`). |
+  | `attackYaw(team)` | Yaw face à l'en-but adverse (0 / π). |
+  | `opponentTeam(team)` | L'autre équipe. |
+  | `ownTryLineZ`, `opponentTryLineZ(state, team)` | Z de la ligne défendue / attaquée. |
+  | `distanceToTryLine(state, team, z)` | Distance à la ligne adverse le long de Z (≤ 0 : dans l'en-but adverse). |
+  | `isInOpponentInGoal`, `isInOwnInGoal(state, team, z)` | En-buts, ligne comprise. |
+  | `isPlayerActive(p)`, `teamPlayers`, `activePlayers(state, team)` | Joueurs debout ; listes par id croissant (nouveaux tableaux). |
+  | `ballCarrier(state)`, `possessionTeam(state)` | Porteur (ou null), équipe en possession (ou −1 ; voir aussi `ball.lastTeam`). |
+  | `isLive(state)` | Phase `play` (actions, tirs, chrono). |
+  | `ballLandingPoint(state)` | Point de chute (`predictBallLanding` si le ballon vole, sinon sa position au sol). |
+  | `clockSeconds`, `phaseSeconds` | Chrono et temps restant de la phase, en secondes. |
+  Déjà disponibles : `predictBallLanding`, `selectPassTarget`, `planPass`, `kickLaunch`, `canCarrierAct`, `canShoot`, `isHittable`,
+  `backwardZ`, `isFrozenPhase`. Les bots n'agissent utilement qu'en `play` ; pendant `kickoff` / `try`, seule leur visée compte.
+- **Client** : vrai match par défaut (`?training` = entraînement, outils de test G / B disponibles comme en `?debug`). HUD minimal
+  (`matchHud.ts`, temps passé en paramètre) : score et chrono `m:ss` (arrondi supérieur, rouge clignotant en dernière minute, étiquette
+  « DERNIÈRE MINUTE » + bannière `STYLE.lastMinuteBannerSec`), décompte « 3, 2, 1 » (« 2, 1 » aux remises en jeu) avec l'équipe qui reçoit, « JOUEZ ! »
+  (`STYLE.playCallSec`), bannière « ESSAI ! » (équipe, marqueur, score) pendant la pause, anneaux dorés `FX.try` sur le marqueur. À chaque
+  `kickoff`, la caméra du joueur local est remise face à l'en-but adverse (`attackYaw` ; sinon la sim recevrait l'ancien yaw de la souris).
+  **Écran de fin** : VICTOIRE / DÉFAITE / ÉGALITÉ, score final, stats par joueur (essais, plaquages, passes réussies, interceptions,
+  précision = touches / projectiles tirés, « — » sans tir), équipe locale d'abord. « Rejouer » : bouton (souris), Entrée / Espace, A à la
+  manette, acceptés après `STYLE.endScreenInputDelaySec` (un saut en cours ne relance pas le match). À la fin, le pointer lock est relâché
+  SANS mise en pause (ni Start, ni manette débranchée ne mettent en pause l'écran de fin). `restart()` : seed suivante
+  (`options.seed + matchIndex`), état, rendu, producteurs d'entrées (`installProviders`), HUD remis à zéro ; au clavier hors `?debug`,
+  pause jusqu'au pointer lock demandé par le bouton (l'overlay sert de repli).
+- **Vibrations** : essai marqué par son équipe (`try`) / encaissé (`tryConceded`), fin du match (`matchEnd`, la plus prioritaire),
+  table `GAMEPAD_RUMBLE_EFFECTS`.
+- **Pour l'agent des bots (2e partie de l'étape 6)** : brancher les bots dans `GameSession.installProviders()` (contrat `InputProvider`,
+  mémoire et PRNG propres recréés à chaque match). Fait : voir §12 (les tourelles de l'étape 5 ne sont plus installées).
+
+
+## 12. Étape 6 : bots (2e partie)
+
+| Fichier | Rôle |
+|---|---|
+| `bots/bot.ts` | `createBot(playerId, difficulty, seed)` -> `InputProvider` ; `botInput(mem, state, id, debug?)` (un tick, orchestration ci-dessous). |
+| `bots/memory.ts` | `BotMemory` (sérialisable, hors MatchState) : PRNG propre, situation perçue / en attente, décision, visée lissée, réflexes, blocage. `Situation`, `TacticalRole`, `Decision`. |
+| `bots/perception.ts` | Temps de réaction (situation retardée), suivi des tirs reçus (fenêtre « sous le feu », réflexe armé après la réaction). |
+| `bots/tactics.ts` | Décision : rôle tactique, point visé, cible de tir (attaque, défense, ballon libre). |
+| `bots/carrierBrain.ts` | Porteur : direction de course échantillonnée, passe (via `selectPassTarget`), coup de pied (via `kickLaunch` + `predictBallLanding`), plongeon, esquive, sprint boosté. |
+| `bots/steering.ts` | Point visé -> direction monde (arrivée, ralentissement, écartement des coéquipiers), détection de blocage (saut + détour). |
+| `bots/aiming.ts` | Choix de la cible, erreur de visée lisse, rafales, AIM lointain, rechargement opportuniste. |
+| `bots/aim.ts` | (Étape 5) avance sur cible `leadAimPoint`, angles `aimAnglesTo`. |
+| `bots/world.ts` | Lectures géométriques communes (bornes du terrain, portée d'engagement, porteur perçu, bots de l'équipe `botsOf`, temps de course `timeTo`…). |
+
+Décisions :
+
+- **Contrat** : un bot est un `InputProvider` comme un humain ; `createBot` enferme une `BotMemory` dans une closure (aucune référence
+  au client : il tourne tel quel sur un serveur). Le MatchState n'est QUE lu (test : JSON identique avant / après chaque appel). Un appel
+  par tick est supposé ; un tick qui recule (nouveau match) remet la mémoire à zéro. PRNG propre : `deriveSeed(seed, id + 0x5b07)` (le sel
+  évite de rejouer la séquence de la tourelle de l'étape 5). Tous les réglages sont dans `constants.ts`, section BOTS (correction de
+  l'étape 6 : les derniers nombres en dur de tactics.ts / carrierBrain.ts / steering.ts y ont été déplacés).
+- **Joueurs externes** (correction de l'étape 6) : `createBot(id, difficulté, seed, { externalIds })` — les joueurs que ce bot sait NE PAS
+  être des bots (l'humain en solo ; un serveur y mettrait tous les humains), gardés dans `BotMemory.externalIds`. La répartition des
+  rôles (`botsOf`) se fait entre bots seulement : avant, un humain le plus proche du ballon ou du porteur prenait l'unique place de
+  chasseur ou de presseur et ne la tenait pas (68 % du temps de ballon libre sans chasseur bot avec un humain passif). Le client passe
+  `[humanId]` (vide en autopilote). Tests : humain immobile près du porteur => un bot presse ; près du ballon => les bots y vont.
+- **Perception retardée** : la situation discrète (phase, mode du ballon, porteur, cible de passe, dernière équipe en possession) n'est
+  prise en compte qu'après `reactionSec` (± `BOT_REACTION_JITTER`). Le délai court depuis le PREMIER changement ; si la situation change
+  encore, c'est la plus récente qui est adoptée à l'échéance (pas de famine quand le ballon change vite de mode). Exception : ce qui concerne
+  le bot lui-même (il prend / perd le ballon, une passe lui est destinée) est perçu aussitôt. Les positions sont lues en direct (le délai
+  porte sur les DÉCISIONS : pendant la réaction, l'ancienne décision continue, recalculée avec les positions courantes). La même réaction
+  s'applique à l'acquisition d'une nouvelle cible de tir et au premier réflexe d'esquive après un tir reçu.
+- **Décision** tous les `decisionSec` (± `BOT_DECISION_JITTER`, les bots ne décident pas tous au même tick) ou aussitôt qu'un changement est
+  perçu. Chaque bot calcule la répartition de toute son équipe (bots seulement) avec les mêmes règles déterministes (égalités : id
+  croissant) et prend sa part : aucune communication, pas de doublon (à la perception près). **Hystérésis** : celui qui tenait déjà un
+  rôle classé par distance (pression, repli, chasse) se compte `BOT_ROLE_HYSTERESIS_M` plus près (deux défenseurs à égale distance
+  n'échangent plus pression et marquage à chaque décision ; chacun ne connaît que SON rôle précédent : au pire un rôle brièvement doublé).
+  **Anticipation** (pression, soutien) avec une vitesse plafonnée à `runSpeed × BOT_LEAD_SPEED_CAP_MULT` (une esquive à 21 m/s faisait
+  sauter le point visé de 8 m : demi-tours en série).
+  - Attaque : porteur (§ ci-dessous) ; receveur d'une passe en vol : garde sa ligne (même direction, même sprint ; la passe vise sa course
+    anticipée, §9) ; les `BOT_SUPPORTERS_3V3/5V5` (1 / 2) coéquipiers les plus en retrait : soutien à `BOT_SUPPORT_LATERAL` × échelle sur le
+    côté et `BOT_SUPPORT_DEPTH` derrière le porteur anticipé (dans son cône de passe ; un soutien seul se met du côté le plus large) ; les
+    autres : espace devant (`BOT_SPACE_AHEAD` / `BOT_SPACE_LATERAL` × échelle). Ils ne tirent que sur un défenseur à moins de
+    `BOT_ESCORT_THREAT_DIST` du porteur (protection), sinon ils courent sans tirer.
+  - Défense : **dernier défenseur** (`cover`) : dès `BOT_COVER_MIN_DEFENDERS` (3) bots actifs, le mieux placé (de préférence déjà devant le
+    porteur, armé d'abord) tient TOUJOURS un point entre le porteur et notre en-but (`BOT_COVER_DEPTH` × échelle, au plus
+    `BOT_COVER_LINE_FRACTION` de la distance à la ligne) et tire sur le porteur ; avec moins de bots, seulement si personne n'est devant le
+    porteur — et alors AVANT la pression (courir derrière un porteur qui sprinte ne sert à rien : sans ce repli, 43–52 % du temps porté se
+    passait sans aucun défenseur devant). Puis les `BOT_PRESSERS_3V3/5V5` (2 / 2) plus proches convergent (position anticipée de
+    `BOT_PRESS_LEAD_SEC`) et tirent sur le porteur — un seul (`BOT_PRESSERS_OWN_THIRD`) quand le porteur est encore dans son propre tiers
+    (`BOT_OWN_THIRD_FRACTION`, typiquement juste après une remise en jeu : l'équipe qui reçoit n'est plus prise en tenaille sur sa ligne).
+    Les autres marquent les receveurs par danger décroissant (dans le cône de passe, démarqués, proches de notre en-but ; chacun au marqueur
+    libre le plus proche), placés `BOT_MARK_GOALSIDE` entre le receveur et notre en-but ; un marqueur tire sur le porteur s'il est à moins de
+    `BOT_MARK_SHOOT_CARRIER_DIST`, sur son receveur seulement si celui-ci est une menace directe (à moins de `BOT_ESCORT_THREAT_DIST` du
+    porteur), sinon il ne tire pas. Les bots **sans arme utilisable** (demi : grenades à l'étape 7) passent après les autres pour la pression
+    et le repli. Une passe adverse en vol est traitée comme si son receveur portait déjà le ballon.
+  - Ballon libre / coup de pied : les `BOT_BALL_CHASERS_3V3/5V5` (2 / 2 ; 1 -> 2 en 3v3) plus proches en temps de course vont au point de
+    chute prédit (`ballLandingPoint`), en le traversant (`BOT_CHASE_OVERSHOOT`), jusque contre les murs. **Pas de fusillade** : le chasseur
+    sprinte en regardant sa course (tirer couperait le sprint : il courait à 1,02 × runSpeed au lieu de 1,22) et ne tire que si un
+    adversaire arrive au ballon au moins `BOT_CHASE_SHOOT_MARGIN_SEC` avant lui ; les autres forment un rideau entre le ballon et leur en-but
+    (plus haut si leur équipe vient de taper) et ne tirent que sur l'adversaire qui arrivera le premier au ballon.
+  - Phases `kickoff` / `try` / `ended` et joueur au sol : aucun déplacement, regard tourné vers le ballon.
+- **Porteur** (`carrierBrain.ts`) : direction choisie parmi `BOT_CARRIER_DIRECTIONS` en éventail (±`BOT_CARRIER_DIR_SPREAD_DEG`), note =
+  progression − `BOT_CARRIER_AVOID_WEIGHT` × risque (proximité de sa course projetée aux adversaires projetés selon leur vitesse sur
+  `BOT_CARRIER_LOOKAHEAD_SEC`) − sortie du terrain + hystérésis ; évitement × `BOT_LINE_RUSH_AVOID_MULT` près de la ligne (il fonce). Sprint
+  si le chemin est libre. **Pressé** (adversaire devant / à côté — jusqu'à `BOT_PRESSURE_BESIDE_TOLERANCE` derrière — à moins de
+  `BOT_PRESSURE_RADIUS`, ou sous le feu avec une stabilité basse) : passe arrière vers le receveur démarqué (openness de la sim ≥
+  `BOT_PASS_MIN_OPENNESS`) et moins pressé que lui. Le receveur est cherché en essayant `BOT_PASS_YAW_SAMPLES` regards avec
+  `selectPassTarget` (la visée assistée de la sim, hystérésis comprise) ; le bot tourne ensuite son regard (rotation limitée) et presse
+  PASSE au tick où la visée assistée, évaluée avec le regard RÉELLEMENT envoyé, désigne ce receveur : la sim fait partir exactement la passe
+  prévue. **Encerclé** (`BOT_ENCIRCLED_COUNT` / `_5V5` adversaires à moins de `BOT_ENCIRCLED_RADIUS`) ou presque plaqué, sans passe : dans
+  son propre tiers, passe même peu démarquée (`BOT_PASS_MIN_OPENNESS_OWN_THIRD`) ; sinon **coup de pied** seulement s'il est utile
+  (correction de l'étape 6 : 31–49 % des possessions finissaient au pied, rendues à l'adversaire dans 57–70 % des cas) : directions
+  écartées si un adversaire passe près de la trajectoire de départ (contre : `KICK_CHARGE_DOWN_RADIUS` + `BOT_KICK_CHARGE_MARGIN` pendant
+  `KICK_CHARGE_DOWN_SEC` + `BOT_KICK_CHARGE_EXTRA_SEC`) ou si le point de chute tombe à moins de `BOT_KICK_LAND_MIN_LINE_DIST` × échelle de la
+  ligne adverse (un coup de pied dans l'en-but récupéré par l'équipe du botteur était un essai quasi gratuit) ; note = progression +
+  `BOT_KICK_ADVANTAGE_WEIGHT` × avance de la première arrivée de son équipe (temps de course, borné par `BOT_KICK_ADVANTAGE_SEC`) ; il ne
+  tape que si cette avance dépasse `BOT_KICK_MIN_ADVANTAGE_SEC`, jamais à moins de `BOT_KICK_MIN_LINE_DIST` × échelle de la ligne, jamais
+  dans les `BOT_KICK_AFTER_KICK_SEC` qui suivent un coup de pied (pas de « ping-pong ») ; sinon il garde le ballon (course, esquive).
+  Réflexes à chaque tick : plongeon d'essai à `BOT_DIVE_TRY_DISTANCE` de la ligne, plongeon d'évasion (sous le feu, stabilité <
+  `BOT_DIVE_ESCAPE_STABILITY_FRACTION`, esquive en recharge), esquive (réflexe `dodgeReflex` par seconde sous le feu,
+  ×`BOT_CONTACT_REFLEX_MULT` au contact d'un défenseur), perpendiculaire à la menace et côté centre du terrain ; sprint boosté de l'ailier en
+  terrain libre. Les boutons d'action sont émis sur UN tick et seulement s'ils n'étaient pas maintenus (`lastButtons` de l'état) : front
+  montant garanti.
+- **Tir** (`aiming.ts`) : UNIQUEMENT la cible du rôle (`decision.shootId`) si elle est active et à portée (`range × engageRangeMult`) ;
+  sinon aucune, le bot regarde où il court (correction de l'étape 6 : le repli sur « l'adversaire le plus proche » faisait tirer tout le
+  monde sur tout le monde, 85–91 % des plaquages tombaient sur des non-porteurs et 21–30 % des joueurs étaient au sol). Visée =
+  `leadAimPoint` × `leadFraction` + erreur lisse (tirée en écarts-types toutes les `BOT_AIM_ERROR_PERIOD_SEC` + jitter,
+  ×`BOT_AIM_PITCH_ERROR_MULT` en pitch, rejointe avec une constante de temps `BOT_AIM_ERROR_SMOOTH_SEC`), convertie en angle selon la
+  distance : max(`aimErrorDeg`, atan(`aimErrorM` / distance)) — un décalage latéral en mètres de près (avec des degrés seuls, presque tout
+  touchait à 4–8 m : 52–71 % de précision même en facile). Le regard tourne d'au plus `turnRateDeg` × dt ; FIRE seulement si le regard est
+  à moins de `BOT_FIRE_CONE_DEG` de la direction voulue (le bot ne connaît pas son erreur) et la cible touchable ; rafales `BOT_BURST_SEC` /
+  pauses (`BOT_BURST_PAUSE_SEC` + jitter) × `burstPauseMult` de la difficulté × `BOT_RESTRAINED_PAUSE_MULT` hors pression / repli ; AIM
+  au-delà de `BOT_ADS_DISTANCE` ; RELOAD après `BOT_RELOAD_IDLE_SEC` sans cible si le chargeur est sous `BOT_RELOAD_AMMO_FRACTION`. Le demi
+  ne tire pas (grenades : étape 7). Le regard sans cible suit la direction de course (le sprint ne s'applique que vers l'avant du regard).
+- **Pilotage** (`steering.ts`) : direction monde convertie en entrée locale avec le yaw RÉELLEMENT envoyé (la sim l'applique avant le
+  déplacement). Arrivée / ralentissement, répulsion des coéquipiers proches (sauf porteur et receveur ; sous `BOT_IDLE_PUSH_MIN`, un bot
+  arrivé ne bouge pas). Murets : le bot fonce dessus (grimpe automatique de la sim). Blocage (veut avancer — inclinaison ≥
+  `BOT_STUCK_MIN_MOVE_MAG` —, vitesse < `BOT_STUCK_SPEED` pendant `BOT_STUCK_SEC`) : saut + direction tournée de `BOT_DETOUR_ANGLE_DEG`
+  pendant `BOT_DETOUR_SEC`. `maxBlockedTicks` mesure le plus long blocage (tests : < 3 s).
+- **Difficulté** (`BOT_DIFFICULTY`, facile / normal / difficile ; resserrée à la correction de l'étape 6 : chaque écart seul donne un petit
+  avantage, mais ils se cumulent — le niveau du dessous ne marquait que 15–25 % des points du niveau du dessus) : réaction 0,5 / 0,32 /
+  0,22 s ; erreur 5 / 3,5 / 2,5° et 1 / 0,7 / 0,5 m ; rotation 300 / 420 / 600 °/s ; décision 0,5 / 0,4 / 0,3 s ; portée 75 / 85 / 95 % ;
+  réflexe d'esquive 0,4 / 0,8 / 1,2 par s ; avance 40 / 80 / 100 % ; pauses entre rafales × 1,3 / 1 / 0,9. Tests : « difficile » bat
+  « facile » de plus du double des points ; entre niveaux voisins, le plus faible marque au moins 15 % des points du plus fort ; erreur de
+  visée moyenne plus de deux fois plus grande en facile ; réaction plus tardive.
+- **Client** : `GameSession.installProviders()` crée un bot par joueur non humain (coéquipiers ET adversaires) avec `externalIds = [humanId]`,
+  difficulté `SessionOptions.difficulty` (défaut `DEFAULT_BOT_DIFFICULTY` = normal ; `?difficulty=facile|normal|difficile` en attendant le
+  menu de l'étape 8). `?debug&autopilot` : le joueur 0 est aussi un bot (match bots contre bots vu depuis sa caméra, yaw / pitch interpolés
+  du joueur ; aucun joueur externe, receveur des coups d'envoi par défaut). `?dummies=off` : tous les autres joueurs passifs (réglage du
+  plaquage). `?size=5` : 5v5 (en attendant le menu). Les tourelles de l'étape 5 ne sont plus installées (gardées dans `bots/turret.ts` pour
+  leurs tests).
+- **Mesures** (harnais de relecture, matchs bots contre bots de 6 min, seeds 1 à 4 ; avant -> après correction) :
+  | | 3v3 normal | 5v5 normal |
+  |---|---|---|
+  | Essais par match | 26 -> 33 | 18 -> 16,5 |
+  | Ballon porté (part du temps de jeu) | 41 % -> 74 % | 34 % -> 56 % |
+  | Joueurs au sol (part du temps-joueur) | 21 % -> 10 % | 25 % -> 12 % |
+  | Temps réel figé (décomptes, pauses) | 31 % -> 27 % | 24 % -> 16 % |
+  | Coups de pied par match | 43 -> 3,3 | 27 -> 4 |
+  | Plaquages par match (dont sur le porteur) | 167 (13 %) -> 75 (64 %) | 326 (9 %) -> 150 (42 %) |
+  | Précision des tirs | 73 % -> 58 % | 67 % -> 56 % |
+  Facile / difficile : 3v3 ≈ 51 / 30 essais, 5v5 ≈ 27 / 12,5. Le nombre d'essais reste élevé en 3v3 : sur trois joueurs, le demi (désarmé
+  jusqu'à l'étape 7) ne peut ni presser ni couvrir utilement, il reste deux tireurs par équipe ; en 5v5 (quatre tireurs sur cinq) le rythme
+  est nettement plus « rugby ». La plupart des essais viennent d'un contre après un plaquage (le ballon repris, l'équipe qui attaquait n'a
+  personne derrière). Environ 6 à 10 demi-tours par joueur et par minute hors esquive, surtout aux changements de possession (légitimes).
+  ≈ 0,3–0,7 s de calcul par match (sim + bots).
+- **Limites connues** : pas d'évitement explicite des murets (on compte sur la grimpe automatique et le détour de blocage) ; le demi ne
+  tire pas (étape 7) ; la mêlée (étape 7) n'est pas jouée par les bots (un ballon libre longtemps au même endroit reste une course au
+  ballon) ; les bots ne lisent pas les projectiles (esquive sur tir reçu seulement) ; l'avance d'un coup de pied est estimée au temps de
+  course depuis les positions actuelles (sans temps de vol ni réaction) : seuls ≈ 30–40 % des (rares) coups de pied sont récupérés par
+  l'équipe du botteur ; la difficulté n'est pas validée contre de vrais joueurs (un humain passif perd 0–270 contre des bots normaux, un
+  humain « naïf » qui fonce sans tirer ≈ 20–160).

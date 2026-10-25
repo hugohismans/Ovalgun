@@ -8,18 +8,17 @@ import {
   BALL_RADIUS,
   carryPosition,
   createField,
-  createMatch,
   groundHeight,
   step,
   type MatchState,
   type TerrainFeature,
   type Vec3,
 } from '../../src/sim';
-import { ROLES_5, hSpeed, only0, run, soloMatch } from './helpers';
+import { ROLES_5, createPlayMatch, hSpeed, only0, run, soloMatch } from './helpers';
 
 /** Match où seul le ballon compte : joueurs rangés au fond, terrain donné, ballon placé. */
 function ballMatch(seed: number, pos: Vec3, vel: Vec3, features: TerrainFeature[] = []): MatchState {
-  const s = createMatch({ teamSize: 5, seed, roles: ROLES_5 });
+  const s = createPlayMatch({ teamSize: 5, seed, roles: ROLES_5 });
   s.field.features = features;
   s.players.forEach((p, i) => {
     p.pos = { x: -20 + i * 3, y: 0, z: s.field.length / 2 - 1.5 };

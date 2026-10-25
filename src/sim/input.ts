@@ -57,10 +57,12 @@ export function readTickInput(p: PlayerState, inputs: InputFrame): TickInput {
   if (raw === undefined || raw === null) {
     return { moveX: 0, moveY: 0, moveMag: 0, buttons: 0, pressed: 0, present: false };
   }
-  p.yaw = wrapAngle(finiteOr(raw.yaw, p.yaw));
-  p.pitch = clamp(finiteOr(raw.pitch, p.pitch), PITCH_MIN, PITCH_MAX);
-  let mx = clamp(finiteOr(raw.moveX, 0), -1, 1);
-  let my = clamp(finiteOr(raw.moveY, 0), -1, 1);
+  // `+ 0` : un −0 envoyé (bot : direction × inclinaison nulle) devient 0 (MatchState sans −0 : yaw, pitch,
+  // lastMoveX / lastMoveY ; il deviendrait 0 après un aller-retour JSON).
+  p.yaw = wrapAngle(finiteOr(raw.yaw, p.yaw)) + 0;
+  p.pitch = clamp(finiteOr(raw.pitch, p.pitch), PITCH_MIN, PITCH_MAX) + 0;
+  let mx = clamp(finiteOr(raw.moveX, 0), -1, 1) + 0;
+  let my = clamp(finiteOr(raw.moveY, 0), -1, 1) + 0;
   let mag = Math.sqrt(mx * mx + my * my);
   if (mag > 1) {
     mx /= mag;

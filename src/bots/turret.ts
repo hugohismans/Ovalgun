@@ -1,6 +1,7 @@
 /**
  * Cible d'entraînement « tourelle » (étape 5) : producteur d'entrées minimal et PUR (contrat InputProvider),
- * pour ressentir le plaquage avant les vrais bots (étape 6, qui la remplacera).
+ * pour ressentir le plaquage avant les vrais bots. Étape 6 : remplacée dans le jeu par les bots de match (bot.ts) ;
+ * gardée pour ses tests et comme exemple minimal d'InputProvider.
  *
  * Comportement : immobile ; se tourne (TURRET_TURN_RATE_DEG au plus) vers l'ENNEMI ACTIF le plus proche à portée,
  * en visant sa position prévue à l'arrivée de la balle (TURRET_LEAD_FRACTION de l'avance, aim.ts)
@@ -154,7 +155,7 @@ export function turretInput(mem: TurretMemory, state: Readonly<MatchState>, play
 
 /**
  * Fabrique un InputProvider « tourelle » avec sa propre mémoire (PRNG dérivé de deriveSeed(seed, playerId)).
- * `active = false` : cible passive (garde son orientation, ne tire jamais) — ?dummies=off côté client.
+ * `active = false` : cible passive (garde son orientation, ne tire jamais).
  */
 export function createTurret(seed: number, playerId: number, active = true): InputProvider {
   const mem = createTurretMemory(seed, playerId);

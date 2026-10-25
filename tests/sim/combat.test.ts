@@ -41,7 +41,6 @@ import {
   canShoot,
   carryPosition,
   cloneState,
-  createMatch,
   damageFalloff,
   debugGiveBall,
   fireIntervalTicks,
@@ -59,7 +58,7 @@ import {
   type TerrainFeature,
   type Vec3,
 } from '../../src/sim';
-import { hSpeed } from './helpers';
+import { createPlayMatch, hSpeed } from './helpers';
 
 const W = ROLES.ailier.weapon;
 const DEG = Math.PI / 180;
@@ -82,7 +81,7 @@ function arena(features: TerrainFeature[] = [], seed = 5): MatchState {
     ['ailier', 'ailier', 'demi', 'demi', 'demi'],
     ['ailier', 'pilier', 'demi', 'demi', 'demi'],
   ];
-  const s = createMatch({ teamSize: 5, seed, roles });
+  const s = createPlayMatch({ teamSize: 5, seed, roles });
   s.field.features = features;
   for (const p of s.players) {
     p.pos = { x: -s.field.width / 2 + 1, y: 0, z: -40 + p.id * 3 };

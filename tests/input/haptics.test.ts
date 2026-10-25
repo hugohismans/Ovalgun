@@ -21,6 +21,9 @@ describe('rumbleCueFor', () => {
     expect(rumbleCueFor({ type: 'catch', playerId: 4, fromId: 2, intercepted: true }, 0, 0)).toBeNull(); // pas sa passe
     expect(rumbleCueFor({ type: 'try', team: 0, scorerId: 1 }, 0, 0)).toBe('try');
     expect(rumbleCueFor({ type: 'try', team: 1, scorerId: 4 }, 0, 0)).toBe('tryConceded');
+    expect(rumbleCueFor({ type: 'try', team: 1, scorerId: 4 }, 4, 1)).toBe('try'); // équipe 1 : son équipe marque
+    expect(rumbleCueFor({ type: 'match_end', score: [5, 0] }, 0, 0)).toBe('matchEnd');
+    expect(rumbleCueFor({ type: 'kickoff', team: 0 }, 0, 0)).toBeNull();
     expect(rumbleCueFor({ type: 'land', playerId: 0, speed: RUMBLE_HARD_LANDING_SPEED + 1 }, 0, 0)).toBe('hardLanding');
     expect(rumbleCueFor({ type: 'land', playerId: 0, speed: 2 }, 0, 0)).toBeNull();
     expect(rumbleCueFor({ type: 'jump', playerId: 0, air: false }, 0, 0)).toBeNull();

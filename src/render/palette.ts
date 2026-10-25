@@ -288,6 +288,14 @@ export const STYLE = {
   vignetteFromFraction: 0.5,
   vignetteHitFlash: 0.25,
   vignetteHitSec: 0.18,
+
+  // --- Boucle de match (étape 6, HUD lu par la session et l'UI) ---
+  /** « JOUEZ ! » affiché après le coup de sifflet (s). */
+  playCallSec: 0.9,
+  /** Bannière « DERNIÈRE MINUTE » au déclenchement (s) ; l'indicateur reste ensuite près du chrono. */
+  lastMinuteBannerSec: 2.6,
+  /** Écran de fin : délai avant d'accepter A / Entrée (s), pour qu'un saut en cours ne relance pas le match. */
+  endScreenInputDelaySec: 1.0,
 } as const;
 
 /** Un anneau d'effet : au sol ou face caméra, rayon de départ / d'arrivée (m), durée (s), délai (s). */
@@ -337,6 +345,12 @@ export const FX = {
   ],
   /** Relevé : anneau discret qui se resserre. */
   getup: [{ color: PALETTE.fxGetup, billboard: false, r0: 1.4, r1: 0.6, duration: 0.3, delay: 0, lift: 0.04 }],
+  /** Essai : grandes ondes dorées au sol autour du marqueur, en trois temps. */
+  try: [
+    { color: PALETTE.fxPickup, billboard: false, r0: 0.5, r1: 6.0, duration: 0.7, delay: 0, lift: 0.05 },
+    { color: PALETTE.fxCatch, billboard: false, r0: 0.4, r1: 4.5, duration: 0.6, delay: 0.12, lift: 0.06 },
+    { color: PALETTE.fxPickup, billboard: true, r0: 0.3, r1: 2.4, duration: 0.5, delay: 0.05, lift: 0 },
+  ],
   /** Capacité (sprint boosté). */
   ability: [
     { color: PALETTE.fxAbility, billboard: false, r0: 0.4, r1: 2.0, duration: 0.35, delay: 0, lift: 0.04 },

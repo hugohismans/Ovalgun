@@ -90,6 +90,12 @@ export interface MatchConfig {
   training?: boolean;
   /** Équipe qui reçoit le ballon au coup d'envoi (défaut : constante FIRST_KICKOFF_TEAM). */
   firstKickoffTeam?: TeamId;
+  /**
+   * Receveur du ballon à chaque coup d'envoi / remise en jeu, par équipe : index DANS l'équipe (0..teamSize-1), ou −1
+   * pour le joueur le plus central de la formation (défaut [−1, −1]). En solo, le client désigne le joueur humain
+   * (étape 6 : sinon il ne touchait jamais le ballon au coup d'envoi).
+   */
+  kickoffReceivers?: [number, number];
 }
 
 /** Butte : bosse lisse (cosinus) de rayon `radius` et de hauteur `height`. */

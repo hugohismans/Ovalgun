@@ -480,8 +480,8 @@ function reach(p: PlayerState): { lo: number; hi: number } {
   return { lo: p.pos.y - BALL_REACH_BELOW, hi: p.pos.y + playerHeight(p) + BALL_CATCH_REACH_ABOVE };
 }
 
-/** Donne le ballon à `p` (ramassage, réception, outils de test) : il le porte immédiatement. */
-function giveBall(state: MatchState, p: PlayerState): void {
+/** Donne le ballon à `p` (ramassage, réception, remise en jeu, outils de test) : il le porte immédiatement. */
+export function giveBall(state: MatchState, p: PlayerState): void {
   const b = state.ball;
   b.mode = 'carried';
   b.carrierId = p.id;
@@ -650,13 +650,22 @@ export function updateBallPickup(state: MatchState, from: Vec3, fromMode: BallMo
 // ---------------------------------------------------------------------------
 
 /**
+ * Les outils de test agissent-ils dans cette phase ? `debugGiveBall` : en jeu et pendant le coup d'envoi (le ballon
+ * change de main avant le coup de sifflet) ; `debugResetBall` : en jeu seulement (pendant le décompte, un ballon lâché
+ * au centre rendait le porteur de la remise en jeu les mains vides et le coup de sifflet partait ballon libre).
+ * Jamais pendant la pause d'essai ni après la fin (ballon mort : rien ne doit le ranimer, la remise en jeu le replace).
+ */
+const debugToolsAllowed = (state: MatchState): boolean => state.phase === 'play' || state.phase === 'kickoff';
+
+/**
  * OUTIL DE TEST : donne le ballon au joueur `playerId` (s'il existe et n'est pas au sol), comme un ramassage
- * mais sans événement (à appeler ENTRE deux `step`). Déterministe, ne consomme pas d'aléatoire.
+ * mais sans événement (à appeler ENTRE deux `step`). Déterministe, ne consomme pas d'aléatoire. Refusé pendant
+ * la pause d'essai et après la fin du match. Donné dans l'en-but adverse : essai au tick suivant (règles).
  * Renvoie vrai si le ballon a été donné.
  */
 export function debugGiveBall(state: MatchState, playerId: number): boolean {
   const p = state.players[playerId];
-  if (p === undefined || p.status !== 'active') return false;
+  if (p === undefined || p.status !== 'active' || !debugToolsAllowed(state)) return false;
   state.ball.throwerId = -1;
   p.pickupBlockTicks = 0;
   giveBall(state, p);
@@ -666,8 +675,10 @@ export function debugGiveBall(state: MatchState, playerId: number): boolean {
 /**
  * OUTIL DE TEST : ballon libre, immobile, lâché de BALL_DROP_HEIGHT au-dessus du centre du terrain (à
  * appeler entre deux `step`). Déterministe (aucun tirage). Débloque le ramassage de tous les joueurs.
+ * Refusé (renvoie faux) hors de la phase 'play' (décompte du coup d'envoi, pause d'essai, fin du match).
  */
-export function debugResetBall(state: MatchState): void {
+export function debugResetBall(state: MatchState): boolean {
+  if (state.phase !== 'play') return false;
   const b = state.ball;
   b.pos = { x: 0, y: groundHeight(state.field, 0, 0) + BALL_DROP_HEIGHT + BALL_RADIUS, z: 0 };
   b.vel = { x: 0, y: 0, z: 0 };
@@ -681,4 +692,5 @@ export function debugResetBall(state: MatchState): void {
   b.spinRate = 0;
   b.tumbleRate = 0;
   for (const p of state.players) p.pickupBlockTicks = 0;
+  return true;
 }

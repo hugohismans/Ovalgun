@@ -5,7 +5,6 @@ import { describe, expect, it } from 'vitest';
 import {
   angleDiff,
   Buttons,
-  createMatch,
   debugGiveBall,
   makeInput,
   PLAYER_HEIGHT,
@@ -19,6 +18,7 @@ import {
 } from '../../src/sim';
 import { createTurret, createTurretMemory, turretInput } from '../../src/bots/turret';
 import { leadAimPoint } from '../../src/bots/aim';
+import { createPlayMatch } from '../sim/helpers';
 
 /** 3v3 plat : la tourelle (ailier, joueur 3) face au joueur 0 ; tout le reste rangé dans un coin, hors de portée. */
 function range(seed = 9, targetZ = -12): MatchState {
@@ -26,7 +26,7 @@ function range(seed = 9, targetZ = -12): MatchState {
     ['ailier', 'demi', 'pilier'],
     ['ailier', 'demi', 'pilier'],
   ];
-  const s = createMatch({ teamSize: 3, seed, roles });
+  const s = createPlayMatch({ teamSize: 3, seed, roles });
   s.field.features = [];
   // Rangés dans le coin opposé, hors de portée de la tourelle.
   for (const p of s.players) {
@@ -102,7 +102,7 @@ describe('tourelle d’entraînement', () => {
     expect(simulate(down, 2, 30).every((i) => i.buttons === 0)).toBe(true);
   });
 
-  it('passive (?dummies=off) : ne tire jamais', () => {
+  it('passive : ne tire jamais', () => {
     const s = range();
     const bot = createTurret(1, 3, false);
     for (let t = 0; t < 60; t++) {

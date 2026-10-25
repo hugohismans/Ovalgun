@@ -5,7 +5,8 @@
  * (contrat, docs/ARCHITECTURE.md §2) :
  *
  *   1. events = [], tick++
- *   2. Phase : décompte kickoff -> play ; décompte try -> remise en jeu        (rules.ts, étape 6 pour 'try')
+ *   2. Phase : décompte kickoff -> play ; décompte try -> remise en jeu        (rules.ts)
+ *      'ended' : seules les entrées (visée) et lastButtons sont traitées, puis retour (rien d'autre n'avance)
  *   3. Entrées : par joueur (ordre des ids), entrée assainie, fronts montants, yaw/pitch
  *   4. Minuteries : cooldowns… (player.ts) ; statut down/getting_up, rechargement, délai de
  *      régénération (combat.ts) ; durée / cooldown des capacités (abilities.ts)
@@ -14,11 +15,12 @@
  *   6. Projectiles : déplacement balayé, collisions, dégâts                   (projectiles.ts)
  *      — AVANT le déplacement : les capsules sont testées là où le tireur les voyait en tirant ;
  *      puis décompte de l'invulnérabilité (player.ts, tickInvulnerability)
- *   7. Déplacement (player.ts / body.ts ; plongeon du porteur : carrier.ts), puis séparation entre joueurs
+ *   7. Déplacement (player.ts / body.ts ; plongeon du porteur : carrier.ts), puis séparation entre joueurs,
+ *      puis essai du porteur qui vient de franchir la ligne (rules.ts : avant les plaquages de l'étape 8)
  *   8. Stabilité : plaquages (lâcher du ballon), régénération                 (stability.ts)
  *   9. Ballon : porteur ou physique (ball.ts), puis ramassage / réception / interception (carrier.ts)
  *  10. Zones (abilities.ts) et mêlée (scrum.ts)                               (étape 7)
- *  11. Règles : essai, chrono, dernière minute, fin                           (rules.ts, étape 6)
+ *  11. Règles (tick joué seulement) : essai, puis chrono, dernière minute, fin (rules.ts)
  *  12. lastButtons = buttons (sauf entrée manquante : pas de faux front montant au tick suivant)
  *
  * Phases figées (kickoff / try / ended) : seule la visée est appliquée aux joueurs.
@@ -29,23 +31,13 @@ import { updateBall } from './ball';
 import { separatePlayers } from './body';
 import { updateBallPickup, updateCarrierActions } from './carrier';
 import { updateShooting, updateStatusTimers } from './combat';
-import {
-  BALL_DROP_HEIGHT,
-  BALL_DROP_HORIZONTAL_SPEED,
-  BALL_RADIUS,
-  FIRST_KICKOFF_TEAM,
-  KICKOFF_DEFEND_OFFSET,
-  MATCH_DURATION_SEC,
-  ROLES,
-  TICK_DT,
-} from './constants';
+import { BALL_DROP_HEIGHT, BALL_RADIUS, FIRST_KICKOFF_FREEZE_SEC, FIRST_KICKOFF_TEAM, MATCH_DURATION_SEC, ROLES, TICK_DT } from './constants';
 import { createField } from './field';
-import { placeTeamInFormation } from './formation';
 import { updateProjectiles } from './projectiles';
 import { readTickInput, type TickInput } from './input';
 import { tickInvulnerability, tickPlayerTimers, updatePlayerMovement } from './player';
-import { rand, seedToInt } from './prng';
-import { isFrozenPhase, updatePhase, updateRules } from './rules';
+import { seedToInt } from './prng';
+import { isFrozenPhase, setupKickoff, updatePhase, updateRules, updateTryAfterMovement } from './rules';
 import { updateScrum } from './scrum';
 import { updateStability } from './stability';
 import { secToTicks } from './time';
@@ -72,6 +64,10 @@ export function normalizeConfig(config: MatchConfig): Required<MatchConfig> {
   if (!Number.isFinite(durationSec) || durationSec <= 0) throw new Error('durationSec invalide');
   const first = config.firstKickoffTeam ?? FIRST_KICKOFF_TEAM;
   if (first !== 0 && first !== 1) throw new Error('firstKickoffTeam invalide');
+  const receivers = config.kickoffReceivers ?? [-1, -1];
+  for (const r of receivers) {
+    if (!Number.isInteger(r) || r < -1 || r >= config.teamSize) throw new Error(`kickoffReceivers invalide : ${String(r)}`);
+  }
   return {
     teamSize: config.teamSize,
     seed: config.seed,
@@ -79,6 +75,7 @@ export function normalizeConfig(config: MatchConfig): Required<MatchConfig> {
     durationSec,
     training: config.training ?? false,
     firstKickoffTeam: first,
+    kickoffReceivers: [receivers[0], receivers[1]],
   };
 }
 
@@ -143,11 +140,11 @@ function createBall(): BallState {
 }
 
 /**
- * Crée un match prêt à jouer.
- * Prototype (étape 2) : phase 'play' directe, équipes en formation de part et d'autre de la
- * médiane, ballon libre lâché de BALL_DROP_HEIGHT au centre avec une petite vitesse horizontale
- * de direction tirée au sort (on voit les rebonds seedés). L'étape 6 remplacera ce départ par
- * un coup d'envoi ('kickoff').
+ * Crée un match prêt à jouer (étape 6) : phase 'kickoff' de FIRST_KICKOFF_FREEZE_SEC (coup d'envoi reçu par
+ * config.firstKickoffTeam, placement
+ * et ballon porté : rules.ts, setupKickoff), chrono plein, score nul. L'événement 'kickoff' du coup d'envoi est
+ * déjà dans `state.events` (le client le lit avant le premier step ; step vide la liste comme d'habitude).
+ * Aucun tirage aléatoire : `rng` vaut la seed normalisée.
  */
 export function createMatch(config: MatchConfig): MatchState {
   const cfg = normalizeConfig(config);
@@ -163,7 +160,7 @@ export function createMatch(config: MatchConfig): MatchState {
     config: cfg,
     field,
     tick: 0,
-    phase: 'play',
+    phase: 'kickoff',
     phaseTicks: 0,
     clockTicks: secToTicks(cfg.durationSec),
     lastMinute: false,
@@ -178,11 +175,7 @@ export function createMatch(config: MatchConfig): MatchState {
     rng: seedToInt(cfg.seed),
     events: [],
   };
-  const dist = KICKOFF_DEFEND_OFFSET * field.scale;
-  placeTeamInFormation(state, 0, dist);
-  placeTeamInFormation(state, 1, dist);
-  const a = rand(state) * Math.PI * 2;
-  state.ball.vel = { x: Math.sin(a) * BALL_DROP_HORIZONTAL_SPEED, y: 0, z: Math.cos(a) * BALL_DROP_HORIZONTAL_SPEED };
+  setupKickoff(state, cfg.firstKickoffTeam, FIRST_KICKOFF_FREEZE_SEC);
   return state;
 }
 
@@ -200,8 +193,14 @@ export function step(state: MatchState, inputs: InputFrame, dt: number = TICK_DT
   // 2.
   updatePhase(state);
   const frozen = isFrozenPhase(state);
+  const played = state.phase === 'play'; // tick joué (chrono), même si un essai passe la phase à 'try' en cours de tick
   // 3. (state.players est rangé par id croissant : index = id)
   const tickInputs: TickInput[] = state.players.map((p) => readTickInput(p, inputs));
+  if (state.phase === 'ended') {
+    // Match terminé : seule la visée suit les entrées (et lastButtons, étape 12) ; rien d'autre n'avance.
+    storeLastButtons(state, tickInputs);
+    return state;
+  }
   // 4.
   for (const p of state.players) tickPlayerTimers(p);
   updateStatusTimers(state);
@@ -219,6 +218,7 @@ export function step(state: MatchState, inputs: InputFrame, dt: number = TICK_DT
   // 7.
   for (const p of state.players) updatePlayerMovement(state, p, tickInputs[p.id], frozen);
   separatePlayers(state);
+  updateTryAfterMovement(state); // porteur qui vient de franchir la ligne : essai AVANT les plaquages de l'étape 8
   // 8.
   updateStability(state);
   // 9. (position et mode du ballon avant sa physique : réception balayée sur le segment parcouru)
@@ -230,11 +230,16 @@ export function step(state: MatchState, inputs: InputFrame, dt: number = TICK_DT
   updateZones(state);
   updateScrum(state);
   // 11.
-  updateRules(state);
+  updateRules(state, played);
   // 12.
+  storeLastButtons(state, tickInputs);
+  return state;
+}
+
+/** Étape 12 de `step` : boutons maintenus mémorisés (sauf entrée manquante : pas de faux front montant au tick suivant). */
+function storeLastButtons(state: MatchState, tickInputs: readonly TickInput[]): void {
   for (const p of state.players) {
     const ti = tickInputs[p.id];
     if (ti.present) p.lastButtons = ti.buttons;
   }
-  return state;
 }

@@ -13,10 +13,11 @@ function simulate(
   teamSize: TeamSize,
   seed: number,
   opts: { roundTripEvery?: number; inputSeed?: number; checkValues?: boolean } = {},
-): { state: MatchState; hashes: string[]; eventCounts: Partial<Record<MatchEventType, number>>; bad: string[] } {
+): { state: MatchState; hashes: string[]; ballTrace: string[]; eventCounts: Partial<Record<MatchEventType, number>>; bad: string[] } {
   let s = newMatch(teamSize, seed);
   const frames = scriptedInputs(opts.inputSeed ?? 1234, teamSize * 2, TICKS);
   const hashes: string[] = [];
+  const ballTrace: string[] = [];
   const eventCounts: Partial<Record<MatchEventType, number>> = {};
   const bad: string[] = [];
   for (let t = 0; t < TICKS; t++) {
@@ -25,9 +26,10 @@ function simulate(
     step(s, frames[t]);
     for (const e of s.events) eventCounts[e.type] = (eventCounts[e.type] ?? 0) + 1;
     if (t % 100 === 0) hashes.push(hashState(s));
+    if (t % 10 === 0) ballTrace.push(JSON.stringify(s.ball));
     if (opts.checkValues && t % 5 === 0 && bad.length === 0) bad.push(...findBadValues(s).map((b) => `tick ${s.tick}: ${b}`));
   }
-  return { state: s, hashes, eventCounts, bad };
+  return { state: s, hashes, ballTrace, eventCounts, bad };
 }
 
 describe.each([3, 5] as const)('déterminisme, équipes de %i', (teamSize) => {
@@ -55,7 +57,9 @@ describe.each([3, 5] as const)('déterminisme, équipes de %i', (teamSize) => {
   it('seeds différentes => états différents (rebonds seedés du ballon)', () => {
     const other = simulate(teamSize, 43);
     expect(other.state.rng).not.toBe(ref.state.rng);
-    expect(JSON.stringify(other.state.ball)).not.toBe(JSON.stringify(ref.state.ball));
+    // Trajectoire du ballon (tous les 10 ticks). Depuis l'étape 6, une remise en jeu après un essai replace le ballon
+    // à l'identique quelle que soit la seed : on compare donc toute la trajectoire, pas seulement l'état final.
+    expect(other.ballTrace).not.toEqual(ref.ballTrace);
     // Dès les premiers ticks, la trajectoire du ballon diffère.
     const a = newMatch(teamSize, 1);
     const b = newMatch(teamSize, 2);

@@ -26,7 +26,37 @@ export {
 } from './field';
 // Match.
 export { createMatch, createPlayer, normalizeConfig, step } from './match';
-export { formationSlot, placeTeamInFormation, resetPlayerAt, type FormationSlot } from './formation';
+export {
+  formationSlot,
+  kickoffCarrierIndex,
+  kickoffDistance,
+  placeForKickoff,
+  placeTeamInFormation,
+  resetPlayerAt,
+  type FormationSlot,
+} from './formation';
+// Phases et règles (étape 6) : remise en jeu, outil « sauter le coup d'envoi » (tests / réglage, entre deux step).
+export { isFrozenPhase, setupKickoff, startPlayNow } from './rules';
+// Lectures PURES de l'état (étape 6) : pour les bots, le HUD et les tests.
+export {
+  activePlayers,
+  attackDir,
+  attackYaw,
+  ballCarrier,
+  ballLandingPoint,
+  clockSeconds,
+  distanceToTryLine,
+  isInOpponentInGoal,
+  isInOwnInGoal,
+  isLive,
+  isPlayerActive,
+  opponentTeam,
+  opponentTryLineZ,
+  ownTryLineZ,
+  phaseSeconds,
+  possessionTeam,
+  teamPlayers,
+} from './queries';
 // Entrées.
 export { NEUTRAL_INPUT, makeInput, ALL_BUTTONS, PITCH_MIN, PITCH_MAX, type TickInput } from './input';
 // Joueurs (lectures utiles au rendu / HUD / bots).
