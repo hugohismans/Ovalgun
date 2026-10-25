@@ -1665,3 +1665,32 @@ l'assembler et ce qui reste à faire. Les mesures et constats d'audit sont au §
    (reprise après éviction) ; journal des entrées pour rejouer un match (même moteur : hash identique).
 10. **Tests** : boucle serveur en Node avec de faux clients (latence, pertes, déconnexions), replay déterministe d'un journal
    d'entrées, charge (nombre de matchs par isolat).
+
+## 21. Personnages 3D (après la passe finale)
+
+Les capsules sont remplacées, **côté rendu uniquement**, par des personnages animés. La hitbox de la sim reste la
+capsule (`PLAYER_RADIUS`, `PLAYER_HEIGHT`, `playerHeight`) : aucune règle, aucun test de gameplay ne change.
+
+- **Modèles** : Quaternius « Ultimate Modular Characters » (CC0, `public/models/CREDITS.md`). Les 11 personnages du pack
+  partagent le même squelette et les mêmes 24 animations : `scripts/build-characters.mjs` produit un GLB par modèle
+  (maillages, sans animations) et un `animations.glb` commun (squelette + 17 clips utiles), compressés meshopt.
+- **Données** (`src/render/characters/characterDefs.ts`) : `CHARACTERS` (modèle par classe, échelle, tête agrandie
+  pour une silhouette cartoon, forme de l'arme) et `SKINS`. Une skin = un modèle + une couleur par nom de matériau
+  (fixe ou `{ team: 'main' | 'dark' | 'light' }`) + des nœuds à masquer ; chaque skin garde au moins une zone à la
+  couleur de l'équipe (testé). Plus tard : mélange de parties entre modèles, accessoires, ou GLB faits sur mesure
+  (même squelette => mêmes animations).
+- **Chargement** (`CharacterLibrary`) : asynchrone, au démarrage du Renderer. Tant qu'un modèle n'est pas prêt ou si
+  une classe n'en a pas (`CHARACTERS[role] = null`), `PlayerView` affiche la capsule ; il bascule tout seul dès que le
+  modèle est chargé. Un échec de chargement laisse les capsules.
+- **Animation** (`CharacterModel`, `animState.ts`) en couches : bas du corps = cycles de course mélangés selon la
+  direction du déplacement par rapport au regard ; haut du corps = arme pointée / tir / bras libres du porteur ;
+  corps entier = chute au plaquage (le relevé la rejoue à l'envers), célébration pendant la pause d'essai ; gestes
+  ponctuels sur événements (passe, coup de pied, tir reçu). Retouches procédurales après le mixeur, par rotations
+  exprimées dans le repère du personnage (indépendantes des axes des os) : buste et tête suivent le pitch, bras du
+  porteur, genoux repliés en l'air, bascule en glissade / plongeon / esquive.
+- **Rendu** : matériaux toon par instance (estompage en alpha hash, clignotement émissif), contour cartoon par maillage
+  animé dupliqué poussé le long des normales après le skinning ; pendant l'invulnérabilité le contour s'épaissit à la
+  couleur claire de l'équipe (remplace le halo de la capsule). Arme construite en code, placée au poignet droit et
+  orientée selon la visée. Réglages visuels : `CHARACTER_STYLE` (palette.ts).
+- **Phase A** (en cours de validation) : seul l'ailier (modèle Punk) a son personnage ; pilier et demi gardent la
+  capsule jusqu'à la phase B.

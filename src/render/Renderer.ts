@@ -49,6 +49,7 @@ import { FxView } from './FxView';
 import { lerpPos, lerpYaw } from './interpolate';
 import { PALETTE, STYLE } from './palette';
 import { PassIndicatorView, type PassIndicatorFrame } from './PassIndicatorView';
+import { CharacterLibrary } from './characters/CharacterLibrary';
 import { PlayerAssets, PlayerView, type PlayerFrame } from './PlayerView';
 import { ShoulderCamera } from './ShoulderCamera';
 import { SpectatorCamera } from './SpectatorCamera';
@@ -176,6 +177,8 @@ export class Renderer {
   private readonly spectatorCam = new SpectatorCamera();
   private readonly tmpVec = new THREE.Vector3();
   private readonly assets = new PlayerAssets();
+  /** Personnages 3D (chargés en tâche de fond ; capsules en attendant). */
+  private readonly characters = new CharacterLibrary();
   private field: FieldView | null = null;
   private backdrop: THREE.Group | null = null;
   private players: PlayerView[] = [];
@@ -215,7 +218,8 @@ export class Renderer {
   // Objets de travail réutilisés à chaque frame.
   private readonly feet: Vec3 = { x: 0, y: 0, z: 0 };
   private readonly ballPos: Vec3 = { x: 0, y: 0, z: 0 };
-  private readonly frame: PlayerFrame = { feet: this.feet, yaw: 0, pitch: 0, ground: 0, carrier: false };
+  private readonly vel: Vec3 = { x: 0, y: 0, z: 0 };
+  private readonly frame: PlayerFrame = { feet: this.feet, yaw: 0, pitch: 0, ground: 0, carrier: false, vel: this.vel, celebrate: false };
   private readonly localFeet: Vec3 = { x: 0, y: 0, z: 0 };
 
   constructor(private readonly canvas: HTMLCanvasElement) {
@@ -232,6 +236,7 @@ export class Renderer {
     this.scene.add(sun);
     this.scene.add(this.ball.group, this.passIndicator.group, this.fx.group, this.combatFx.group, this.zones.group, this.scrum.group);
     this.resize();
+    void this.characters.load();
   }
 
   /** (Re)construit le terrain et les joueurs pour un match. */
@@ -244,7 +249,7 @@ export class Renderer {
     this.backdrop = createBackdrop(state.field.width, state.field.length);
     this.scene.add(this.backdrop);
     this.players = state.players.map((p) => {
-      const v = new PlayerView(this.assets, p.id, p.team, p.role, p.id === humanId);
+      const v = new PlayerView(this.assets, p.id, p.team, p.role, p.id === humanId, this.characters);
       this.scene.add(v.root, v.groundGroup, v.marker, v.bar);
       return v;
     });
@@ -337,6 +342,9 @@ export class Renderer {
       this.frame.pitch = local ? view.pitch : pp.pitch + (pc.pitch - pp.pitch) * a;
       this.frame.ground = groundHeight(field, this.feet.x, this.feet.z);
       this.frame.carrier = pc.id === carrierId;
+      lerpPos(this.vel, pp.vel, pc.vel, a);
+      // Pause d'essai : l'équipe qui a marqué célèbre (kickoffTeam = l'équipe qui a encaissé).
+      this.frame.celebrate = curr.phase === 'try' && pc.team !== curr.kickoffTeam;
       v.update(pc, this.frame, dt, timeSec);
       const cache = this.interpFeet[i];
       if (cache !== undefined) {
@@ -504,6 +512,9 @@ export class Renderer {
     for (const e of events) {
       this.fx.handle(e, state, timeSec);
       if (e.type === 'hit') this.players[e.targetId]?.flash(timeSec);
+      if (e.type === 'shot') this.players[e.playerId]?.shot(timeSec);
+      if (e.type === 'pass') this.players[e.fromId]?.gesture('pass');
+      if (e.type === 'kick') this.players[e.playerId]?.gesture('kick');
       if (e.type === 'blocked') this.players[e.targetId]?.shieldFlash(timeSec);
       this.scrum.handleEvent(e);
     }

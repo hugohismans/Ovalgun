@@ -541,3 +541,50 @@ export const FX = {
     { color: PALETTE.fxAbility, billboard: true, r0: 0.3, r1: 1.2, duration: 0.25, delay: 0, lift: 0 },
   ],
 } as const satisfies Record<string, readonly RingFx[]>;
+
+/**
+ * Personnages 3D (src/render/characters) : valeurs purement visuelles (animation, postures, contour).
+ * Angles en radians. Aucune n'a d'effet sur le jeu (la hitbox reste la capsule de la sim).
+ */
+export const CHARACTER_STYLE = {
+  /** Contour cartoon (épaisseur en m, le long des normales) ; plus épais et clair pendant l'invulnérabilité. */
+  outlineWidth: 0.016,
+  invulnOutlineWidth: 0.045,
+  /** Sous cette vitesse (m/s) : immobile ; à `runBlendSpeed` : cycle de course plein. */
+  idleSpeed: 0.6,
+  runBlendSpeed: 3.0,
+  /** Vitesse au sol (m/s) qui correspond au cycle de course joué à vitesse 1, et bornes de la vitesse de lecture. */
+  runClipSpeed: 6.0,
+  runTimeScaleMin: 0.75,
+  runTimeScaleMax: 1.8,
+  /** Lissage des poids d'animation (1/s) et des postures (1/s). */
+  weightRate: 14,
+  poseRate: 12,
+  /** Part du pitch de visée appliquée au buste (le reste par la tête). */
+  aimChestFraction: 0.6,
+  aimHeadFraction: 0.3,
+  /** Porteur : bras droit qui serre le ballon contre le flanc (avant, intérieur, coude plié). */
+  carryUpperArmForward: 0.55,
+  carryUpperArmIn: 0.25,
+  carryForearmBend: 1.5,
+  /** En l'air : genoux repliés. */
+  airThigh: 0.6,
+  airKnee: 1.0,
+  /** Postures basses (bascule depuis les pieds) : glissade en arrière, plongeon en avant ; esquive : penché vers le dash. */
+  slideTilt: -1.0,
+  diveTilt: 1.3,
+  diveArmsUp: 2.6,
+  dodgeLean: 0.35,
+  dodgeTimeScale: 1.7,
+  /** Durée des gestes ponctuels (s) : passe, coup de pied, tir reçu. */
+  throwSec: 0.45,
+  kickSec: 0.6,
+  hitSec: 0.3,
+  hitWeight: 0.55,
+  /** Durée pendant laquelle un tir garde la posture de tir (s). */
+  shootHoldSec: 0.35,
+  /** Arme tenue : décalage depuis le poignet (m, repère du personnage : avant). */
+  gunForward: 0.08,
+  /** Échelle de l'arme tenue (armes « jouet » volumineuses, lisibles de loin). */
+  gunScale: 1.45,
+} as const;

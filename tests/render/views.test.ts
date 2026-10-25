@@ -56,10 +56,10 @@ describe('PlayerView', () => {
     p.move = 'slide';
     const assets = new PlayerAssets();
     const v = new PlayerView(assets, p.id, p.team, p.role, false);
-    const frame = { feet: { x: 0, y: 0, z: 0 }, yaw: 0, pitch: 0, ground: 0, carrier: false };
+    const frame = { feet: { x: 0, y: 0, z: 0 }, yaw: 0, pitch: 0, ground: 0, carrier: false, vel: { x: 0, y: 0, z: 0 }, celebrate: false };
     for (let i = 0; i < 120; i++) v.update(p, frame, 1 / 60, i / 60);
     v.root.updateMatrixWorld(true);
-    const body = v.root.children[0].children[0].children[0].children[0]; // yawGroup > fallGroup > pose > corps
+    const body = v.root.children[0].children[0].children[0].children[0].children[0]; // yawGroup > fallGroup > pose > capsule > corps
     const box = new THREE.Box3().setFromObject(body, true); // précis : sommets transformés
     const size = box.getSize(new THREE.Vector3());
     expect(size.y).toBeLessThanOrEqual(PLAYER_LOW_HEIGHT + 0.1);
@@ -157,7 +157,7 @@ describe('effets et indicateurs du porteur (étape 4)', () => {
     const p = s.players[0];
     const assets = new PlayerAssets();
     const v = new PlayerView(assets, p.id, p.team, p.role, true);
-    const frame = { feet: { x: 0, y: 0, z: 0 }, yaw: 0, pitch: 0, ground: 0, carrier: true };
+    const frame = { feet: { x: 0, y: 0, z: 0 }, yaw: 0, pitch: 0, ground: 0, carrier: true, vel: { x: 0, y: 0, z: 0 }, celebrate: false };
     const pose = v.root.children[0].children[0].children[0]; // yawGroup > fallGroup > pose
     const shell = pose.children[pose.children.length - 1];
     v.update(p, frame, 1 / 60, 0);
@@ -188,8 +188,8 @@ describe('combat (étape 5)', () => {
     const p = s.players[3];
     const assets = new PlayerAssets();
     const v = new PlayerView(assets, p.id, p.team, p.role, false);
-    const frame = { feet: { x: 0, y: 0, z: 0 }, yaw: 0, pitch: 0, ground: 0, carrier: false };
-    const body = v.root.children[0].children[0].children[0].children[0];
+    const frame = { feet: { x: 0, y: 0, z: 0 }, yaw: 0, pitch: 0, ground: 0, carrier: false, vel: { x: 0, y: 0, z: 0 }, celebrate: false };
+    const body = v.root.children[0].children[0].children[0].children[0].children[0]; // yawGroup > fallGroup > pose > capsule > corps
     const settle = (t0: number) => {
       for (let i = 0; i < 90; i++) v.update(p, frame, 1 / 60, t0 + i / 60);
       v.root.updateMatrixWorld(true);
@@ -317,7 +317,7 @@ describe('combat (étape 5)', () => {
     const assets = new PlayerAssets();
     const v = new PlayerView(assets, p.id, p.team, p.role, true);
     const yawGroup = v.root.children[0];
-    const frame = (yaw: number) => ({ feet: { x: 0, y: 0, z: 0 }, yaw, pitch: 0, ground: 0, carrier: false });
+    const frame = (yaw: number) => ({ feet: { x: 0, y: 0, z: 0 }, yaw, pitch: 0, ground: 0, carrier: false, vel: { x: 0, y: 0, z: 0 }, celebrate: false });
     v.update(p, frame(0.4), 1 / 60, 0);
     expect(yawGroup.rotation.y).toBeCloseTo(0.4, 9);
     p.status = 'down';
@@ -344,7 +344,7 @@ describe('pilier et demi (étape 7)', () => {
     expect(p.role).toBe('pilier');
     const assets = new PlayerAssets();
     const v = new PlayerView(assets, p.id, p.team, p.role, false);
-    const frame = { feet: { x: 0, y: 0, z: 0 }, yaw: 0, pitch: 0, ground: 0, carrier: false };
+    const frame = { feet: { x: 0, y: 0, z: 0 }, yaw: 0, pitch: 0, ground: 0, carrier: false, vel: { x: 0, y: 0, z: 0 }, celebrate: false };
     const shield = v.root.children[0].children.find((c) => c.type === 'Group' && c.children.some((m) => m.type === 'LineSegments'));
     expect(shield).toBeDefined();
     for (let i = 0; i < 30; i++) v.update(p, frame, 1 / 60, i / 60);

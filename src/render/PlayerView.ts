@@ -38,9 +38,12 @@ import {
   type TeamId,
   type Vec3,
 } from '../sim';
+import { CharacterModel } from './characters/CharacterModel';
+import type { CharacterLibrary } from './characters/CharacterLibrary';
+import { CHARACTERS, skinFor } from './characters/characterDefs';
 import { SHIELD_FLASH, TEAM_MAIN } from './colors';
 import { smoothstep, type Point3 } from './fadeMath';
-import { PALETTE, STYLE } from './palette';
+import { CHARACTER_STYLE, PALETTE, STYLE } from './palette';
 
 /** Dégradé à 3 paliers pour MeshToonMaterial (ombrage flat). */
 function toonGradient(): THREE.DataTexture {
@@ -253,6 +256,10 @@ export interface PlayerFrame {
   /** Hauteur du sol sous le joueur (ombre, anneau). */
   ground: number;
   carrier: boolean;
+  /** Vitesse interpolée (animation des personnages 3D). */
+  vel: Vec3;
+  /** Son équipe vient de marquer (pause d'essai) : célébration. */
+  celebrate: boolean;
 }
 
 export class PlayerView {
@@ -301,6 +308,12 @@ export class PlayerView {
   private readonly shieldRimMat: THREE.LineBasicMaterial | null = null;
   private shieldOpen = 0;
   private blockedAt = -1;
+  /** Corps de la capsule (masqué quand le personnage 3D est prêt). */
+  private readonly capsuleGroup = new THREE.Group();
+  /** Personnage 3D (null : capsule de repli, modèle pas encore chargé ou classe sans modèle). */
+  private character: CharacterModel | null = null;
+  private shotAt = -1;
+  private readonly tmpHead = new THREE.Vector3();
 
   constructor(
     assets: PlayerAssets,
@@ -308,6 +321,7 @@ export class PlayerView {
     team: TeamId,
     role: Role,
     private readonly isHuman: boolean,
+    private readonly characters: CharacterLibrary | null = null,
   ) {
     const H = PLAYER_HEIGHT;
     const R = PLAYER_RADIUS;
@@ -325,6 +339,7 @@ export class PlayerView {
     this.root.add(this.yawGroup);
     this.yawGroup.add(this.fallGroup);
     this.fallGroup.add(this.pose);
+    this.pose.add(this.capsuleGroup);
 
     // Corps + contour. Matériau propre (clignotement émissif quand il est touché).
     this.bodyMat = own(assets.teamMats[team]);
@@ -333,14 +348,14 @@ export class PlayerView {
     const body = new THREE.Mesh(assets.capsule, this.bodyMat);
     const outline = new THREE.Mesh(assets.capsule, outlineMat);
     outline.scale.setScalar(STYLE.outlineScale);
-    this.pose.add(body, outline);
+    this.capsuleGroup.add(body, outline);
 
     // Visière (avant = +Z local), à hauteur des yeux.
     const visor = new THREE.Mesh(assets.visor, own(assets.visorMat));
     visor.position.set(0, H * 0.31, R * 0.82);
     const glint = new THREE.Mesh(assets.glint, own(assets.glintMat));
     glint.position.set(-0.14, H * 0.31 + 0.04, R * 0.82 + 0.115);
-    this.pose.add(visor, glint);
+    this.capsuleGroup.add(visor, glint);
 
     // Arme côté droit (droite = −X local, cf. right(yaw)), inclinée selon le pitch.
     const gun = new THREE.Mesh(assets.weapons[role], own(assets.weaponMat));
@@ -363,7 +378,7 @@ export class PlayerView {
     signOutline.position.copy(sign.position);
     signOutline.rotation.copy(sign.rotation);
     signOutline.scale.setScalar(1.2);
-    this.pose.add(sign, signOutline);
+    this.capsuleGroup.add(sign, signOutline);
 
     // Halo d'invulnérabilité (suit la posture : écrasé en plongeon comme la hitbox) : couleur claire de l'équipe, faces
     // arrière seulement => un liseré lumineux autour du corps, qui garde sa couleur d'équipe.
@@ -451,9 +466,43 @@ export class PlayerView {
     this.blockedAt = timeSec;
   }
 
-  /** Le joueur vient d'être touché : clignotement (STYLE.hitFlashSec). */
+  /** Le joueur vient d'être touché : clignotement (STYLE.hitFlashSec) et geste de recul du personnage. */
   flash(timeSec: number): void {
     this.hitAt = timeSec;
+    this.character?.gesture('hit');
+  }
+
+  /** Le joueur vient de tirer : posture de tir du personnage (CHARACTER_STYLE.shootHoldSec). */
+  shot(timeSec: number): void {
+    this.shotAt = timeSec;
+  }
+
+  /** Geste ponctuel du personnage (passe, coup de pied). */
+  gesture(kind: 'pass' | 'kick'): void {
+    this.character?.gesture(kind);
+  }
+
+  /** Vrai si le personnage 3D remplace la capsule. */
+  get hasCharacter(): boolean {
+    return this.character !== null;
+  }
+
+  /** Construit le personnage 3D dès que son modèle est chargé. */
+  private tryBuildCharacter(): void {
+    const lib = this.characters;
+    const def = CHARACTERS[this.role];
+    if (lib === null || def === null || !lib.ready(this.role)) return;
+    const skin = skinFor(this.role);
+    const tpl = skin !== null ? lib.template(skin.model) : null;
+    if (skin === null || tpl === null) return;
+    const c = new CharacterModel(tpl, lib.clips, def, skin, this.team, this.assets.gradient, GETUP_DURATION_SEC);
+    for (const m of c.materials) {
+      m.opacity = this.fade;
+      this.fadeMats.push(m);
+    }
+    this.character = c;
+    this.yawGroup.add(c.root);
+    this.pose.visible = false; // capsule, arme et halo de la capsule
   }
 
   /** Oriente la barre de stabilité vers la caméra (après la mise à jour de la caméra). */
@@ -505,11 +554,40 @@ export class PlayerView {
   }
 
   dispose(): void {
+    this.character?.dispose();
     for (const m of this.fadeMats) m.dispose();
     this.invulnMat.dispose();
     this.barFillMat.dispose();
     this.shieldMat?.dispose();
     this.shieldRimMat?.dispose();
+  }
+
+  private readonly charFrame = { pitch: 0, velFwd: 0, velSide: 0, carrier: false, shooting: false, celebrate: false };
+
+  /** Personnage 3D : animation, clignotement, halo d'invulnérabilité (contour), étoiles au-dessus de la tête au sol. */
+  private updateCharacter(p: PlayerState, f: PlayerFrame, dt: number, timeSec: number, sinceHit: number, pulse: number): void {
+    const c = this.character;
+    if (c === null) return;
+    const yaw = this.yawGroup.rotation.y;
+    const fx = Math.sin(yaw);
+    const fz = Math.cos(yaw);
+    const cf = this.charFrame;
+    cf.pitch = f.pitch;
+    cf.velFwd = f.vel.x * fx + f.vel.z * fz;
+    cf.velSide = -(f.vel.x * fz - f.vel.z * fx); // droite = (-cos, 0, sin)
+    cf.carrier = f.carrier;
+    cf.shooting = this.shotAt >= 0 && timeSec - this.shotAt < CHARACTER_STYLE.shootHoldSec;
+    cf.celebrate = f.celebrate;
+    c.update(p, cf, dt);
+    c.setFlash(sinceHit < STYLE.hitFlashSec ? STYLE.hitFlashIntensity * (1 - sinceHit / STYLE.hitFlashSec) : 0);
+    const invuln = p.invulnTicks > 0 || p.status === 'getting_up';
+    if (invuln) c.setOutline(PALETTE.teams[this.team].light, CHARACTER_STYLE.invulnOutlineWidth * (1 + pulse));
+    else c.setOutline(PALETTE.outline, CHARACTER_STYLE.outlineWidth);
+    if (this.dizzy.visible) {
+      c.headWorld(this.tmpHead);
+      this.yawGroup.worldToLocal(this.tmpHead);
+      this.dizzy.position.set(this.tmpHead.x, this.tmpHead.y - STYLE.dizzyHeight + 0.35, this.tmpHead.z);
+    }
   }
 
   /** Met à jour la vue pour une frame (état interpolé). */
@@ -518,6 +596,7 @@ export class PlayerView {
     if (p.status === 'active') this.downYaw = Number.NaN;
     else if (Number.isNaN(this.downYaw)) this.downYaw = f.yaw;
     this.yawGroup.rotation.y = Number.isNaN(this.downYaw) ? f.yaw : this.downYaw;
+    if (this.character === null) this.tryBuildCharacter();
 
     // Au sol : couché face contre terre, vers l'avant (pivot aux pieds, posé sur son rayon ; le joueur local tombe
     // donc loin de sa caméra), puis se redresse pendant le relevé.
@@ -556,6 +635,7 @@ export class PlayerView {
     const pulse = this.assets.reducedMotion ? 0 : STYLE.invulnPulse * Math.sin(timeSec * STYLE.invulnPulseRate);
     this.invulnBase = STYLE.invulnOpacity + pulse;
     this.invulnMat.opacity = this.invulnBase * haloFade(this.fade);
+    if (this.character !== null) this.updateCharacter(p, f, dt, timeSec, since, pulse);
 
     // Bouclier : se déploie (largeur et hauteur) quand il est levé, flashe quand il bloque.
     if (this.shieldGroup !== null && this.shieldMat !== null && this.shieldRimMat !== null) {

@@ -22,7 +22,7 @@ import { createMatch } from '../../src/sim/match';
 import type { MatchEvent, MatchState } from '../../src/sim/types';
 
 const match = (): MatchState => createMatch({ teamSize: 3, seed: 1, roles: [['ailier', 'demi', 'pilier'], ['ailier', 'demi', 'pilier']] });
-const frame = (carrier = false) => ({ feet: { x: 0, y: 0, z: 0 }, yaw: 0, pitch: 0, ground: 0, carrier });
+const frame = (carrier = false) => ({ feet: { x: 0, y: 0, z: 0 }, yaw: 0, pitch: 0, ground: 0, carrier, vel: { x: 0, y: 0, z: 0 }, celebrate: false });
 
 describe('fadeMath', () => {
   it('smoothstep borné, distances point / segment et segment / segment exactes', () => {
