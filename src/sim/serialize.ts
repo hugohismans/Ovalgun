@@ -1,6 +1,10 @@
 /**
- * Sérialisation de l'état : copie profonde et empreinte (tests de déterminisme, plus tard
- * vérification client/serveur). L'état étant 100 % JSON, JSON est la référence.
+ * Sérialisation de l'état : copie profonde et empreinte (tests de déterminisme ; plus tard, contrôle de
+ * désynchronisation entre deux exécutions sur le MÊME moteur JavaScript). L'état étant 100 % JSON, JSON est la référence.
+ * Déterminisme garanti sur un même moteur (V8 : navigateurs Chromium, Node, workerd des Durable Objects) ; entre moteurs
+ * (Safari / JavaScriptCore, Firefox / SpiderMonkey), Math.sin, cos, exp et atan2 ne sont pas garantis identiques au bit
+ * près (ECMAScript les dit « implementation-approximated ») : le snapshot du serveur fait alors autorité et la
+ * prédiction du client est corrigée, sans comparaison de hash (docs/ARCHITECTURE.md §20).
  */
 
 import type { MatchState } from './types';

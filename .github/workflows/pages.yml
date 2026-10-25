@@ -1,0 +1,51 @@
+# Déploiement de dist/ sur GitHub Pages, UNIQUEMENT à la main (Actions -> « Déploiement GitHub Pages » -> Run workflow).
+# Prérequis (une fois) : Settings -> Pages -> Build and deployment -> Source : « GitHub Actions ».
+# Le build utilise base './' (vite.config.ts) : il fonctionne sous https://<utilisateur>.github.io/<dépôt>/.
+name: Déploiement GitHub Pages
+
+on:
+  workflow_dispatch:
+
+# Permissions minimales : rien par défaut, puis par job — le build lit le dépôt et la configuration Pages, seule la
+# publication écrit sur Pages (avec le jeton OIDC exigé par actions/deploy-pages).
+permissions: {}
+
+# Un seul déploiement à la fois ; un déploiement en cours n'est pas interrompu.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Vérification et build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: read
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    name: Publication
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

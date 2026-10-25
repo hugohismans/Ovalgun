@@ -3,6 +3,18 @@
 Ce document est la référence technique commune. Le cahier des charges d'origine est dans `docs/SPEC.md`.
 Langue : identifiants de code en anglais, commentaires et documentation en français.
 
+**Comment le lire.** Les §1 à §6 décrivent l'architecture et le contrat **actuels**. Les §7 à §18 sont le journal des
+décisions, étape par étape : une décision reprise plus tard y est signalée sur place (« étape 7 : résolu, §13 », « passe
+finale, §17 »…), et en cas de doute la section la plus récente fait foi. Le §19 récapitule la passe finale (documentation,
+CI) et le §20 dit comment brancher le mode online.
+
+Sommaire : 1. Vue d'ensemble des modules · 2. Contrat de la simulation · 3. Repère, angles, visée · 4. Interprétations du
+cahier des charges · 5. Rendu · 6. Vérification · 7. Simulation (étape 2) · 8. Client (étape 3) · 9. Le porteur (étape 4) ·
+10. Tir, stabilité, plaquage (étape 5) · 11. Boucle de match (étape 6) · 12. Bots (étape 6) · 13. Pilier et demi (étape 7) ·
+14. Mêlée (étape 7) · 15. Correction de l'étape 7 : rythme · 16. HUD et menus (étape 8) · 17. Passe finale : simulation et
+bots · 18. Passe finale : client, caméra et UI · 19. Passe finale : documentation, CI et contrôle final · 20. Brancher le
+mode online.
+
 ## 1. Vue d'ensemble des modules
 
 ```
@@ -15,7 +27,8 @@ src/
            Remapping via keymap.ts / gamepadMap.ts (données, pas de touches en dur).
   game/    Colle côté client : boucle à pas fixe, assemblage des entrées (humain + bots), appel de step(), alimentation du rendu et du HUD.
   ui/      Svelte 5 (runes) : menu, HUD, pause, fin, contrôles, réglages (étape 8, §16). Logique pure dans ui/logic.
-tests/     Vitest (environnement node) : simulation, bots, architecture.
+tests/     Vitest (environnement node) : simulation, bots, client (game, input, render, ui), architecture.
+.github/   CI (typecheck + tests + build à chaque push / pull request) et déploiement GitHub Pages manuel (§19).
 ```
 
 Graphe de dépendances autorisé (une flèche = « peut importer ») :
@@ -42,7 +55,7 @@ API publique (`src/sim/index.ts`) :
 createMatch(config: MatchConfig): MatchState
 step(state: MatchState, inputs: InputFrame, dt?: number): MatchState // mute en place ET renvoie le même objet
 cloneState(state: MatchState): MatchState                              // copie profonde (JSON-safe)
-hashState(state: MatchState): string                                   // FNV-1a sur JSON.stringify (tests, vérif. client/serveur)
+hashState(state: MatchState): string                                   // FNV-1a sur JSON.stringify (tests ; même moteur JS seulement, §20)
 NEUTRAL_INPUT, makeInput(partial), Buttons, constantes, types…
 createField, groundHeight, supportHeight, groundNormal, faceContact      // terrain, partagé avec le rendu
 aimOrigin(feet, yaw)                                                    // origine de visée (§3), partagée avec la caméra
@@ -82,7 +95,7 @@ scrumInOvertime, scrumTicksLeft, scrumLooseReady, countInZone, inScrumZone
 - Ids : joueurs `0..2*teamSize-1`. Équipe 0 = ids `0..teamSize-1`, équipe 1 = la suite. En solo, le client contrôle le joueur 0.
 - Une entrée manquante pour un joueur = entrée neutre qui conserve son yaw/pitch courant. Elle ne met pas à jour
   `lastButtons` : un bouton encore maintenu au tick suivant ne crée pas de faux front montant (pas de double saut).
-  Politique réseau conseillée (serveur) : répéter la DERNIÈRE entrée reçue plutôt que l'omettre (§17, préparation au online).
+  Politique réseau conseillée (serveur) : répéter la DERNIÈRE entrée reçue plutôt que l'omettre (§17, préparation au online ; §20).
 - `state.config` est la configuration **normalisée** (`Required<MatchConfig>`) : tous les champs sont renseignés.
 - Les entrées sont **assainies** par la sim (valeurs non finies ignorées, déplacement borné à [-1, 1] puis normalisé
   si sa norme dépasse 1, bits inconnus retirés, `-0` ramené à `0`) : aucune entrée (client, bot, réseau) ne peut injecter de NaN
@@ -199,8 +212,8 @@ Voir l'en-tête de `src/sim/vec.ts`.
   portée d'engagement, réflexe d'esquive et avance sur cible. Leur aléatoire passe par leur propre PRNG seedé (dérivé de la seed du
   match et de leur id), stocké dans leur mémoire interne (pas dans MatchState). Détails : §12.
 - **Mode entraînement** (`config.training`) : chrono figé, pas de dernière minute ni de fin de match — pour régler le feeling du porteur.
-  Tout le reste est identique (coup d'envoi, essais, remises en jeu). Côté client : `?training` (étape 6 ; avant, le prototype était
-  toujours en entraînement).
+  Tout le reste est identique (coup d'envoi, essais, remises en jeu). Côté client : case « Entraînement » du menu (étape 8), ou
+  `?training` (étape 6, gardé pour le debug ; avant, le prototype était toujours en entraînement).
 
 ## 5. Rendu
 
@@ -219,6 +232,8 @@ Voir l'en-tête de `src/sim/vec.ts`.
 - `npm test` : vitest (déterminisme, physique, règles, bots, architecture).
 - `npm run build` : build statique dans `dist/`.
 - `npm run check` : les trois.
+- CI (`.github/workflows/ci.yml`, §19) : `npm ci`, `npm run typecheck`, `npm test`, `npm run build` sur Node 22 à chaque push et
+  pull request. Déploiement GitHub Pages : `.github/workflows/pages.yml`, manuel (§19, README).
 
 ## 7. Module de simulation (étape 2)
 
@@ -432,7 +447,7 @@ Décisions prises à l'étape 4 :
   (`pass_denied`, ballon conservé) => le KICK s'applique.
 - **Coup de pied** : départ `KICK_START_FORWARD` devant les pieds, `KICK_START_HEIGHT` au-dessus du sol ; élévation
   `KICK_ELEVATION_DEG` (48° : une chandelle qui passe vite au-dessus des bras) + pitch·`KICK_PITCH_INFLUENCE` bornée ; vitesse
-  `KICK_SPEED` × **√`field.scale`** (portée ∝ v², donc proportionnelle à la taille du terrain : ≈ 36 m en 5v5, ≈ 30 m en 3v3 (26 m avec l'échelle 3v3 d'avant la correction de l'étape 7)
+  `KICK_SPEED` × **√`field.scale`** (portée ∝ v², donc proportionnelle à la taille du terrain : ≈ 37 m en 5v5, ≈ 31 m en 3v3 (26 m avec l'échelle 3v3 d'avant la correction de l'étape 7)
   à l'arrêt, au lieu d'un dégagement systématique dans l'en-but du 3v3) × dernière minute, + `KICK_INHERIT_VELOCITY` × vitesse
   horizontale du tireur. Tireur bloqué `KICK_PICKUP_BLOCK_SEC` (il peut ensuite rattraper son propre coup de pied :
   « chip and chase »). **Contre** : seulement un adversaire à moins de `KICK_CHARGE_DOWN_RADIUS` du tireur pendant
@@ -554,7 +569,9 @@ Décisions prises à l'étape 5 :
   (« faible mais précis »), `CARRIER_DAMAGE_MULT` 1,25 -> 1,1 (« un peu plus fort »), balles 150 -> 300 m/s. Porteur ailier
   boosté : `BOOST_SPEED_MULT` 1,3 -> 1,2 (8,8 × 1,22 × 1,08 × 1,2 ≈ 13,9 m/s au lieu de 15,1, contre 10,7 pour un ailier qui
   poursuit au sprint). Temps mesurés (cible immobile, toutes les balles touchent) : 10 m 1,27 s (porteur 1,20 s), 25 m 1,33 s
-  (1,27 s), 35 m 1,70 s (1,57 s) ; tableau dans docs/TESTING.md, vérifié par le test « temps pour plaquer ».
+  (1,27 s), 35 m 1,70 s (1,57 s) ; tableau dans docs/TESTING.md, vérifié par le test « temps pour plaquer ». Repris par le réglage
+  du rythme (§15) : `CARRIER_DAMAGE_MULT` 1,3, `SPRINT_SPEED_MULT` 1,12 et `BOOST_SPEED_MULT` 1,1 (porteur boosté ≈ 11,7 m/s ; porteur
+  plaqué en 1,00 s à 10 m, 1,07 s à 25 m, 1,30 s à 35 m).
 - **Plaquage** (étape 8, ordre des ids) : jauge ≤ 0 => `down` pendant secToTicks(DOWN_DURATION_SEC) ticks (compte exact), jauge
   à 0, mouvement spécial annulé (`run`, y compris une grimpe : le corps retombe sur le muret), invulnérabilité et tampon de saut
   remis à 0, capacité terminée (`endAbility` : le cooldown démarre). Le corps glisse : vitesse horizontale plafonnée à
@@ -585,7 +602,7 @@ Décisions prises à l'étape 5 :
   sans avance, une tourelle ne plaquait jamais un porteur qui court) ; erreur de visée par rafale et tremblement par tick tirés
   sur son PRNG propre (`deriveSeed(seed, id)`, dans sa mémoire, jamais dans MatchState) ; suppose un appel par tick. La session les branche sur tous les adversaires
   (`SessionOptions.dummies`, `?dummies=off` => passives). Limite assumée : elles visent l'ennemi le plus proche, souvent un
-  coéquipier passif du joueur ; le demi d'en face ne tire pas (grenades : étape 7). L'étape 6 les remplace par de vrais bots.
+  coéquipier passif du joueur ; le demi d'en face ne tirait pas (étape 7 : tir en cloche, §13). L'étape 6 les remplace par de vrais bots.
 - **Rendu** : traceurs interpolés sans lecture de l'état précédent (position affichée = `pos − vel·dt·(1 − alpha)`, origine =
   `pos − dir·traveled`) ; un projectile terminé pendant le tick est prolongé jusqu'à son point final (`projectile_end` + position
   dans l'état précédent, passé à `Renderer.handleEvents(events, state, t, prev)`). Plusieurs ticks dans la même frame (≤ 30 i/s,
@@ -604,7 +621,7 @@ Décisions prises à l'étape 5 :
   indicateurs de direction des tirs reçus (un par tireur,
   angle recalculé à chaque frame avec la caméra et la position COURANTES du tireur), vignette rouge sous
   `STYLE.vignetteFromFraction` de stabilité + flash à chaque tir reçu. Mini-HUD provisoire (stabilité, munitions / rechargement,
-  capacité, esquive) dans `App.svelte` ; retours texte « Plaqué ! », « Plaquage ! », « Plaqué ! Ballon lâché ». Vibrations : tir
+  capacité, esquive) dans `App.svelte` (remplacé par le HUD de l'étape 8, §16) ; retours texte « Plaqué ! », « Plaquage ! », « Plaqué ! Ballon lâché ». Vibrations : tir
   reçu (léger), plaquage subi (fort), plaquage réussi (court) — table `GAMEPAD_RUMBLE_EFFECTS`.
 
 ## 11. Étape 6 : boucle de match complète (1re partie : simulation et HUD minimal)
@@ -617,7 +634,7 @@ Décisions prises à l'étape 5 :
 | `sim/match.ts` | `createMatch` démarre en `kickoff` ; `step` s'arrête après la visée en `ended`. |
 | `game/matchHud.ts` | HUD de match PUR (testé) : chrono `m:ss`, « 3, 2, 1, JOUEZ ! », bannière d'essai, dernière minute, écran de fin (stats). |
 | `game/session.ts` | Événements -> `MatchHud`, caméra retournée à chaque remise en jeu, fin (pointer lock relâché sans pause), `restart()`, `installProviders()`. |
-| `ui/App.svelte` | Score / chrono en haut, compte à rebours, bannières, écran de fin (bouton « Rejouer », Entrée, A). |
+| `ui/App.svelte` | Score / chrono en haut, compte à rebours, bannières, écran de fin (bouton « Rejouer », Entrée, A) ; répartis en composants à l'étape 8 (§16). |
 
 Décisions :
 
@@ -811,13 +828,19 @@ Décisions :
   avantage, mais ils se cumulent — le niveau du dessous ne marquait que 15–25 % des points du niveau du dessus) : réaction 0,5 / 0,32 /
   0,22 s ; erreur 5 / 3,5 / 2,5° et 1 / 0,7 / 0,5 m ; rotation 300 / 420 / 600 °/s ; décision 0,5 / 0,4 / 0,3 s ; portée 75 / 85 / 95 % ;
   réflexe d'esquive 0,4 / 0,8 / 1,2 par s ; avance 40 / 80 / 100 % ; pauses entre rafales × 1,3 / 1 / 0,9. Tests : « difficile » bat
-  « facile » de plus du double des points ; entre niveaux voisins, le plus faible marque au moins 15 % des points du plus fort ; erreur de
-  visée moyenne plus de deux fois plus grande en facile ; réaction plus tardive.
+  « facile » de plus du double des points (3v3, seeds 4–5) ; normal contre difficile en 3v3 (seeds 4–5), le plus faible marque au moins
+  15 % des points du plus fort ; erreur de visée moyenne plus de deux fois plus grande en facile ; réaction plus tardive.
+  **Mesure actuelle** (passe finale, après les réglages des §15 et §17 ; chaque niveau des deux côtés, seeds 1 à 6, trois mesures
+  indépendantes qui varient selon les seeds) : part des points du plus faible entre niveaux voisins — 3v3 facile / normal ≈ 13–17 %,
+  normal / difficile ≈ 17–24 % ; 5v5 facile / normal ≈ 2–11 %, normal / difficile ≈ 9–21 %. Le « au moins 15 % » ne vaut donc que pour le
+  cas testé (normal / difficile en 3v3) : les marches sont raides, surtout facile / normal et en 5v5. Sans effet en jeu (la session donne
+  la même difficulté aux coéquipiers et aux adversaires) ; piste si un mode « équipes de niveaux différents » apparaît : rapprocher facile
+  de normal (`reactionSec` 0,5 -> 0,42, `aimErrorDeg` 5 -> 4,5, `leadFraction` 0,4 -> 0,6) et tester facile / normal.
 - **Client** : `GameSession.installProviders()` crée un bot par joueur non humain (coéquipiers ET adversaires) avec `externalIds = [humanId]`,
-  difficulté `SessionOptions.difficulty` (défaut `DEFAULT_BOT_DIFFICULTY` = normal ; `?difficulty=facile|normal|difficile` en attendant le
-  menu de l'étape 8). `?debug&autopilot` : le joueur 0 est aussi un bot (match bots contre bots vu depuis sa caméra, yaw / pitch interpolés
+  difficulté `SessionOptions.difficulty` (défaut `DEFAULT_BOT_DIFFICULTY` = normal ; choix du menu depuis l'étape 8, paramètre
+  `?difficulty=facile|normal|difficile` gardé pour le debug, `launch.ts`). `?debug&autopilot` : le joueur 0 est aussi un bot (match bots contre bots vu depuis sa caméra, yaw / pitch interpolés
   du joueur ; aucun joueur externe, receveur des coups d'envoi par défaut). `?dummies=off` : tous les autres joueurs passifs (réglage du
-  plaquage). `?size=5` : 5v5 (en attendant le menu). Les tourelles de l'étape 5 ne sont plus installées (gardées dans `bots/turret.ts` pour
+  plaquage). `?size=5` : 5v5 (menu depuis l'étape 8 ; paramètre d'URL gardé pour le debug, `launch.ts`). Les tourelles de l'étape 5 ne sont plus installées (gardées dans `bots/turret.ts` pour
   leurs tests).
 - **Mesures** (harnais de relecture, matchs bots contre bots de 6 min, seeds 1 à 4 ; avant -> après correction) :
   | | 3v3 normal | 5v5 normal |
@@ -829,9 +852,9 @@ Décisions :
   | Coups de pied par match | 43 -> 3,3 | 27 -> 4 |
   | Plaquages par match (dont sur le porteur) | 167 (13 %) -> 75 (64 %) | 326 (9 %) -> 150 (42 %) |
   | Précision des tirs | 73 % -> 58 % | 67 % -> 56 % |
-  Facile / difficile : 3v3 ≈ 51 / 30 essais, 5v5 ≈ 27 / 12,5. Le nombre d'essais reste élevé en 3v3 : sur trois joueurs, le demi (désarmé
-  jusqu'à l'étape 7) ne peut ni presser ni couvrir utilement, il reste deux tireurs par équipe ; en 5v5 (quatre tireurs sur cinq) le rythme
-  est nettement plus « rugby ». La plupart des essais viennent d'un contre après un plaquage (le ballon repris, l'équipe qui attaquait n'a
+  Facile / difficile : 3v3 ≈ 51 / 30 essais, 5v5 ≈ 27 / 12,5 (mesures de l'étape 6 ; rythme actuel : §15 et §17). Le nombre
+  d'essais reste élevé en 3v3 : sur trois joueurs, le demi (désarmé jusqu'à l'étape 7) ne peut ni presser ni couvrir utilement, il reste
+  deux tireurs par équipe ; en 5v5 (quatre tireurs sur cinq) le rythme est nettement plus « rugby ». La plupart des essais viennent d'un contre après un plaquage (le ballon repris, l'équipe qui attaquait n'a
   personne derrière). Environ 6 à 10 demi-tours par joueur et par minute hors esquive, surtout aux changements de possession (légitimes).
   ≈ 0,3–0,7 s de calcul par match (sim + bots).
 - **Limites connues** : pas d'évitement explicite des murets (on compte sur la grimpe automatique et le détour de blocage) ; le demi ne
@@ -929,8 +952,8 @@ Décisions :
   (`TEAM_ROLES_5V5`) : le pilier (le plus lent, portée courte) est un spécialiste du contact — deux piliers ralentiraient tout le jeu et
   laisseraient peu de tireurs à moyenne portée ; deux ailiers donnent des coureurs et du feu précis, deux demis le contrôle de zone (knockback,
   zones) qui manque le plus en 5v5 où les défenses sont nombreuses. Le rôle choisi par l'humain est retiré une fois de la composition et placé
-  en tête (index 0, même place de formation) ; l'équipe adverse a la même composition. Client : `?role=pilier|ailier|demi` (défaut ailier)
-  en attendant le menu de l'étape 8.
+  en tête (index 0, même place de formation) ; l'équipe adverse a la même composition. Client : choix du menu depuis l'étape 8 (défaut ailier) ;
+  paramètre `?role=pilier|ailier|demi` gardé pour le debug (`launch.ts`).
 - **Bots** :
   - **portées** (`world.ts`, `engageRange`) : fusil à pompe plafonné à `BOT_SHOTGUN_ENGAGE_DIST` (10 m : au-delà, il se rapproche — le rôle
     « pression » le mène au porteur) ; lance-grenades `BOT_GRENADE_ENGAGE_DIST` × `engageRangeMult`, jamais à moins de `BOT_GRENADE_MIN_DIST`
@@ -1155,7 +1178,8 @@ leviers crédibles plafonnent vers 12–14 (essayés en plus, dans le bruit de �
 sprint 1,15).
 **Prix à payer** : un peu moins de ballon porté et un peu plus de joueurs au sol (à revalider avec un humain ; si le ballon libre gêne en jeu
 réel, réduire les plaquages de non-porteurs avec `BOT_RESTRAINED_PAUSE_MULT` 2,5 -> 3,5 plutôt que d'agrandir `BALL_PICKUP_RADIUS`, qui tue les
-mêlées en 5v5). Bornes de rythme des tests (seeds 1–3) : essais 4–18 (3v3) / 4–14 (5v5), ballon porté ≥ 50 % / 40 %, au sol ≤ 17 % / 19 %.
+mêlées en 5v5). Bornes de rythme des tests (seeds 1–3) : essais 4–18 (3v3) / 4–14 (5v5), ballon porté ≥ 50 % / 40 %, au sol ≤ 17 % / 19 %
+(resserrées au §17 : 4–16 / 4–12, porté ≥ 55 % / 45 %).
 Temps pour plaquer par arme : docs/TESTING.md (étape 7).
 
 Constats écartés ou partiels :
@@ -1385,7 +1409,8 @@ Préparation au online (constats de l'audit d'architecture, rien à coder dans l
   d'une mêlée), deltas par rapport au dernier snapshot acquitté. Coût CPU mesuré : 0,08 / 0,12 ms par tick pour `step` et 0,21 /
   0,46 ms pour les bots (3v3 / 5v5).
 - **Contrôle par hash** (`hashState`) : fiable entre moteurs V8 (navigateurs Chromium, Node, workerd) ; les fonctions
-  transcendantes (`Math.sin`, `Math.exp`…) ne sont pas garanties identiques au bit près entre moteurs.
+  transcendantes (`Math.sin`, `Math.exp`…) ne sont pas garanties identiques au bit près entre moteurs. Entre client et
+  serveur, le snapshot fait donc autorité, sans comparaison de hash (§20).
 - **Identifiants** : prêts (`humanId` paramétrable, `externalIds` des bots, `botInput` et `BotMemory` sérialisables et exportés).
 
 
@@ -1507,3 +1532,136 @@ Décisions :
 | `STYLE.tackleBurstLocalScale` (nouvelle) | — (1) | 0,5 | Éclat du plaquage subi moins envahissant |
 | `STYLE.cameraFade*`, `lineFade*`, `localFade*`, `fade*Below` (nouvelles) | — | voir palette.ts | Estompage près de la caméra |
 | `STYLE.maxPixelRatio` (nouvelle) | 2 en dur | 2 | Valeur visuelle sortie du code |
+
+
+## 19. Passe finale : documentation, CI et contrôle final
+
+| Fichier | Rôle |
+|---|---|
+| `README.md` | Présentation, lancement, déploiement statique (GitHub Pages, Cloudflare Pages), contrôles clavier ET manette, menus et réglages, paramètres d'URL de debug (vérifiés dans `launch.ts`), structure, liens. |
+| `docs/TESTING.md` | Sommaire, section « Étape 1 — squelette », valeurs des tableaux vérifiées contre `constants.ts` (script qui évalue le module), section de la passe finale, aide-mémoire des 15 constantes du feeling. |
+| `docs/ARCHITECTURE.md` | Mode d'emploi et sommaire, renvois sur les décisions reprises plus tard, §19, §20. |
+| `src/sim/serialize.ts` | Commentaire : portée du déterminisme et du hash (même moteur JS). |
+| `.github/workflows/ci.yml` | CI : Node 22, `npm ci`, `npm run typecheck`, `npm test`, `npm run build`, à chaque push et pull request. |
+| `.github/workflows/pages.yml` | Déploiement de `dist/` sur GitHub Pages, **manuel** (`workflow_dispatch`). |
+
+Décisions :
+
+- **Docs = journal + état actuel** : les §7 à §18 restent un journal par étape (les mesures et les raisons d'un choix y
+  gardent leur valeur), mais chaque passage repris plus tard porte un renvoi (« étape 7 : tir en cloche, §13 », « menu
+  depuis l'étape 8 ; paramètre d'URL gardé pour le debug »…) ; les §1 à §6 décrivent l'état actuel. Corrigés à cette passe :
+  paramètres d'URL décrits comme provisoires (§12, §13 : le menu existe, ils ne servent plus qu'au debug), demi des
+  tourelles, mini-HUD de l'étape 5, portée du coup de pied (≈ 37 / 31 m mesurés avec `kickLaunch` + `predictBallLanding`),
+  réglage du plaquage de l'étape 5 (repris au §15), bornes de rythme (§15 -> §17), hash « vérif. client/serveur » (§2, §20),
+  écart entre niveaux de difficulté (§12 : le « au moins 15 % » n'est vrai que pour le cas testé).
+- **CI** : `npm ci` (installation exacte du `package-lock.json`), Node 22 (Vitest 5 exige Node 22.12+, Vite 8 20.19+), cache
+  npm de `actions/setup-node`, permissions `contents: read`, `concurrency` qui annule le run précédent de la même branche.
+  Les étapes sont séparées (typecheck, tests, build) pour lire tout de suite laquelle échoue.
+- **GitHub Pages manuel** : un prototype ne doit pas être republié à chaque push ; `workflow_dispatch` seulement. Le workflow
+  refait `npm run check` avant de publier (jamais de build cassé en ligne). Permissions par job : build `contents: read` +
+  `pages: read` (`configure-pages`), publication `pages: write` + `id-token: write` (`deploy-pages`), rien au niveau du
+  workflow. Activation : *Settings → Pages → Source : GitHub Actions*, puis *Run workflow* (README). `base: './'` rend le
+  build valable sous `/<dépôt>/` sans variable d'environnement.
+- **Cloudflare Pages** : aucun fichier de configuration nécessaire (commande `npm run build`, dossier `dist`, `NODE_VERSION`
+  22) : documenté dans le README plutôt qu'un `wrangler.toml` qui ne servirait qu'à ce cas.
+- **Contrôle final** : `npm ci && npm run check` depuis un état propre (sans `node_modules` ni `dist`) : 37 fichiers de test,
+  530 tests, svelte-check sans avertissement, build. Puis parcours Playwright (Chromium headless + SwiftShader, 1280×720) en
+  trois passes : clavier / souris (`?debug&menu&duration=25` : choix à la souris, JOUER à l'Entrée, jeu, G, pause à Échap,
+  Reprendre, fin de match, Rejouer, Quitter vers le menu en deux appuis, match de fond relancé), fausse manette
+  (`?debug&menu&duration=20` : croix + A dans le menu, Start = jouer, stick, A, RT, View, RB, Start = pause / reprise, fin,
+  Start = Rejouer, Quitter à la croix) et fausse manette sans `?debug` (Start lance la partie sans pointer lock, pause,
+  Quitter) : 25 vérifications réussies, 0 erreur ni avertissement de console. Limite du banc de test, pas du jeu : sous
+  SwiftShader (16–25 images/s), un appui simulé plus court qu'une image n'est pas vu par la lecture de la manette (une
+  par image) ; le script maintient les boutons 350 ms.
+
+## 20. Brancher le mode online
+
+Objectif du cahier des charges : serveur autoritaire sur **Cloudflare Durable Objects**, **Firebase** pour l'authentification
+et les lobbies, sans réécrire la simulation. Rien de tout cela n'est codé ; cette section dit ce qui est prêt, comment
+l'assembler et ce qui reste à faire. Les mesures et constats d'audit sont au §17 (« Préparation au online »).
+
+### Ce qui est déjà prêt
+
+- **Simulation pure et portable** : `src/sim` et `src/bots` n'utilisent ni DOM, ni Node, ni horloge, ni aléatoire global
+  (compilés par `tsconfig.sim.json` sans lib DOM, vérifiés par `tests/architecture.test.ts`) : ils s'importent tels quels dans
+  un Worker. API : `createMatch(config)`, `step(state, inputs, TICK_DT)` (mutation en place, tick fixe de 30 Hz), `cloneState`,
+  lectures pures (`queries.ts`). Coût mesuré : 0,08 / 0,12 ms par tick pour `step`, 0,21 / 0,46 ms pour les bots (3v3 / 5v5) —
+  des dizaines de matchs par isolat.
+- **État 100 % JSON** (`MatchState` : joueurs, ballon, projectiles, zones, mêlée, score, chrono, phase, `rng`), sans `-0`,
+  `NaN` ni `undefined` (tests d'aller-retour) : il se stocke tel quel dans le stockage du Durable Object et s'envoie en snapshot.
+- **Entrées réseau sûres** : `PlayerInput` = 5 nombres (`moveX`, `moveY`, `yaw`, `pitch`, `buttons`), **assainis** par la sim
+  (valeurs non finies ignorées, déplacement borné, bits inconnus retirés, `-0` ramené à 0) : un client malveillant ne peut pas
+  casser l'état. Une entrée manquante = entrée neutre ; répéter la dernière entrée ne crée pas de faux front montant (§2, §17).
+- **Bots côté serveur** : `createBot(id, difficulté, seed, { externalIds })` renvoie un `InputProvider` (`(state, id) =>
+  PlayerInput`) qui ne lit que l'état ; mémoire (`BotMemory`, PRNG propre) sérialisable, `botInput` / `createBotMemory`
+  exportés pour la persister. `externalIds` = les humains (les bots se répartissent les rôles sans compter sur eux).
+- **Joueurs humains n'importe où** : `MatchConfig.kickoffReceivers` (qui reçoit aux coups d'envoi), compositions `roles`
+  libres, ids 0..2N−1 par équipe ; rien ne suppose « humain = joueur 0 » dans la sim ni dans les bots.
+- **Client déjà découplé** : le rendu interpole entre deux `MatchState` (`prev`, `curr`, alpha) et ne lit la sim que par
+  `'../sim'` ; la caméra du joueur local utilise le yaw / pitch courant de la souris (pas l'état) ; l'`InputManager` produit
+  un `PlayerInput` par tick (`sample()`). Remplacer « `step` local » par « snapshots reçus » ne touche ni au rendu ni à l'UI.
+- **Déterminisme** : même état + mêmes entrées => même état, au bit près **sur un même moteur** (V8 : Chromium, Node,
+  workerd). Utile pour rejouer un match côté serveur (journal des entrées) et pour la prédiction client.
+
+### Architecture cible
+
+```
+ Client (navigateur)                      Firebase                        Cloudflare
+ ─────────────────────                    ─────────────────────           ─────────────────────────────────────
+ Auth (anonyme / Google) ───────────────> Firebase Auth (ID token)
+ Lobby : créer / rejoindre ─────────────> Firestore lobbies/{id}
+   (taille, rôles, difficulté des bots)     (membres, état, matchId)
+ « Lancer » ──── ID token ──────────────────────────────────────────────> Worker /match : vérifie le token,
+                                                                           idFromName(lobbyId) -> Durable Object
+ WebSocket <══ snapshots + événements ══════════════════════════════════> MatchRoom (Durable Object) :
+           ══> { tick, input × 3 } à 30 Hz                                  MatchState, BotMemory[], dernières entrées,
+                                                                           boucle à 30 Hz : bots + step
+```
+
+- **Firebase** : Auth donne l'identité (ID token JWT) ; Firestore tient les lobbies (membres, rôle choisi, prêt, taille,
+  difficulté des bots de remplissage, `matchId` une fois lancé). Le Worker vérifie l'ID token (clés publiques de Google,
+  vérification JWT standard) avant d'ouvrir la partie : Firebase n'est jamais sur le chemin du jeu en temps réel.
+- **Durable Object `MatchRoom`** (un par match, adressé par `idFromName(lobbyId)` : tous les joueurs arrivent au même objet) :
+  1. à la création : `createMatch({ teamSize, seed, roles, kickoffReceivers })`, un bot par place sans humain
+     (`createBot(id, difficulté, seed, { externalIds: humains })`) ;
+  2. boucle à pas fixe (accumulateur comme `FixedStepLoop`, minuterie de l'isolat tant que des joueurs sont connectés ;
+     une alarme peut relancer l'objet s'il est évincé) : à chaque tick, entrées des humains = **dernière entrée reçue**
+     (répétée si rien n'est arrivé), entrées des bots = `provider(state, id)` sur l'état AVANT le step, puis
+     `step(state, inputs, TICK_DT)` ;
+  3. diffusion d'un snapshot à chaque tick (ou un sur deux, 15 Hz) et des événements ;
+  4. `state.phase === 'ended'` : résultat écrit dans Firestore (via l'API REST et un compte de service), puis l'objet se vide.
+- **Client** : une variante réseau de `GameSession` garde `InputManager`, `Renderer`, HUD et menus ; elle envoie à chaque
+  tick `{ tick, entrées des 2–3 derniers ticks }` (un appui bref — esquive, passe — survit à un paquet perdu) et affiche
+  les snapshots avec un **tampon d'interpolation** (≈ 100 ms, 3 snapshots) : `interpolate.ts` entre les deux snapshots qui
+  encadrent l'instant affiché, au lieu de `prev` / `curr` locaux.
+- **Prédiction (plus tard)** : le client exécute `step` en local pour son propre joueur avec ses entrées non acquittées et
+  se recale sur chaque snapshot (rejouer depuis l'état serveur + entrées non acquittées). Le snapshot fait **toujours**
+  autorité : pas de comparaison de hash entre client et serveur (Safari / Firefox peuvent différer au dernier bit sur
+  `Math.sin`, `cos`, `exp`, `atan2`, §17) ; les tirages aléatoires (rebonds, dispersion, tirage d'une mêlée) ne sont pas
+  prédits (`rng` non envoyé aux clients), le recalage les corrige. Si un jour un lockstep entre navigateurs devenait
+  nécessaire : remplacer ces fonctions par des approximations polynomiales en pur JS dans `vec.ts`.
+
+### Ce qui resterait à faire
+
+1. **Paquet serveur** (`server/`, Worker + Durable Object, `wrangler`), qui n'importe que `src/sim` et `src/bots` ; étendre
+   `tests/architecture.test.ts` à ce dossier (pas d'import du client).
+2. **Protocole** : messages `join`, `input`, `snapshot`, `events`, `match_end`, `ping` ; JSON d'abord, binaire plus tard.
+3. **Format des snapshots** (sans toucher la sim) : `field` et `config` envoyés une fois (le client refait
+   `createField(config.teamSize)`), pas de `rng`, deltas par rapport au dernier snapshot acquitté, quantification ;
+   6,6 à 9,8 KB de JSON par tick aujourd'hui (≈ 2–2,5 KB gzip, §17).
+4. **Journal d'événements** : `state.events` ne contient que le dernier tick ; le serveur tient `{ tick, events[] }` et envoie
+   au client tout ce qui suit son dernier tick acquitté. Côté client, déclencher les transitions critiques par l'état
+   (`phase` passée à `kickoff` -> caméra ; `ended` -> fin) plutôt que par les seuls événements.
+5. **Session réseau côté client** (tampon d'interpolation, horloge serveur, acquittements), menu « en ligne » (lobby,
+   connexion Firebase), gestion de la latence dans le HUD.
+6. **Déconnexion** : répéter la dernière entrée quelques ticks, puis entrée neutre ; option « un bot reprend la place »
+   (`createBot` pour cet id, `externalIds` mis à jour) et rendue à la reconnexion.
+7. **Sécurité** : le serveur ignore tout sauf les `PlayerInput` (débit borné, un joueur ne pilote que son id) ; les outils de
+   test (`debugGiveBall`, `debugResetBall`, `startPlayNow`) et le mode entraînement restent hors ligne ; pas de pause en ligne.
+8. **Compensation de latence** : les projectiles sont testés contre les positions du tick précédent (§10), suffisant en local ;
+   en ligne, le tireur voit les autres avec ≈ 100 ms de retard. À décider : rembobinage côté serveur (garder quelques états
+   passés et tester le projectile contre l'image que voyait le tireur) ou balles un peu plus tolérantes.
+9. **Persistance** : sauvegarder `MatchState` + `BotMemory[]` dans le stockage du Durable Object toutes les quelques secondes
+   (reprise après éviction) ; journal des entrées pour rejouer un match (même moteur : hash identique).
+10. **Tests** : boucle serveur en Node avec de faux clients (latence, pertes, déconnexions), replay déterministe d'un journal
+   d'entrées, charge (nombre de matchs par isolat).

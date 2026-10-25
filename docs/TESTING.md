@@ -2,8 +2,71 @@
 
 Ce guide dit, étape par étape, **comment tester** ce qui vient d'être livré, **ce qu'on doit ressentir ou voir**, et
 **quelles constantes toucher** pour ajuster le feeling. Toutes les constantes de gameplay sont dans
-`src/sim/constants.ts` (une modification est prise en compte au prochain `npm test` ou rechargement de `npm run dev`).
-Vérification complète du projet : `npm run check` (typecheck + tests + build).
+`src/sim/constants.ts` (une modification est prise en compte au prochain `npm test` ou rechargement de `npm run dev`) ;
+les réglages purement visuels dans `src/render/palette.ts`.
+Vérification complète du projet : `npm run check` (typecheck + tests + build), la même que la CI.
+
+**Comment lire ce guide.** Chaque section décrit le jeu **tel qu'il était à la livraison de l'étape** (par exemple, aux
+étapes 3 à 5 les autres joueurs sont des plots ou des tourelles) ; ce qui a changé ensuite est signalé entre parenthèses
+(« depuis l'étape 7 », « passe finale »…). Les colonnes « Valeur actuelle » des tableaux sont, elles, à jour avec
+`src/sim/constants.ts` (vérifiées à la passe finale). Pour refaire aujourd'hui le test d'une ancienne étape : le menu lance
+la partie, et les paramètres d'URL de debug donnent les mêmes conditions — `?debug&training` (partie directe, chrono figé,
+G / B pour le ballon), `?dummies=off` (plots passifs), `?role=…`, `?size=5` ; la liste complète est dans le README.
+Pour régler vite le feeling, commencer par l'[aide-mémoire](#aide-mémoire--réglage-du-feeling) en fin de document.
+
+## Sommaire
+
+- [Étape 1 — squelette](#étape-1--squelette)
+- [Étape 2 — simulation : joueurs, mouvement, ballon et terrain](#étape-2--simulation--joueurs-mouvement-ballon-et-terrain)
+- [Étape 3 — rendu minimal, caméra épaule, interpolation, clavier/souris et manette](#étape-3--rendu-minimal-caméra-épaule-interpolation-claviersouris-et-manette)
+- [Étape 4 — porteur : passe arrière assistée, coup de pied, plongeon, ramassage](#étape-4--porteur--passe-arrière-assistée-coup-de-pied-plongeon-ramassage)
+- [Étape 5 — stabilité, plaquage et tir de l'ailier](#étape-5--stabilité-plaquage-et-tir-de-lailier)
+- [Étape 6 — boucle de match complète et bots](#étape-6--boucle-de-match-complète-et-bots)
+- [Étape 7 — rôles pilier et demi, mêlée](#étape-7--rôles-pilier-et-demi-mêlée)
+- [Étape 8 — HUD et menu](#étape-8--hud-et-menu)
+- [Passe finale — simulation et bots](#passe-finale--simulation-et-bots)
+- [Passe finale — client, caméra et UI](#passe-finale--client-caméra-et-ui)
+- [Passe finale — documentation, CI et contrôle final](#passe-finale--documentation-ci-et-contrôle-final)
+- [Aide-mémoire : réglage du feeling](#aide-mémoire--réglage-du-feeling)
+
+## Étape 1 — squelette
+
+Le projet existe : Vite + TypeScript + Three.js + Svelte 5, dossiers `src/sim`, `src/bots`, `src/render`, `src/input`,
+`src/game`, `src/ui`, contrat de données de la simulation (`types.ts`, `constants.ts` documenté, PRNG seedé `prng.ts`, maths
+vectorielles `vec.ts`), contrat d'entrée clavier ET manette (bouton `RELOAD`, constantes de Maj appui / maintien, zones
+mortes, courbe de caméra, aide à la visée, vibrations) et garde-fous d'architecture. Rien n'est encore jouable.
+
+### Comment tester
+
+1. **Installer** : `npm install` (ou `npm ci`, installation exacte depuis `package-lock.json`). Node 22.12 ou plus.
+2. **Lancer** : `npm run dev`, ouvrir l'URL affichée (`http://localhost:5173`). À la livraison de l'étape 1 : une scène de
+   démo Three.js (pelouse, une capsule orange, un ballon ovale) sous un calque Svelte, sans erreur dans la console (F12). Aujourd'hui, la
+   même commande ouvre le menu de lancement.
+3. **Vérification complète** : `npm run check` = `npm run typecheck` (tsc sur `tsconfig.sim.json`, **sans lib DOM** : un
+   `window` ou un `document` dans `src/sim` / `src/bots` ne compile pas ; puis svelte-check sans avertissement) + `npm test`
+   (dont `tests/architecture.test.ts` : `src/sim` n'importe rien hors de `src/sim`, `src/bots` seulement `src/sim`, pas de
+   `Math.random`, `Date`, `performance`, timers, `console`… ; le client n'importe la sim que par `'../sim'`) + `npm run build`
+   (dossier `dist/` statique, `base: './'`).
+4. **Build statique** : `npm run build` puis `npm run preview` : le jeu tourne depuis `dist/`, y compris servi sous un
+   sous-chemin (GitHub Pages).
+5. **Captures** (vérification visuelle sans écran, Chromium headless + SwiftShader) : avec `npm run dev` lancé,
+   `node scripts/snap.cjs http://localhost:5173/ capture.png 3000` écrit une capture 1280×720 et affiche les messages de la
+   console de la page (erreurs comprises). Playwright doit être installé à part (`npm i -g playwright` puis
+   `npx playwright install chromium`) : il n'est pas dans `package.json`.
+6. **Garde-fou à essayer** : ajouter `Math.random()` ou `import '../render/…'` dans un fichier de `src/sim` : `npm test` (test
+   d'architecture) et/ou `npm run typecheck` échouent. Annuler ensuite.
+
+### Ce qu'on doit voir
+
+- `npm run check` passe entièrement ; le build ne produit que des fichiers statiques dans `dist/`.
+- La page s'ouvre sans erreur de console.
+
+### Constantes utiles
+
+Aucune constante de feeling à régler à cette étape : `src/sim/constants.ts` pose les premières valeurs (tick à 30 Hz —
+`TICK_RATE`, à ne pas changer sans revoir les tests —, durée du match, dimensions du terrain, vitesses, caméra, entrées
+clavier / manette), réglées et documentées aux étapes suivantes. Convention du fichier : chaque constante est commentée en
+français avec « ↑ = … » (effet si on augmente la valeur).
 
 ## Étape 2 — simulation : joueurs, mouvement, ballon et terrain
 
@@ -116,7 +179,7 @@ La partie démarre en mode entraînement (chrono figé) : 3v3, tu joues l'ailier
    pause). Sur AZERTY : Z Q S D (ou les flèches) pour se déplacer, la souris pour regarder, Espace pour sauter (double
    saut : tu joues l'ailier), Maj **tapé** = esquive, Maj **maintenu** = sprint, C en courant = glissade, clic droit = visée.
 3. **Manette** (Xbox ou PlayStation, branchée avant ou pendant la partie, Chrome ou Edge) : appuyer sur A / ✕ ou
-   Menu / Options pour jouer, sans capturer la souris. Stick gauche : déplacement. Stick droit : caméra. A : saut.
+   Menu / Options pour jouer, sans capturer la souris (depuis l'étape 8 : Start dans le menu de lancement). Stick gauche : déplacement. Stick droit : caméra. A : saut.
    B : esquive. X : glissade. L3 : sprint (bascule). LT : visée. Start : pause.
    À essayer :
    - débrancher la manette en jeu : la partie se met en pause et l'overlay repasse au clavier ;
@@ -137,7 +200,8 @@ La partie démarre en mode entraînement (chrono figé) : 3v3, tu joues l'ailier
 - **Fluidité** : le mouvement reste fluide au-delà de 30 Hz d'affichage (position et rotation du ballon interpolées).
   La visée réagit à chaque image. Pause et reprise ne font pas reculer l'image.
 - **Clavier** : un appui très bref (saut, esquive) n'est jamais perdu. Maj tapé = esquive au relâchement. Maj
-  maintenu = sprint seul : l'esquive reste disponible pour le défenseur qui arrive.
+  maintenu = sprint seul : l'esquive reste disponible pour le défenseur qui arrive. (Passe finale : le PORTEUR sprinte
+  automatiquement et Maj l'esquive dès l'appui, `CARRIER_AUTO_SPRINT`.)
 - **Manette** : le stick droit est précis au centre et rapide en bout de course. Maintenu à fond à l'horizontale, la
   rotation accélère après 0,2 s ; regarder en l'air à fond ne prépare pas de demi-tour brutal. Un stick usé atteint
   quand même la vitesse max. En visée, la caméra ralentit. Près d'un adversaire, elle « colle » légèrement (aide à la
@@ -160,9 +224,9 @@ La partie démarre en mode entraînement (chrono figé) : 3v3, tu joues l'ailier
 | `CAMERA_FOV_SPEED_GAIN` / `CAMERA_FOV_SPEED_MAX_BONUS` | FOV ajouté par m/s au-delà de la course, et son plafond | 3 °/(m/s) / 6° (gain 1,2 avant la passe finale) | 8 de plafond pour un effet « warp » ; gain à 0 pour le couper |
 | `CAMERA_BLEND_RATE` | Vivacité des transitions de caméra (1/s) | 10 | Monter (15) pour des transitions plus sèches |
 | `CAMERA_GROUND_MARGIN` / `CAMERA_MIN_DISTANCE` | Collision caméra / sol | 0,3 / 0,9 m | Monter la marge si la caméra frôle le sol en regardant en l'air |
-| `MOUSE_SENSITIVITY` / `MOUSE_AIM_SENSITIVITY_MULT` | Sensibilité souris (rad/px), et multiplicateur en visée | 0,0022 / 0,6 | Réglage personnel ; un menu d'options viendra plus tard |
+| `MOUSE_SENSITIVITY` / `MOUSE_AIM_SENSITIVITY_MULT` | Sensibilité souris (rad/px), et multiplicateur en visée | 0,0022 / 0,6 | Réglage personnel : depuis l'étape 8, le panneau « Réglages » applique un multiplicateur (× 0,25 à × 3) sans toucher la constante |
 | `SPRINT_HOLD_DELAY_SEC` | Maintien de Maj avant le sprint (et durée max d'un tape d'esquive) | 0,15 s | Baisser (0,12) si le sprint semble tarder, monter si des esquives partent en sprint |
-| `KEYBOARD_DODGE_ON_RELEASE` | Esquive clavier au relâchement (sprint sans esquive) ou à l'enfoncement (latence nulle, mais chaque sprint commence par une esquive) | oui | Passer à `false` si l'esquive au clavier semble en retard |
+| `KEYBOARD_DODGE_ON_RELEASE` | Esquive clavier au relâchement (sprint sans esquive) ou à l'enfoncement (latence nulle, mais chaque sprint commence par une esquive) ; ne concerne plus le porteur (`CARRIER_AUTO_SPRINT`, passe finale) | oui | Passer à `false` si l'esquive au clavier semble en retard |
 | `GAMEPAD_MOVE_DEADZONE` / `GAMEPAD_LOOK_DEADZONE` | Zones mortes radiales intérieures | 0,15 / 0,12 | Monter si la manette dérive au repos |
 | `GAMEPAD_MOVE_OUTER_DEADZONE` / `GAMEPAD_LOOK_OUTER_DEADZONE` | Zones mortes extérieures (« à fond » atteint avant le bord) | 0,05 / 0,08 | Monter (0,12) pour les sticks très usés |
 | `GAMEPAD_ACTIVITY_THRESHOLD` | Geste nécessaire pour que la manette prenne la main sur le clavier | 0,35 | Monter si une manette posée « vole » encore la main |
@@ -239,14 +303,15 @@ immobiles : ce sont des plots, coéquipiers orange et adversaires bleus).
   ligne part à plat et il la manque. Seuls le receveur visé et les adversaires peuvent l'attraper : un coéquipier collé à
   toi ne la vole pas. Un adversaire sur la trajectoire (à moins de 0,8 m) l'intercepte : « Interception ! » (vibration plus
   marquée) pour celui qui attrape, « Ballon intercepté » pour le passeur. Tu ne peux pas rattraper ta propre passe.
-- **Coup de pied** : une chandelle (48°) qui part loin devant : environ 36 m sans courir en 5v5, 26 m en 3v3 (un peu plus
-  en courant). Regarder plus haut donne plus de cloche. Un anneau et une fine balise blanche montrent le point de chute
+- **Coup de pied** : une chandelle (48°) qui part loin devant : environ 37 m sans courir en 5v5, 31 m en 3v3 (26 m avec
+  le terrain 3v3 d'avant la correction de l'étape 7 ; un peu plus en courant). Regarder plus haut donne plus de cloche. Un anneau et une fine balise blanche montrent le point de chute
   prévu pendant que tu portes. Au départ, seul un adversaire collé à toi (moins de 1,5 m) peut le **contrer** ; ensuite,
   personne ne porte le ballon en vol : coéquipiers et adversaires peuvent l'attraper (réceptionné par l'adversaire, ce
   n'est pas une « interception » : pas de vibration ni de texte). Toi, tu ne peux pas pendant 0,7 s, puis tu peux le
   rattraper (« chip and chase »). Après le premier rebond, il redevient libre (cercle jaune).
 - **Plongeon** : un dash bas d'environ 6 m dans le sens du regard, ou en diagonale si tu pousses vers l'avant-côté. Le
-  joueur s'aplatit et une coque blanche clignote : il est intouchable pendant 0,3 s. Ensuite, il glisse au sol en freinant
+  joueur s'aplatit et une coque blanche clignote (passe finale : halo à la couleur claire de l'équipe, pulsation lente) :
+  il est intouchable pendant 0,3 s. Ensuite, il glisse au sol en freinant
   pendant 0,35 s et repart en course à ~4 m/s. Sur une seconde, ça couvre à peu près la distance d'un sprint : c'est un
   outil pour aplatir ou passer un défenseur, pas une accélération gratuite. Cooldown 2 s. On peut plonger depuis un saut
   (« essai en vol ») : l'élan est gardé jusqu'au sol, freiné au-delà de la vitesse de sprint (`AIR_OVERSPEED_DECEL`, passe
@@ -277,7 +342,7 @@ immobiles : ce sont des plots, coéquipiers orange et adversaires bleus).
 | `BALL_PICKUP_RADIUS` | Rayon du cercle de ramassage du ballon libre | 1,3 m | 1,5 pour moins de courses ratées après le ballon |
 | `BALL_CATCH_RADIUS` | Rayon de réception d'un coup de pied en vol | 1,1 m | Monter pour des chandelles plus faciles à réceptionner |
 | `BALL_CATCH_REACH_ABOVE` / `BALL_REACH_BELOW` | Portée au-dessus de la tête / sous les pieds | 0,6 / 0,5 m | Monter la première pour récompenser le saut |
-| `KICK_SPEED` / `KICK_ELEVATION_DEG` | Puissance (× √ échelle du terrain) et angle du coup de pied (portée ≈ v²·sin 2θ / g) | 25 m/s / 48° | ~36 m en 5v5 et ~26 m en 3v3 à l'arrêt ; baisser l'angle (40°) pour un coup de pied plus tendu, plus facile à contrer |
+| `KICK_SPEED` / `KICK_ELEVATION_DEG` | Puissance (× √ échelle du terrain) et angle du coup de pied (portée ≈ v²·sin 2θ / g) | 25 m/s / 48° | ~37 m en 5v5 et ~31 m en 3v3 à l'arrêt (26 m avant la correction de l'étape 7, terrain 3v3 à 0,7) ; baisser l'angle (40°) pour un coup de pied plus tendu, plus facile à contrer |
 | `KICK_CHARGE_DOWN_SEC` / `KICK_CHARGE_DOWN_RADIUS` | Fenêtre et distance du contre au départ du coup de pied | 0,15 s / 1,5 m | Monter la distance (2) pour des contres plus fréquents |
 | `KICK_PITCH_INFLUENCE` / `KICK_ELEVATION_MIN_DEG` / `_MAX_DEG` | Effet du regard vertical sur l'angle, et bornes | 0,5 / 15° / 65° | 0 pour un coup de pied toujours identique |
 | `KICK_INHERIT_VELOCITY` | Part de ta vitesse ajoutée au ballon | 0,3 | 0 pour une portée indépendante de la course, 0,5 pour récompenser l'élan |
@@ -356,33 +421,38 @@ lance-grenades du demi et les capacités du pilier et du demi arrivent à l'éta
   dégâts pleins jusqu'à 25 m puis ×0,6 à 45 m.
 - **Hitbox honnête** : une balle dont le traceur passe sur la cible la touche (les projectiles sont testés contre les positions
   que tu voyais en tirant, avec une petite tolérance de 0,15 m).
-- **Porteur** : il ne tire jamais (pas de traceur, pas de munition consommée) et encaisse ×1,1.
+- **Porteur** : il ne tire jamais (pas de traceur, pas de munition consommée) et encaisse ×1,1 (×1,3 depuis le réglage du
+  rythme de la correction de l'étape 7, `CARRIER_DAMAGE_MULT`).
 - **Au sol** : pas de tir, pas de déplacement, pas de ramassage ; les balles le traversent. Relevé sur place, jamais de respawn.
   Le corps glisse ≈ 1 m au plus et ne franchit pas les murets.
 - **Plaquage lisible** : éclat jaune, onde blanche au sol, capsule couchée et étoiles, texte et vibration forte (manette).
 - **Retours de visée** : hitmarker à chaque touche (rouge et plus gros au plaquage), indicateurs de direction des tirs reçus qui
   suivent le tireur quand tu tournes la caméra, vignette rouge sous 50 % de stabilité, flash rouge bref à chaque balle reçue.
 - **Mini-HUD provisoire** (en bas) : jauge de stabilité (rouge et pulsante sous 35 %), munitions / rechargement, capacité
-  (active / cooldown / prête), esquive. Le vrai HUD arrive à l'étape 8.
+  (active / cooldown / prête), esquive. Remplacé par le vrai HUD à l'étape 8.
 
 ### Temps pour plaquer (mesuré, précision parfaite)
 
 Ailier sur une cible immobile, toutes les balles touchent (en visée, la dispersion reste dans la capsule jusqu'à ~70 m).
 Formule : n = ⌈100 / (dégâts × atténuation × porteur)⌉ balles, (n − 1) intervalles de 2 ticks, plus le vol de la dernière balle
-(10 m par tick). Vérifié au tick près par `tests/sim/combat.test.ts` (« temps pour plaquer »). Le premier tir part à t = 0.
+(10 m par tick ; à 10 m, elle arrive dans le tick du tir). Vérifié au tick près par `tests/sim/combat.test.ts` (« temps pour plaquer »). Le premier tir part à t = 0.
 
 | Distance | Cible | Dégâts / balle | Balles | Temps |
 |---|---|---|---|---|
 | 10 m | non-porteur | 5 | 20 | 38 ticks ≈ **1,27 s** |
-| 10 m | porteur | 5,5 | 19 | 36 ticks ≈ **1,20 s** |
+| 10 m | porteur | 6,5 | 16 | 30 ticks ≈ **1,00 s** |
 | 25 m | non-porteur | 5 | 20 | 40 ticks ≈ **1,33 s** |
-| 25 m | porteur | 5,5 | 19 | 38 ticks ≈ **1,27 s** |
+| 25 m | porteur | 6,5 | 16 | 32 ticks ≈ **1,07 s** |
 | 35 m | non-porteur | 4,1 | 25 | 51 ticks ≈ 1,70 s |
-| 35 m | porteur | 4,5 | 23 | 47 ticks ≈ 1,57 s |
+| 35 m | porteur | 5,3 | 19 | 39 ticks ≈ 1,30 s |
+
+Lignes « porteur » avec `CARRIER_DAMAGE_MULT` = 1,3 (valeur actuelle). À l'étape 5 (× 1,1) : 1,20 s à 10 m, 1,27 s à 25 m,
+1,57 s à 35 m.
 
 Repères : un chargeur (30) suffit toujours ; la régénération remonte une jauge vide en 2,2 s après 2 s de répit ; à deux tireurs,
 diviser à peu près les temps par deux. Un porteur qui zigzague et esquive fait rater des balles et tient bien plus longtemps.
-Porteur ailier boosté au sprint : ≈ 13,9 m/s, contre 10,7 m/s pour un ailier qui le poursuit au sprint.
+Porteur ailier boosté au sprint : ≈ 11,7 m/s, contre 9,9 m/s pour un ailier qui le poursuit au sprint (13,9 contre 10,7 à
+l'étape 5, avant le réglage du rythme : `SPRINT_SPEED_MULT` 1,22 -> 1,12, `BOOST_SPEED_MULT` 1,2 -> 1,1).
 
 ### Constantes utiles pour ajuster le feeling
 
@@ -438,8 +508,9 @@ de `src/sim/constants.ts`). Clavier/souris et manette marchent partout, y compri
    médiane, ta caméra est retournée face à l'en-but adverse.
 4. **Dernière minute et fin** : en `?debug`, dans la console : `__ovalgun.session.state.clockTicks = 1900` (chrono rouge, bannière
    « DERNIÈRE MINUTE »), puis `= 30` (fin dans une seconde). Écran de fin : résultat, score, statistiques par joueur. **Rejouer** : bouton
-   (souris), Entrée / Espace, ou A à la manette (après 1 s). À la fin, ni Échap / Start ni une manette débranchée ne mettent en pause.
-5. **Difficultés** : `?difficulty=facile|normal|difficile` (défaut normal) ; `&size=5` pour du 5v5.
+   (souris), Entrée / Espace, ou A à la manette (après 1 s ; 1,5 s depuis la correction de l'étape 8, et Start = Rejouer). À la fin, ni Échap / Start ni une manette débranchée ne mettent en pause.
+5. **Difficultés** : `?difficulty=facile|normal|difficile` (défaut normal) ; `&size=5` pour du 5v5 (depuis l'étape 8 : choix
+   du menu ; les paramètres d'URL restent acceptés pour le debug).
 6. **Observer** : `?debug&autopilot` — ton joueur est aussi un bot, la caméra le suit (match bots contre bots). Combiner avec `&size=5` et
    `&difficulty=…` pour comparer. `?dummies=off` : tous les autres joueurs passifs (réglage du plaquage, comme à l'étape 5) ; `?training` :
    entraînement (chrono figé, G / B pour le ballon).
@@ -460,7 +531,8 @@ de `src/sim/constants.ts`). Clavier/souris et manette marchent partout, y compri
   (26 avant), ballon porté 74 % du temps de jeu (41 %), 10 % de joueurs au sol (21 %), 27 % du temps réel figé (31 %), ≈ 3 coups de pied
   (43), 64 % des plaquages sur le porteur (13 %), précision 58 % (73 %). 5v5 ≈ 16,5 essais (18), porté 56 % (34 %), au sol 12 % (25 %), figé
   16 % (24 %), ≈ 4 coups de pied (27). Précision facile / normal / difficile ≈ 45 / 57 / 65 %. Entre niveaux voisins, le plus faible marque
-  ≈ 15–40 % des points du plus fort. En 3v3 le rythme reste très arcade tant que le demi n'a pas d'arme (étape 7).
+  ≈ 15–40 % des points du plus fort (à l'étape 6 ; mesure actuelle, plus resserrée : docs/ARCHITECTURE.md §12). En 3v3 le
+  rythme reste très arcade tant que le demi n'a pas d'arme (étape 7).
 
 ### Constantes utiles pour ajuster le feeling
 
@@ -526,9 +598,10 @@ voir les mesures plus bas et docs/ARCHITECTURE.md §15).
      mêlée**, jeu normal après la résolution ; matchs complets (composition du jeu) où chaque rôle tire, plaque et utilise sa capacité, et où
      les mêlées se résolvent ;
    - `npx vitest run tests/bots/match.test.ts` : **bornes de rythme** resserrées (seeds 1 à 3, normal) : 4 à 18 essais par match en 3v3, 4 à
-     14 en 5v5, ballon porté ≥ 50 % / 40 %, joueurs au sol ≤ 17 % / 19 %, au plus 10 coups de pied ;
+     14 en 5v5, ballon porté ≥ 50 % / 40 %, joueurs au sol ≤ 17 % / 19 %, au plus 10 coups de pied (resserrées encore à la passe
+     finale : 4–16 / 4–12 essais, porté ≥ 55 % / 45 %) ;
    - client : vues (bouclier, grenades, explosions, zones, mêlée), HUD de la mêlée, vibrations, composition des équipes, aide à la visée.
-2. **Choisir son rôle** (en attendant le menu de l'étape 8) : `?role=pilier`, `?role=ailier` (défaut) ou `?role=demi`, combinable avec
+2. **Choisir son rôle** (aujourd'hui dans le menu ; paramètre d'URL gardé pour le debug) : `?role=pilier`, `?role=ailier` (défaut) ou `?role=demi`, combinable avec
    `?debug`, `?size=5`, `?difficulty=…`, `?dummies=off` (cibles passives), `?training`. Exemples : `http://localhost:5173/?debug&role=pilier`,
    `…/?debug&role=demi&dummies=off`.
 3. **Contrôles** (aucune nouvelle touche, clavier et manette identiques) : tir **clic gauche / RT**, visée **clic droit / LT**, capacité
@@ -896,3 +969,71 @@ Réglages purement visuels (`src/render/palette.ts`) : `cameraFadeNear` / `camer
 `invulnPulseRate` (1,22 / 0,75 / 0,15 / 9 rad/s) ; étincelles `sparkPoolSize` / `sparksPerHit` / `sparksPerPelletHit` /
 `sparksPerTerrain` (64 / 3 / 4 / 4) ; `tackleBurstLocalScale` (0,5) ; `maxPixelRatio` (2) ; `trailTeleportSpeed` (55 m/s) ; couleurs du risque de passe
 `PALETTE.passRisky` / `passMarked`.
+
+## Passe finale — documentation, CI et contrôle final
+
+README complet (lancement, déploiement, contrôles clavier ET manette, paramètres d'URL), ce guide relu et mis à jour
+(valeurs vérifiées contre `src/sim/constants.ts`), docs/ARCHITECTURE.md rendu cohérent (§19) avec une section « Brancher le
+mode online » (§20), intégration continue et déploiement GitHub Pages manuel. Aucune règle ni constante de jeu ne change.
+
+### Comment tester
+
+1. **Depuis un état propre** : `rm -rf node_modules dist && npm ci && npm run check` doit passer entièrement (c'est ce que
+   fait la CI).
+2. **CI** (`.github/workflows/ci.yml`) : à chaque push et pull request, Node 22, `npm ci`, `npm run typecheck`, `npm test`,
+   `npm run build`. Résultat dans l'onglet *Actions* du dépôt (et sur la pull request).
+3. **GitHub Pages** (`.github/workflows/pages.yml`, manuel uniquement) : une fois *Settings → Pages → Source : GitHub
+   Actions* choisi, *Actions → Déploiement GitHub Pages → Run workflow*. Le workflow refait `npm run check`, publie `dist/`
+   et affiche l'URL du site ; ouvrir l'URL : le menu s'affiche (le build en `base: './'` marche sous `/<dépôt>/`).
+4. **Parcours complet** (souris / clavier puis manette) : menu -> choix 3v3, rôle, difficulté -> JOUER -> un essai -> pause
+   (Échap / Start) -> Reprendre -> fin de match (`?debug&menu&duration=20` pour une fin rapide) -> Rejouer puis Menu. Console
+   du navigateur sans erreur. Contrôle automatisé de la passe finale : script Playwright (Chromium headless + SwiftShader,
+   clavier puis fausse manette injectée dans `navigator.getGamepads`, avec et sans `?debug`) qui fait ce parcours : 25
+   vérifications, 0 erreur ni avertissement de console (détails : docs/ARCHITECTURE.md §19). Pour l'écrire soi-même : sous
+   SwiftShader le jeu tourne à 16–25 images/s, il faut maintenir un bouton simulé plus d'une image (≈ 350 ms) pour qu'il
+   soit lu.
+5. **Liens** : README -> docs, sommaire de ce guide -> chaque section.
+
+### Constantes utiles
+
+Aucune modifiée. Mesure de contrôle (bots contre bots, 6 min, composition du jeu, chaque niveau joue les deux côtés, seeds
+1 à 6) — part des points du niveau le plus faible face au niveau voisin : 3v3 facile / normal ≈ 17 %, normal / difficile
+≈ 17 % ; 5v5 facile / normal ≈ 2 %, normal / difficile ≈ 9 %. Les marches de difficulté sont raides, surtout en 5v5 (sans
+effet dans le jeu, où coéquipiers et adversaires ont la même difficulté). Pour les rapprocher : réduire les écarts de
+`BOT_DIFFICULTY` (par exemple facile `reactionSec` 0,5 -> 0,42, `aimErrorDeg` 5 -> 4,5, `leadFraction` 0,4 -> 0,6), puis
+ajouter le cas facile / normal au test « niveaux voisins » (`tests/bots/match.test.ts`). Voir docs/ARCHITECTURE.md §12.
+
+## Aide-mémoire : réglage du feeling
+
+Les 15 constantes qui pèsent le plus sur le **feeling du porteur** (courir, esquiver, passer — priorité absolue du cahier
+des charges) et sur le **rythme** du match. Toutes dans `src/sim/constants.ts`. Valeurs actuelles ; « essais » = essais par
+match de 6 min bots contre bots en difficulté normale (mesures des §15 et §17 de docs/ARCHITECTURE.md).
+
+| # | Constante | Valeur | Effet | Sens de réglage |
+|---|---|---|---|---|
+| 1 | `CARRIER_SPEED_MULT` | 1,08 | Vitesse du porteur par rapport aux autres : le cœur du « grisant » | ↑ (1,10–1,12) course plus enivrante mais porteur plus dur à rattraper (plus d'essais) ; ↓ le porteur se fait reprendre |
+| 2 | `SPRINT_SPEED_MULT` | 1,12 | Sprint de tous (porteur × 1,08 × 1,12 = × 1,21) ; premier levier du rythme | ↑ 1,15 ≈ +1 essai, 1,22 ≈ +3 en 3v3 ; ↓ jeu plus « collé », défense plus facile |
+| 3 | `ROLES.<rôle>.runSpeed` | pilier 7,2 · demi 8,0 · ailier 8,8 m/s | Vitesse de base de chaque rôle | Monter ou descendre tout le monde de 5–10 % (jeu plus ou moins nerveux) en gardant les écarts entre rôles |
+| 4 | `GROUND_ACCEL` | 75 m/s² | Démarrages et changements d'appui (réactivité du stick / des touches) | ↑ 100 plus sec, ↓ 50 plus d'inertie (plus « lourd ») |
+| 5 | `GROUND_OVERSPEED_DECEL` | 15 m/s² | Durée de l'élan en trop après une esquive, une glissade, une grimpe, la fin d'un sprint | ↓ 10 élan long et glissant ; ↑ 25 retour rapide à la vitesse de course |
+| 6 | `DODGE_SPEED` (avec `DODGE_DURATION_SEC`) | 21 m/s / 0,16 s (≈ 3,5 m) | Distance et brutalité de l'esquive latérale, la feinte qui fait rater les tirs | Garder 3–4 m ; plus rapide et plus court = plus sec |
+| 7 | `CARRIER_DODGE_COOLDOWN_SEC` | 0,8 s | Fréquence des esquives du porteur (sans ballon : `DODGE_COOLDOWN_SEC` 1,4 s) | ↓ 0,6 porteur insaisissable ; garder plus court que sans ballon (cahier des charges) |
+| 8 | `DODGE_FORWARD_SPEED_MULT` | 0,7 | Esquive droit devant réduite : l'esquive feinte, le plongeon accélère | ↑ 1 : esquives vers l'avant en boucle ≈ +21 % sur le sprint (à éviter) ; 0,8 si l'esquive avant paraît molle |
+| 9 | `DIVE_SPEED` (avec `DIVE_RECOVER_SEC`) | 17 m/s / 0,35 s | Plongeon ≈ 6 m intouchable 0,3 s puis temps au sol : franchir les derniers mètres | Garder 5–7 m de dash ; ↓ récupération (0,25) plongeon plus fluide, ↑ (0,45) plus risqué |
+| 10 | `PASS_SPEED` | 17 m/s | Tension des passes : temps de vol, risque d'interception | ↑ 19–20 passes tendues, plus sûres ; ↓ passes lobées plus faciles à couper |
+| 11 | `PASS_AIM_LATERAL_GAIN` | 2,5 | Coup d'œil nécessaire pour choisir le côté de la passe | ↑ 3–4 si l'on doit trop tourner la caméra ; ↓ 1,5 si la cible saute trop |
+| 12 | `CAMERA_FOV_SPEED_GAIN` (avec `CAMERA_DISTANCE_CARRY`) | 3 °/(m/s) (plafond 6°) / 5,4 m | Sensation de vitesse : le champ s'ouvre au sprint ; recul de la caméra du porteur | Gain 0 = coupé, plafond 8° effet « warp » ; recul 6 m pour mieux lire le jeu |
+| 13 | `CARRIER_DAMAGE_MULT` | 1,3 | Dégâts subis par le porteur : combien de temps il survit sous le feu | ↑ 1,5 défense plus forte (moins de ballon porté, plus de joueurs au sol) ; ↓ 1,1 porteur plus durable (plus d'essais) |
+| 14 | `FIELD_SCALE_3V3` | 0,84 (70 % de la surface du 5v5) | Taille du terrain 3v3 : espace à couvrir | ↑ 0,9 ≈ −1,5 essai en 3v3 ; ↓ 0,7 ≈ +3 essais |
+| 15 | `BOT_COVER_MIN_DEFENDERS` | 2 | Dès N bots debout, un défenseur reste toujours en repli devant le porteur | ↑ 3 : à deux bots debout, le repli n'est plus permanent (défense plus agressive, mais plus de porteurs seuls devant le dernier rideau) ; laisser 2 pour que le porteur ait toujours un défenseur à battre |
+
+**Méthode** : une constante à la fois ; `npm run test:watch` pendant le réglage (les tests de mouvement relisent les
+constantes et vérifient les invariants du feeling : glissade plus rapide que la course, « hacher sa course » jamais plus
+rapide que le sprint, porteur le plus rapide…) ; ressentir avec `?debug&training` (HUD de debug : vitesse, mouvement,
+cooldowns) au clavier PUIS à la manette ; mesurer le rythme avec `npx vitest run tests/bots/match.test.ts` (bornes : 4–16
+essais en 3v3, 4–12 en 5v5, ballon porté ≥ 55 % / 45 %) et observer avec `?debug&autopilot` (`&size=5`).
+
+À surveiller ensuite : `BOOST_SPEED_MULT` (1,1 : ailier porteur boosté), `AIR_OVERSPEED_DECEL` (8 : borne l'élan aérien,
+0 = esquive + sauts plus rapides que tout sprint), `KICKOFF_FREEZE_SEC` / `TRY_PAUSE_SEC` (2 s / 2 s : temps figé par essai),
+`BOT_RESTRAINED_PAUSE_MULT` (2,5 : discipline de tir des bots hors pression, ↑ = moins de joueurs au sol),
+`REGEN_DELAY_SEC` (2 s, cahier des charges).
