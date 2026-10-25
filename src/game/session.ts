@@ -93,6 +93,7 @@ import type { GamepadStyle } from '../input/gamepadMap';
 import { audioEngine, type AudioEngine } from '../audio/AudioEngine';
 import type { NetClient, StartInfo } from '../net/NetClient';
 import { joinState } from '../net/shared/protocol';
+import { isSelfEvent, Predictor } from '../net/predict';
 import { Haptics } from '../input/haptics';
 import { CombatHud, type CombatHudFrame } from './combatHud';
 import { FEEDBACK_SEC, feedbackFor, type Feedback } from './feedback';
@@ -452,6 +453,7 @@ export class GameSession {
     this.humanId = this.options.online?.start.playerId ?? 0;
     this.snaps = [];
     this.renderTick = -1;
+    this.predictor = null;
     this.state = this.newMatch();
     this.prev = cloneState(this.state);
     this.renderer.setMatch(this.state, this.renderedHumanId);
@@ -678,6 +680,8 @@ export class GameSession {
   }
 
   private snaps: Array<{ state: MatchState; events: readonly MatchEvent[]; handled: boolean }> = [];
+  /** Prédiction du joueur local (partie en ligne). */
+  private predictor: Predictor | null = null;
   /** Horloge d'affichage en ligne (ticks du serveur, fractionnaire) ; -1 tant qu'elle n'est pas calée. */
   private renderTick = -1;
 
@@ -691,12 +695,26 @@ export class GameSession {
     const net = this.online;
     if (net === null) return 0;
     if (!this.paused) this.input.frame(dt, this.assistQuery());
+    const statics = net.start.statics;
+    if (this.predictor === null) {
+      this.predictor = new Predictor(this.humanId);
+      this.predictor.reset(joinState(statics, net.start.state));
+    }
+    const pred = this.predictor;
+    // Instantanés reçus : mis en tampon (affichage des autres) et réconciliation de la prédiction sur le plus récent.
+    const fresh = net.client.drainSnapshots();
+    for (const sn of fresh) this.snaps.push({ state: joinState(statics, sn.state), events: sn.events, handled: false });
+    const newest = fresh[fresh.length - 1];
+    if (newest !== undefined) pred.reconcile(this.snaps[this.snaps.length - 1].state, newest.acks[this.humanId] ?? -1);
+    // Ticks locaux : entrée envoyée au serveur ET appliquée tout de suite à la prédiction (retours immédiats).
     const n = this.loopStep.advance(dt);
     for (let i = 0; i < n; i++) {
-      net.client.queueInput(this.inGame ? this.input.sample() : makeInput({ yaw: this.input.yaw, pitch: this.input.pitch }));
+      const inp = this.inGame ? this.input.sample() : makeInput({ yaw: this.input.yaw, pitch: this.input.pitch });
+      const seq = net.client.queueInput(inp);
+      const selfEvents = pred.advance(inp, seq);
+      if (selfEvents.length > 0) this.processEvents(selfEvents, nowSec, null);
     }
-    const statics = net.start.statics;
-    for (const sn of net.client.drainSnapshots()) this.snaps.push({ state: joinState(statics, sn.state), events: sn.events, handled: false });
+    pred.decay(dt);
     if (this.snaps.length === 0) return 0;
     const latest = this.snaps[this.snaps.length - 1].state.tick;
     const target = latest - ONLINE_INTERP_TICKS;
@@ -708,7 +726,13 @@ export class GameSession {
       if (sn.state.tick > this.renderTick) break;
       if (!sn.handled) {
         sn.handled = true;
-        this.processEvents(sn.events, nowSec, this.snaps[i - 1]?.state ?? null);
+        // Les gestes du joueur local ont déjà été joués par la prédiction.
+        const me = this.humanId;
+        this.processEvents(
+          sn.events.filter((e) => !isSelfEvent(e, me)),
+          nowSec,
+          this.snaps[i - 1]?.state ?? null,
+        );
       }
     }
     let a = 0;
@@ -716,8 +740,20 @@ export class GameSession {
     const b = Math.min(a + 1, this.snaps.length - 1);
     const sa = this.snaps[a].state;
     const sb = this.snaps[b].state;
-    this.prev = sa;
-    this.state = sb;
+    // Le joueur local vient de la prédiction (même position dans les deux états : indépendant de l'alpha des autres).
+    const local = pred.localDisplay(this.loopStep.alpha);
+    if (local !== null) {
+      const withLocal = (st: MatchState): MatchState => {
+        const players = st.players.slice();
+        players[this.humanId] = local;
+        return { ...st, players };
+      };
+      this.prev = withLocal(sa);
+      this.state = withLocal(sb);
+    } else {
+      this.prev = sa;
+      this.state = sb;
+    }
     // On garde un instantané d'avance de marge derrière l'affichage.
     if (a > 1) this.snaps.splice(0, a - 1);
     const span = sb.tick - sa.tick;

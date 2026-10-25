@@ -9,7 +9,7 @@
 import type { BotDifficulty, MatchEvent, MatchState, PlayerInput, Role, TeamId, TeamSize } from '../../sim';
 
 /** Version du protocole : un client et un serveur de versions différentes refusent de jouer ensemble. */
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 /** Instantané envoyé tous les SNAPSHOT_EVERY ticks (2 => 15 Hz). */
 export const SNAPSHOT_EVERY = 2;
@@ -47,14 +47,16 @@ export type ClientMessage =
   | { t: 'lobby'; team?: TeamId; role?: Role; name?: string }
   | { t: 'config'; teamSize?: TeamSize; difficulty?: BotDifficulty }
   | { t: 'start' }
-  | { t: 'input'; inputs: PlayerInput[] }
+  /** Entrées de ticks consécutifs ; `seq` = numéro de la première (accusé de réception : `snap.acks`). */
+  | { t: 'input'; seq: number; inputs: PlayerInput[] }
   | { t: 'ping'; c: number };
 
 export type ServerMessage =
   | { t: 'welcome'; you: string; room: string }
   | { t: 'lobby'; phase: RoomPhase; players: LobbyPlayer[]; config: LobbyConfig }
   | { t: 'start'; playerId: number; statics: StaticState; state: DynamicState; humans: Record<number, string> }
-  | { t: 'snap'; state: DynamicState; events: MatchEvent[] }
+  /** `acks` : id de joueur -> numéro de la dernière entrée appliquée par le serveur (prédiction côté client). */
+  | { t: 'snap'; state: DynamicState; events: MatchEvent[]; acks: Record<number, number> }
   | { t: 'end'; score: [number, number] }
   | { t: 'pong'; c: number }
   | { t: 'error'; message: string };

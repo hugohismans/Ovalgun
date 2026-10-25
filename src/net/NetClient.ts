@@ -33,6 +33,7 @@ export interface StartInfo {
 export interface Snapshot {
   state: DynamicState;
   events: MatchEvent[];
+  acks: Record<number, number>;
 }
 
 export type NetStatus = 'connecting' | 'open' | 'closed';
@@ -57,6 +58,9 @@ export class NetClient {
   private readonly ws: WebSocket;
   private readonly snaps: Snapshot[] = [];
   private batch: PlayerInput[] = [];
+  /** Numéro de la prochaine entrée (et de la première du paquet en cours). */
+  private nextSeq = 0;
+  private batchSeq = 0;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(server: string, readonly code: string, name: string, role: Role) {
@@ -100,10 +104,11 @@ export class NetClient {
       case 'start':
         this.snaps.length = 0;
         this.batch = [];
+        this.nextSeq = 0;
         this.onStart?.({ playerId: msg.playerId, statics: msg.statics, state: msg.state, humans: msg.humans });
         break;
       case 'snap':
-        this.snaps.push({ state: msg.state, events: msg.events });
+        this.snaps.push({ state: msg.state, events: msg.events, acks: msg.acks ?? {} });
         if (this.snaps.length > 60) this.snaps.splice(0, this.snaps.length - 60);
         break;
       case 'end':
@@ -127,13 +132,16 @@ export class NetClient {
     return this.snaps.splice(0, this.snaps.length);
   }
 
-  /** Entrée d'un tick (envoyée par paquets de INPUT_BATCH). */
-  queueInput(inp: PlayerInput): void {
+  /** Entrée d'un tick (envoyée par paquets de INPUT_BATCH) ; renvoie son numéro. */
+  queueInput(inp: PlayerInput): number {
+    if (this.batch.length === 0) this.batchSeq = this.nextSeq;
+    const seq = this.nextSeq++;
     this.batch.push(inp);
     if (this.batch.length >= INPUT_BATCH) {
-      this.send({ t: 'input', inputs: this.batch });
+      this.send({ t: 'input', seq: this.batchSeq, inputs: this.batch });
       this.batch = [];
     }
+    return seq;
   }
 
   setLobby(change: { team?: TeamId; role?: Role; name?: string }): void {

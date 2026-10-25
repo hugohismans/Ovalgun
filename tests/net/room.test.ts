@@ -104,10 +104,12 @@ describe('RoomCore (serveur autoritaire)', () => {
     for (let i = 0; i < 100; i++) r.tick();
     const z0 = a.last('snap')?.state.players[0].pos.z ?? 0;
     for (let i = 0; i < 30; i++) {
-      r.message('a', JSON.stringify({ t: 'input', inputs: [makeInput({ moveY: 1, yaw: 0 })] }));
+      r.message('a', JSON.stringify({ t: 'input', seq: i, inputs: [makeInput({ moveY: 1, yaw: 0 })] }));
       r.tick();
     }
     const snap = a.last('snap');
+    expect(snap?.acks[0]).toBe(29); // accusé : dernière entrée appliquée (prédiction côté client)
+    expect(snap?.acks[5]).toBe(-1); // Bob (id 5 en 5v5) n'a rien envoyé
     expect(snap?.state.players[0].pos.z).toBeGreaterThan(z0 + 4);
     expect(a.count('snap')).toBe(Math.floor(130 / SNAPSHOT_EVERY));
     expect(snap?.state).not.toHaveProperty('field');

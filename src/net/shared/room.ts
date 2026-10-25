@@ -31,7 +31,7 @@ export interface Peer {
 }
 
 /** Entrées en attente max par joueur (au-delà, les plus anciennes sont jetées : on rattrape le retard). */
-const MAX_QUEUE = 6;
+const MAX_QUEUE = 10;
 /** Ticks passés sur le score final avant le retour au lobby (5 s). */
 const END_LINGER_TICKS = 150;
 const ROLES: readonly Role[] = ['pilier', 'ailier', 'demi'];
@@ -40,8 +40,10 @@ const DIFFICULTIES: readonly BotDifficulty[] = ['facile', 'normal', 'difficile']
 interface Member {
   peer: Peer;
   player: LobbyPlayer | null;
-  queue: PlayerInput[];
+  queue: Array<{ seq: number; input: PlayerInput }>;
   last: PlayerInput;
+  /** Numéro de la dernière entrée appliquée (accusé envoyé dans les instantanés). */
+  ack: number;
   joinedAt: number;
 }
 
@@ -72,7 +74,7 @@ export class RoomCore {
   }
 
   join(peer: Peer): void {
-    this.members.set(peer.id, { peer, player: null, queue: [], last: makeInput(), joinedAt: this.joinCounter++ });
+    this.members.set(peer.id, { peer, player: null, queue: [], last: makeInput(), ack: -1, joinedAt: this.joinCounter++ });
   }
 
   leave(id: string): void {
@@ -121,7 +123,8 @@ export class RoomCore {
         break;
       case 'input':
         if (Array.isArray(msg.inputs)) {
-          for (const inp of msg.inputs.slice(0, MAX_QUEUE)) m.queue.push(inp);
+          const seq0 = Number.isInteger(msg.seq) ? msg.seq : m.ack + 1;
+          msg.inputs.slice(0, MAX_QUEUE).forEach((input, i) => m.queue.push({ seq: seq0 + i, input }));
           while (m.queue.length > MAX_QUEUE) m.queue.shift();
         }
         break;
@@ -137,7 +140,10 @@ export class RoomCore {
       const m = this.members.get(cid);
       if (m === undefined) continue;
       const next = m.queue.shift();
-      if (next !== undefined) m.last = next;
+      if (next !== undefined) {
+        m.last = next.input;
+        m.ack = next.seq;
+      }
       frame[simId] = m.last;
     }
     for (const [simId, bot] of this.bots) frame[simId] = bot(s, simId);
@@ -146,7 +152,9 @@ export class RoomCore {
     this.tickCount++;
     if (this.tickCount % SNAPSHOT_EVERY === 0) {
       const { dynamic } = splitState(s);
-      this.broadcast({ t: 'snap', state: { ...dynamic, events: [] }, events: this.pendingEvents });
+      const acks: Record<number, number> = {};
+      for (const [cid, simId] of this.simIds) acks[simId] = this.members.get(cid)?.ack ?? -1;
+      this.broadcast({ t: 'snap', state: { ...dynamic, events: [] }, events: this.pendingEvents, acks });
       this.pendingEvents = [];
     }
     if (s.phase === 'ended') {
@@ -243,6 +251,7 @@ export class RoomCore {
     for (const m of this.members.values()) {
       m.queue = [];
       m.last = makeInput();
+      m.ack = -1;
       const playerId = this.simIds.get(m.peer.id);
       if (playerId !== undefined) this.send(m, { t: 'start', playerId, statics, state: dynamic, humans });
     }
