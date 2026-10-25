@@ -477,7 +477,7 @@ export class PlayerView {
     this.shotAt = timeSec;
   }
 
-  /** Geste ponctuel du personnage (passe, coup de pied). */
+  /** Geste ponctuel du personnage (passe, coup de pied, lancer de zone). */
   gesture(kind: 'pass' | 'kick'): void {
     this.character?.gesture(kind);
   }
@@ -562,7 +562,7 @@ export class PlayerView {
     this.shieldRimMat?.dispose();
   }
 
-  private readonly charFrame = { pitch: 0, velFwd: 0, velSide: 0, carrier: false, shooting: false, celebrate: false };
+  private readonly charFrame = { pitch: 0, velFwd: 0, velSide: 0, carrier: false, shooting: false, celebrate: false, shield: false };
 
   /** Personnage 3D : animation, clignotement, halo d'invulnérabilité (contour), étoiles au-dessus de la tête au sol. */
   private updateCharacter(p: PlayerState, f: PlayerFrame, dt: number, timeSec: number, sinceHit: number, pulse: number): void {
@@ -578,6 +578,7 @@ export class PlayerView {
     cf.carrier = f.carrier;
     cf.shooting = this.shotAt >= 0 && timeSec - this.shotAt < CHARACTER_STYLE.shootHoldSec;
     cf.celebrate = f.celebrate;
+    cf.shield = shieldUp(p);
     c.update(p, cf, dt);
     c.setFlash(sinceHit < STYLE.hitFlashSec ? STYLE.hitFlashIntensity * (1 - sinceHit / STYLE.hitFlashSec) : 0);
     const invuln = p.invulnTicks > 0 || p.status === 'getting_up';

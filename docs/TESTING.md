@@ -1037,3 +1037,35 @@ essais en 3v3, 4–12 en 5v5, ballon porté ≥ 55 % / 45 %) et observer avec `?
 0 = esquive + sauts plus rapides que tout sprint), `KICKOFF_FREEZE_SEC` / `TRY_PAUSE_SEC` (2 s / 2 s : temps figé par essai),
 `BOT_RESTRAINED_PAUSE_MULT` (2,5 : discipline de tir des bots hors pression, ↑ = moins de joueurs au sol),
 `REGEN_DELAY_SEC` (2 s, cahier des charges).
+
+## Personnages 3D
+
+### Comment tester
+
+- `npm run dev` : les cartes de rôle du menu montrent chaque classe en 3D, et le match de fond aussi.
+- Joue chaque rôle (`?debug&role=pilier`, `ailier`, `demi`) : course dans les quatre directions, saut, glissade (C),
+  esquive, porter le ballon (G), passe (E), coup de pied (F), plongeon (C en portant), se faire plaquer, bouclier du
+  pilier (A), zone du demi (A), célébration après un essai.
+- `npx vitest run tests/render/characters.test.ts` : logique d'animation, skins, cohérence des GLB avec le code.
+
+### Ce qu'on doit voir
+
+- Trois silhouettes reconnaissables de loin : pilier blindé et trapu, ailier fin à crête, demi avec sacoche et gros tube.
+- La couleur d'équipe toujours lisible (crête / tenue / veste), contour cartoon, halo clair épais pendant l'invulnérabilité.
+- Le haut du corps vise là où vise le joueur, le bas du corps suit le déplacement (pas chassé, marche arrière).
+
+### Réglages (visuels, `CHARACTER_STYLE` dans src/render/palette.ts ; modèles et skins dans src/render/characters/characterDefs.ts)
+
+| Réglage | Effet | Valeur | Piste |
+|---|---|---|---|
+| `CHARACTERS.<rôle>.headScale` | Taille de la tête (style cartoon) | 1,2 – 1,3 | ↑ 1,4 plus « chibi » |
+| `CHARACTERS.<rôle>.widthScale` | Carrure | pilier 1,22 · ailier 0,95 · demi 1,05 | écarter pour des silhouettes plus contrastées |
+| `SKINS.<id>.colors` | Couleur de chaque matériau (fixe ou `{ team }`) | — | changer la zone à la couleur d'équipe |
+| `outlineWidth` / `invulnOutlineWidth` | Épaisseur du contour / du halo d'invulnérabilité | 0,016 / 0,045 m | ↑ contour plus BD |
+| `runClipSpeed` | Vitesse au sol qui correspond au cycle de course à vitesse 1 | 6 m/s | ↓ si les pieds « patinent » |
+| `aimChestFraction` | Part du pitch de visée portée par le buste | 0,6 | ↑ buste plus penché en visant haut/bas |
+| `gunScale` | Taille des armes tenues | 1,45 | ↑ armes plus « jouet » |
+| `slideTilt` / `diveTilt` | Bascule en glissade / plongeon | −1,0 / 1,3 rad | — |
+
+Ajouter un modèle : ajouter son nom dans `MODELS` de `scripts/build-characters.mjs`, relancer le script sur le dossier
+glTF du pack Quaternius, déclarer le fichier dans `CHARACTER_MODELS` et une skin dans `SKINS`.

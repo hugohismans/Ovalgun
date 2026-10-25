@@ -19,6 +19,8 @@ import { PALETTE } from '../palette';
 /** Modèles disponibles (fichiers dans public/models/characters/). */
 export const CHARACTER_MODELS = {
   punk: 'models/characters/punk.glb',
+  swat: 'models/characters/swat.glb',
+  adventurer: 'models/characters/adventurer.glb',
 } as const;
 
 export type CharacterModelId = keyof typeof CHARACTER_MODELS;
@@ -48,6 +50,8 @@ export interface CharacterDef {
   defaultSkin: string;
   /** Échelle du modèle (le pack mesure ~1,8 m, comme PLAYER_HEIGHT). */
   scale: number;
+  /** Élargissement horizontal (carrure) : > 1 = plus trapu. */
+  widthScale: number;
   /** Échelle de la tête : tête un peu plus grosse = silhouette plus cartoon (style Splatoon). */
   headScale: number;
   weapon: WeaponShape;
@@ -68,13 +72,38 @@ export const SKINS: Readonly<Record<string, SkinDef>> = {
       LightBlue: '#2c3550',
     },
   },
+  'pilier-swat': {
+    id: 'pilier-swat',
+    label: 'Blindé',
+    role: 'pilier',
+    model: 'swat',
+    colors: {
+      // Tenue à la couleur de l'équipe, protections gris anthracite (contraste), visière claire.
+      Swat: { team: 'main' },
+      Swat_Black: '#2b2f3a',
+      Visor: '#bff4ff',
+      Black: '#23262f',
+    },
+    hidden: ['Pistol'],
+  },
+  'demi-adventurer': {
+    id: 'demi-adventurer',
+    label: 'Aventurier',
+    role: 'demi',
+    model: 'adventurer',
+    colors: {
+      // Veste et foulard à la couleur de l'équipe, sacoche (à grenades) d'origine.
+      Green: { team: 'main' },
+      LightGreen: { team: 'light' },
+    },
+  },
 };
 
-/** Modèle par classe (null : capsule de repli). Phase A : seul l'ailier a son modèle. */
+/** Modèle par classe (null : capsule de repli). Silhouettes distinctes : pilier massif, ailier fin, demi moyen. */
 export const CHARACTERS: Readonly<Record<Role, CharacterDef | null>> = {
-  ailier: { role: 'ailier', defaultSkin: 'ailier-punk', scale: 0.96, headScale: 1.3, weapon: 'smg' },
-  pilier: null,
-  demi: null,
+  ailier: { role: 'ailier', defaultSkin: 'ailier-punk', scale: 0.96, widthScale: 0.95, headScale: 1.3, weapon: 'smg' },
+  pilier: { role: 'pilier', defaultSkin: 'pilier-swat', scale: 1.04, widthScale: 1.22, headScale: 1.2, weapon: 'shotgun' },
+  demi: { role: 'demi', defaultSkin: 'demi-adventurer', scale: 0.98, widthScale: 1.05, headScale: 1.28, weapon: 'launcher' },
 };
 
 /** Résout une couleur de skin pour une équipe. */

@@ -32,6 +32,8 @@ export interface CharacterFrame {
   /** Le joueur a tiré il y a peu. */
   shooting: boolean;
   celebrate: boolean;
+  /** Bouclier levé (pilier) : bras gauche tendu derrière le bouclier. */
+  shield: boolean;
 }
 
 const sanitize = (n: string): string => THREE.PropertyBinding.sanitizeNodeName(n);
@@ -105,6 +107,7 @@ export class CharacterModel {
   private tiltZ = 0;
   private air = 0;
   private carry = 0;
+  private shieldArm = 0;
   private readonly headScale: number;
   private readonly getupSec: number;
 
@@ -120,7 +123,7 @@ export class CharacterModel {
     this.headScale = def.headScale;
     this.getupSec = getupSec;
     this.model = SkeletonUtils.clone(template.scene);
-    this.model.scale.setScalar(def.scale);
+    this.model.scale.set(def.scale * def.widthScale, def.scale, def.scale * def.widthScale);
     this.root.add(this.tilt);
     this.tilt.add(this.model);
 
@@ -406,6 +409,12 @@ export class CharacterModel {
       this.rotate('UpperArm.R', AX_FWD, -CS.carryUpperArmIn * this.carry);
       this.rotate('LowerArm.R', AX_RIGHT, -CS.carryForearmBend * this.carry);
     }
+    // Bouclier levé : bras gauche tendu vers l'avant (il « tient » le bouclier).
+    this.shieldArm = approachExp(this.shieldArm, f.shield && standing ? 1 : 0, CS.poseRate, dt);
+    if (this.shieldArm > 0.01) {
+      this.rotate('UpperArm.L', AX_RIGHT, -CS.shieldArmForward * this.shieldArm);
+      this.rotate('LowerArm.L', AX_RIGHT, -CS.shieldForearmBend * this.shieldArm);
+    }
     // En l'air : genoux repliés.
     this.air = approachExp(this.air, mode === 'air' ? 1 : 0, CS.poseRate, dt);
     if (this.air > 0.01) {
@@ -423,6 +432,7 @@ export class CharacterModel {
     // Arme : au poignet droit, pointée selon la visée ; rangée pour le porteur et au sol.
     const wrist = this.bone[sanitize('Wrist.R')];
     this.weapon.visible = !f.carrier && standing && wrist !== undefined;
+    if (f.shield) this.weapon.visible = false;
     if (this.weapon.visible && wrist !== undefined) {
       wrist.getWorldPosition(this.v);
       this.root.worldToLocal(this.v);

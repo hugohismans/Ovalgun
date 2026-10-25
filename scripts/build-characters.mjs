@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import { statSync } from 'node:fs';
 
 /** Modèles utilisés par le jeu (nom du fichier source -> nom de sortie). Étendre ici pour les autres classes. */
-const MODELS = { Punk: 'punk' };
+const MODELS = { Punk: 'punk', Swat: 'swat', Adventurer: 'adventurer' };
 /** Personnage dont on extrait les animations (identiques dans tout le pack). */
 const ANIMATION_SOURCE = 'Punk';
 /** Clips gardés (les autres — épée, coups de poing gauches, marche… — ne servent pas au jeu). */

@@ -1692,5 +1692,10 @@ capsule (`PLAYER_RADIUS`, `PLAYER_HEIGHT`, `playerHeight`) : aucune règle, aucu
   animé dupliqué poussé le long des normales après le skinning ; pendant l'invulnérabilité le contour s'épaissit à la
   couleur claire de l'équipe (remplace le halo de la capsule). Arme construite en code, placée au poignet droit et
   orientée selon la visée. Réglages visuels : `CHARACTER_STYLE` (palette.ts).
-- **Phase A** (en cours de validation) : seul l'ailier (modèle Punk) a son personnage ; pilier et demi gardent la
-  capsule jusqu'à la phase B.
+- **Classes** : ailier = Punk (fin, crête à la couleur de l'équipe, pistolet-mitrailleur), pilier = Swat (trapu :
+  `widthScale` 1,22, tenue à la couleur de l'équipe, visière claire, fusil à pompe ; bras gauche tendu quand le
+  bouclier est levé, arme rangée), demi = Adventurer (sacoche à grenades, veste à la couleur de l'équipe, gros
+  lance-grenades ; geste de lancer quand il pose sa zone).
+- **Menu** : portraits 3D des classes sur les cartes de rôle (`portraits.ts` : rendu hors écran une seule fois, contexte
+  WebGL temporaire libéré aussitôt ; `src/game/portraits.ts` fait le passe-plat pour l'UI). Bibliothèque de modèles
+  partagée (`characterLibrary()`) : chaque fichier n'est téléchargé et décodé qu'une fois.

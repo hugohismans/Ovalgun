@@ -1,5 +1,5 @@
 <!--
-  Carte de rôle du menu de lancement (étape 8) : signe géométrique, nom, arme, description, statistiques visuelles
+  Carte de rôle du menu de lancement (étape 8) : signe géométrique, nom, arme, portrait 3D de la classe, description, statistiques visuelles
   (vitesse, portée, dégâts : pastilles relatives aux trois rôles + valeur réelle) et capacité, tirées de ROLES
   (src/game/roleCards.ts). Bouton radio : clic, Entrée, A à la manette.
 -->
@@ -7,7 +7,12 @@
   import { STAT_PIPS, type RoleCard } from '../../game/roleCards';
   import Icon from '../common/Icon.svelte';
 
-  let { card, selected, onselect }: { card: RoleCard; selected: boolean; onselect: () => void } = $props();
+  let {
+    card,
+    selected,
+    onselect,
+    portrait,
+  }: { card: RoleCard; selected: boolean; onselect: () => void; portrait?: string | undefined } = $props();
 </script>
 
 <button type="button" class="card {card.role}" class:on={selected} role="radio" aria-checked={selected} onclick={onselect}>
@@ -19,6 +24,7 @@
     </span>
     {#if selected}<span class="pick">CHOISI</span>{/if}
   </span>
+  {#if portrait}<img class="portrait" src={portrait} alt="" aria-hidden="true" />{/if}
   <span class="desc">{card.description}</span>
   <span class="stats">
     {#each card.stats as st (st.id)}
@@ -39,6 +45,25 @@
 </button>
 
 <style>
+  .portrait {
+    display: block;
+    align-self: center;
+    height: 8.5rem;
+    width: auto;
+    margin: -0.2rem 0 -0.3rem;
+    pointer-events: none;
+    filter: drop-shadow(0 0.25rem 0 rgb(0 0 0 / 0.25));
+    background: radial-gradient(closest-side, color-mix(in srgb, var(--rc) 28%, transparent), transparent);
+    transition: transform 0.2s;
+  }
+  .card.on .portrait {
+    transform: scale(1.06);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .portrait {
+      transition: none;
+    }
+  }
   .card {
     --rc: #ffffff;
     position: relative;

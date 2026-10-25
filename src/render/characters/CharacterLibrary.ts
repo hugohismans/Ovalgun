@@ -70,3 +70,11 @@ export class CharacterLibrary {
     return this.clipList ?? [];
   }
 }
+
+let shared: CharacterLibrary | null = null;
+
+/** Bibliothèque partagée (rendu du match et portraits du menu) : chaque fichier n'est téléchargé et décodé qu'une fois. */
+export function characterLibrary(): CharacterLibrary {
+  shared ??= new CharacterLibrary();
+  return shared;
+}

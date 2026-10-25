@@ -6,6 +6,7 @@
 -->
 <script lang="ts">
   import { DIFFICULTIES, TEAM_SIZES } from '../../game/launch';
+  import { characterPortraits } from '../../game/portraits';
   import { compositionText, roleCards, teamPreview } from '../../game/roleCards';
   import type { BotDifficulty, Role, TeamSize } from '../../game/session';
   import Glyph from '../common/Glyph.svelte';
@@ -26,6 +27,17 @@
   const DIFF_LABEL: Record<BotDifficulty, string> = { facile: 'Facile', normal: 'Normal', difficile: 'Difficile' };
   const DIFF_OPTIONS = DIFFICULTIES.map((d) => ({ value: d, label: DIFF_LABEL[d] }));
   const team = $derived(teamPreview(app.setup.teamSize, app.setup.role));
+  /** Portraits 3D des classes (rendus une fois en tâche de fond ; la carte garde son signe en attendant). */
+  let portraits: Partial<Record<Role, string>> = $state({});
+  $effect(() => {
+    let alive = true;
+    void characterPortraits().then((p) => {
+      if (alive) portraits = p;
+    });
+    return () => {
+      alive = false;
+    };
+  });
 </script>
 
 <!-- Inerte sous un panneau (contrôles, réglages) : Tab ne peut pas atteindre le menu caché derrière le voile. -->
@@ -52,7 +64,7 @@
       <span class="label">Choisis ton rôle</span>
       <div class="cards" role="radiogroup" aria-label="Rôle">
         {#each cards as c (c.role)}
-          <RoleCard card={c} selected={c.role === app.setup.role} onselect={() => app.updateSetup({ role: c.role })} />
+          <RoleCard card={c} portrait={portraits[c.role]} selected={c.role === app.setup.role} onselect={() => app.updateSetup({ role: c.role })} />
         {/each}
       </div>
     </div>

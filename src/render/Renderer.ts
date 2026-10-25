@@ -49,7 +49,7 @@ import { FxView } from './FxView';
 import { lerpPos, lerpYaw } from './interpolate';
 import { PALETTE, STYLE } from './palette';
 import { PassIndicatorView, type PassIndicatorFrame } from './PassIndicatorView';
-import { CharacterLibrary } from './characters/CharacterLibrary';
+import { characterLibrary } from './characters/CharacterLibrary';
 import { PlayerAssets, PlayerView, type PlayerFrame } from './PlayerView';
 import { ShoulderCamera } from './ShoulderCamera';
 import { SpectatorCamera } from './SpectatorCamera';
@@ -178,7 +178,7 @@ export class Renderer {
   private readonly tmpVec = new THREE.Vector3();
   private readonly assets = new PlayerAssets();
   /** Personnages 3D (chargés en tâche de fond ; capsules en attendant). */
-  private readonly characters = new CharacterLibrary();
+  private readonly characters = characterLibrary();
   private field: FieldView | null = null;
   private backdrop: THREE.Group | null = null;
   private players: PlayerView[] = [];
@@ -515,6 +515,8 @@ export class Renderer {
       if (e.type === 'shot') this.players[e.playerId]?.shot(timeSec);
       if (e.type === 'pass') this.players[e.fromId]?.gesture('pass');
       if (e.type === 'kick') this.players[e.playerId]?.gesture('kick');
+      // Le demi lance sa zone de ralentissement : même geste de bras que la passe.
+      if (e.type === 'ability' && e.role === 'demi') this.players[e.playerId]?.gesture('pass');
       if (e.type === 'blocked') this.players[e.targetId]?.shieldFlash(timeSec);
       this.scrum.handleEvent(e);
     }

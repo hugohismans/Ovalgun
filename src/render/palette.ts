@@ -567,6 +567,9 @@ export const CHARACTER_STYLE = {
   carryUpperArmForward: 0.55,
   carryUpperArmIn: 0.25,
   carryForearmBend: 1.5,
+  /** Pilier, bouclier levé : bras gauche tendu vers l'avant. */
+  shieldArmForward: 1.3,
+  shieldForearmBend: 0.3,
   /** En l'air : genoux repliés. */
   airThigh: 0.6,
   airKnee: 1.0,
