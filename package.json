@@ -8,7 +8,9 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "typecheck": "tsc -p tsconfig.sim.json --noEmit && svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
+    "typecheck": "tsc -p tsconfig.sim.json --noEmit && tsc -p server/tsconfig.json && svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
+    "server:dev": "wrangler dev --port 8787",
+    "server:deploy": "wrangler deploy",
     "test": "vitest run",
     "test:watch": "vitest",
     "check": "npm run typecheck && npm run test && npm run build"
@@ -17,6 +19,7 @@
     "three": "^0.186.1"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261025.1",
     "@gltf-transform/core": "^4.5.1",
     "@gltf-transform/extensions": "^4.5.1",
     "@gltf-transform/functions": "^4.5.1",
@@ -29,6 +32,7 @@
     "svelte-check": "^4.7.7",
     "typescript": "^6.0.3",
     "vite": "^8.3.5",
-    "vitest": "^5.0.5"
+    "vitest": "^5.0.5",
+    "wrangler": "^4.152.0"
   }
 }

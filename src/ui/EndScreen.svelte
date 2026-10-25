@@ -60,16 +60,29 @@
           {/each}
         </tbody>
       </table>
-      <div class="buttons">
-        <button type="button" class="replay" data-autofocus bind:this={replayBtn} disabled={!f.canReplay} onclick={() => app.restart()}><Icon name="restart" size="1.2rem" /> Rejouer</button>
-        <button type="button" class="menu" disabled={!f.canReplay} onclick={() => app.quitToMenu()}><Icon name="exit" size="1.2rem" /> Menu</button>
-      </div>
+      {#if app.online !== null}
+        <p class="online-note">Retour au salon dans quelques secondes…</p>
+        <div class="buttons">
+          <button type="button" class="menu" data-autofocus onclick={() => app.quitToMenu()}><Icon name="exit" size="1.2rem" /> Quitter le salon</button>
+        </div>
+      {:else}
+        <div class="buttons">
+          <button type="button" class="replay" data-autofocus bind:this={replayBtn} disabled={!f.canReplay} onclick={() => app.restart()}><Icon name="restart" size="1.2rem" /> Rejouer</button>
+          <button type="button" class="menu" disabled={!f.canReplay} onclick={() => app.quitToMenu()}><Icon name="exit" size="1.2rem" /> Menu</button>
+        </div>
+      {/if}
       <NavHints hints={[{ pad: 'confirm', key: 'Entrée', label: 'Valider' }, { pad: 'start', label: 'Rejouer' }]} />
     </div>
   </div>
 {/if}
 
 <style>
+  .online-note {
+    margin: 0.4rem 0;
+    font: 700 0.9rem/1.3 var(--font);
+    color: var(--text-dim);
+    text-align: center;
+  }
   .end {
     --oc: #19b86b;
     position: fixed;

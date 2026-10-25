@@ -1723,3 +1723,25 @@ tout est synthétisé avec la Web Audio API.
   (la mineur, batterie + basse + nappe + arpège, mélodie sur la seconde moitié), programmée en avance sur l'horloge
   audio ; fondu à l'entrée et à la sortie du menu.
 - **Réglages** : volume général et volume de la musique (menu Réglages, mémorisés).
+
+## 23. Mode en ligne (version de test)
+
+Mode d'emploi et mise en place : `docs/ONLINE.md`.
+
+- **Serveur** (`server/src/index.ts`, `wrangler.jsonc`) : Cloudflare Worker ; `GET /room/<CODE>` (WebSocket) est
+  routé vers le Durable Object du salon (`idFromName(CODE)`). Le DO branche les WebSockets sur `RoomCore` et l'appelle
+  à 30 Hz (pas fixe, rattrapage borné). Durable Objects SQLite : offre gratuite.
+- **`RoomCore`** (`src/net/shared/room.ts`, pur, testé avec de faux clients) : lobby (équipes équilibrées, hôte, rôles,
+  format, difficulté), puis match autoritaire : `createMatch` + `step` + bots (`createBot` avec les humains en
+  `externalIds`) ; entrées en file par joueur (manquante => dernière répétée, file bornée), instantané tous les
+  `SNAPSHOT_EVERY` ticks (état sans `field` / `config`, événements cumulés à part), bot qui remplace un joueur parti,
+  retour au lobby 5 s après la fin.
+- **Protocole** (`src/net/shared/protocol.ts`) : messages JSON typés, version (`PROTOCOL_VERSION`), codes de salon.
+  `src/net/shared/` est compilé avec `tsconfig.sim.json` (aucune API navigateur) : il tourne tel quel dans le Worker.
+- **Client** : `NetClient` (WebSocket, entrées par paquets de `INPUT_BATCH`, ping), session en mode `online`
+  (`GameSession.onlineFrame`) : les entrées partent à 30 Hz, l'affichage suit le serveur avec `ONLINE_INTERP_TICKS` de
+  retard (interpolation entre les deux instantanés qui l'encadrent, horloge recalée en douceur), les événements sont
+  joués quand l'affichage atteint leur tick (FX, son, vibrations, HUD alignés sur l'image). Pas de prédiction locale
+  pour l'instant. UI : bloc « En ligne » du menu, écran Salon (`Lobby.svelte`), pause et fin adaptées.
+- **Déploiement** : le workflow Pages déploie le Worker si les secrets Cloudflare existent et injecte son adresse au
+  build (`VITE_OVALGUN_SERVER`) ; `?server=` force une adresse (tests en local).

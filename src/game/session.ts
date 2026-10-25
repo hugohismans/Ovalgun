@@ -68,6 +68,7 @@ import {
   ticksToSec,
   weaponImplemented,
   type InputFrame,
+  type MatchEvent,
   type MatchState,
   type MoveMode,
   type PlayerInput,
@@ -90,6 +91,8 @@ import { createBot } from '../bots';
 import { aimAssistApplies, resetAssistCandidates, type AssistCandidate } from '../input/aimAssist';
 import type { GamepadStyle } from '../input/gamepadMap';
 import { audioEngine, type AudioEngine } from '../audio/AudioEngine';
+import type { NetClient, StartInfo } from '../net/NetClient';
+import { joinState } from '../net/shared/protocol';
 import { Haptics } from '../input/haptics';
 import { CombatHud, type CombatHudFrame } from './combatHud';
 import { FEEDBACK_SEC, feedbackFor, type Feedback } from './feedback';
@@ -151,11 +154,26 @@ export interface SessionOptions {
   mode?: SessionMode;
   /** Durée du match (s) ; défaut MATCH_DURATION_SEC (?debug&duration=… pour un écran de fin rapide). */
   durationSec?: number;
+  /** Partie en ligne : l'état vient du serveur autoritaire (instantanés interpolés), les entrées lui sont envoyées. */
+  online?: OnlineMatch;
 }
+
+/** Partie en ligne : client réseau connecté et message de départ du serveur. */
+export interface OnlineMatch {
+  client: NetClient;
+  start: StartInfo;
+}
+
+/** Retard d'affichage en ligne (ticks) : de quoi toujours avoir deux instantanés à interpoler (instantané tous les 2 ticks + gigue). */
+const ONLINE_INTERP_TICKS = 5;
+/** Écart au-delà duquel l'horloge d'affichage est recalée d'un coup (ticks). */
+const ONLINE_RESYNC_TICKS = 20;
 
 /** Instantané pour l'UI, produit à chaque frame. */
 export interface FrameSnapshot {
   tick: number;
+  /** Partie en ligne : ping (ms) ; -1 hors ligne. */
+  ping: number;
   /** Étape 8 : mode de la session, match terminé, demande de pointer lock en cours. */
   mode: SessionMode;
   paused: boolean;
@@ -247,7 +265,8 @@ export interface FrameSnapshot {
 
 export class GameSession {
   /** Id du joueur humain. */
-  readonly humanId = 0;
+  /** Joueur humain : 0 hors ligne ; en ligne, l'id attribué par le serveur. */
+  humanId = 0;
   state: MatchState;
   prev: MatchState;
   readonly input: InputManager;
@@ -304,6 +323,7 @@ export class GameSession {
 
   constructor(canvas: HTMLCanvasElement, options: SessionOptions) {
     this.options = options;
+    this.humanId = options.online?.start.playerId ?? 0;
     this.debug = options.debug ?? false;
     this.state = this.newMatch();
     this.prev = cloneState(this.state);
@@ -361,7 +381,7 @@ export class GameSession {
 
   /** Outils de test (ballon pour moi / au centre) : seulement en partie, en ?debug ou en entraînement. */
   get debugTools(): boolean {
-    return this.mode === 'play' && (this.debug || (this.options.training ?? false));
+    return this.mode === 'play' && this.online === null && (this.debug || (this.options.training ?? false));
   }
 
   /** Mode de la session (étape 8). */
@@ -382,6 +402,7 @@ export class GameSession {
   /** Nouveau match (seed = options.seed + matchIndex), en phase de coup d'envoi. */
   private newMatch(): MatchState {
     const o = this.options;
+    if (o.online !== undefined) return joinState(o.online.start.statics, o.online.start.state);
     // Le joueur humain reçoit le ballon aux coups d'envoi de son équipe (sinon il ne le touchait jamais : le receveur
     // par défaut est le plus central de la formation, toujours un bot). En autopilote : défaut (le plus central).
     const humanIndex = this.humanId % o.teamSize;
@@ -410,7 +431,7 @@ export class GameSession {
    */
   private installProviders(): void {
     this.inputProviders.clear();
-    if (this.options.passive ?? false) return;
+    if ((this.options.passive ?? false) || this.online !== null) return;
     const seed = this.options.seed + this.matchIndex;
     const difficulty = this.options.difficulty ?? DEFAULT_BOT_DIFFICULTY;
     // Les bots savent quel joueur est humain : ils se répartissent les rôles (pression, course au ballon, repli…)
@@ -428,6 +449,9 @@ export class GameSession {
    */
   restart(): void {
     this.matchIndex++;
+    this.humanId = this.options.online?.start.playerId ?? 0;
+    this.snaps = [];
+    this.renderTick = -1;
     this.state = this.newMatch();
     this.prev = cloneState(this.state);
     this.renderer.setMatch(this.state, this.renderedHumanId);
@@ -551,13 +575,16 @@ export class GameSession {
       this.pendingResetBall ||= dbg.resetBall;
     }
 
-    if (!this.paused) {
-      this.input.frame(dt, this.assistQuery());
-      const n = this.loopStep.advance(dt);
-      for (let i = 0; i < n; i++) this.tick(now);
+    let alpha: number;
+    if (this.online !== null) alpha = this.onlineFrame(dt, now);
+    else {
+      if (!this.paused) {
+        this.input.frame(dt, this.assistQuery());
+        const n = this.loopStep.advance(dt);
+        for (let i = 0; i < n; i++) this.tick(now);
+      }
+      alpha = this.loopStep.alpha;
     }
-
-    const alpha = this.loopStep.alpha;
     this.renderer.render(this.prev, this.state, alpha, this.view(alpha), dt, now);
     this.updateAudio(dt);
     this.onFrame?.(this.snapshot());
@@ -642,8 +669,64 @@ export class GameSession {
       frame[p.id] = provider !== undefined ? provider(this.state, p.id) : makeInput({ yaw: p.yaw, pitch: p.pitch });
     }
     step(this.state, frame as InputFrame);
+    this.processEvents(this.state.events, nowSec, this.prev);
+  }
+
+  /** Partie en ligne active (null hors ligne). */
+  get online(): OnlineMatch | null {
+    return this.options.online ?? null;
+  }
+
+  private snaps: Array<{ state: MatchState; events: readonly MatchEvent[]; handled: boolean }> = [];
+  /** Horloge d'affichage en ligne (ticks du serveur, fractionnaire) ; -1 tant qu'elle n'est pas calée. */
+  private renderTick = -1;
+
+  /**
+   * Une frame en ligne : entrées envoyées au serveur à 30 Hz, instantanés reçus mis en tampon, affichage avec
+   * ONLINE_INTERP_TICKS de retard (interpolation entre les deux instantanés qui l'encadrent), événements joués quand
+   * l'affichage atteint leur tick. Renvoie l'alpha d'interpolation. La pause n'arrête rien (le serveur continue) : elle
+   * envoie seulement des entrées neutres.
+   */
+  private onlineFrame(dt: number, nowSec: number): number {
+    const net = this.online;
+    if (net === null) return 0;
+    if (!this.paused) this.input.frame(dt, this.assistQuery());
+    const n = this.loopStep.advance(dt);
+    for (let i = 0; i < n; i++) {
+      net.client.queueInput(this.inGame ? this.input.sample() : makeInput({ yaw: this.input.yaw, pitch: this.input.pitch }));
+    }
+    const statics = net.start.statics;
+    for (const sn of net.client.drainSnapshots()) this.snaps.push({ state: joinState(statics, sn.state), events: sn.events, handled: false });
+    if (this.snaps.length === 0) return 0;
+    const latest = this.snaps[this.snaps.length - 1].state.tick;
+    const target = latest - ONLINE_INTERP_TICKS;
+    if (this.renderTick < 0 || Math.abs(target - this.renderTick) > ONLINE_RESYNC_TICKS) this.renderTick = target;
+    else this.renderTick += dt * TICK_RATE + (target - this.renderTick) * Math.min(1, dt * 2);
+    // Événements des instantanés que l'affichage a atteints (dans l'ordre).
+    for (let i = 0; i < this.snaps.length; i++) {
+      const sn = this.snaps[i];
+      if (sn.state.tick > this.renderTick) break;
+      if (!sn.handled) {
+        sn.handled = true;
+        this.processEvents(sn.events, nowSec, this.snaps[i - 1]?.state ?? null);
+      }
+    }
+    let a = 0;
+    while (a + 1 < this.snaps.length && this.snaps[a + 1].state.tick <= this.renderTick) a++;
+    const b = Math.min(a + 1, this.snaps.length - 1);
+    const sa = this.snaps[a].state;
+    const sb = this.snaps[b].state;
+    this.prev = sa;
+    this.state = sb;
+    // On garde un instantané d'avance de marge derrière l'affichage.
+    if (a > 1) this.snaps.splice(0, a - 1);
+    const span = sb.tick - sa.tick;
+    return span > 0 ? Math.min(1, Math.max(0, (this.renderTick - sa.tick) / span)) : 1;
+  }
+
+  /** Effets des événements d'un tick (HUD, caméra, vibrations, rendu, son, retours) — local ou en ligne. */
+  private processEvents(events: readonly MatchEvent[], nowSec: number, prev: MatchState | null): void {
     const me = this.state.players[this.humanId];
-    const events = this.state.events;
     this.matchHud.handleEvents(events, this.state, nowSec);
     for (const e of events) {
       // Remise en jeu : la caméra du joueur local regarde l'en-but adverse (la sim applique ce yaw au tick suivant).
@@ -659,7 +742,7 @@ export class GameSession {
       const pad = this.input.activeDevice === 'gamepad' ? this.input.activeGamepad : null;
       this.haptics.handleEvents(events, me.id, me.team, nowSec, pad, me.pos, this.teamOf);
     }
-    this.renderer.handleEvents(events, this.state, nowSec, this.prev);
+    this.renderer.handleEvents(events, this.state, nowSec, prev);
     if (this.mode === 'play') this.audio.handleEvents(events, this.state, this.autopilot ? -1 : this.humanId);
     this.combatHud.handleEvents(events, this.state, this.humanId, nowSec);
     this.eventFeed.handleEvents(events, this.state, this.humanId, nowSec);
@@ -727,6 +810,7 @@ export class GameSession {
     const passTarget = this.renderer.passTargetId;
     return {
       tick: s.tick,
+      ping: this.online !== null ? Math.round(this.online.client.rtt) : -1,
       mode: this.mode,
       paused: this.paused,
       ended: this.ended,

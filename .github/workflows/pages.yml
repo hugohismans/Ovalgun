@@ -1,6 +1,11 @@
 # Déploiement de dist/ sur GitHub Pages, UNIQUEMENT à la main (Actions -> « Déploiement GitHub Pages » -> Run workflow).
 # Prérequis (une fois) : Settings -> Pages -> Build and deployment -> Source : « GitHub Actions ».
 # Le build utilise base './' (vite.config.ts) : il fonctionne sous https://<utilisateur>.github.io/<dépôt>/.
+#
+# Mode en ligne (docs/ONLINE.md) : si les secrets CLOUDFLARE_API_TOKEN et CLOUDFLARE_ACCOUNT_ID existent, le serveur
+# (Cloudflare Worker + Durable Objects, wrangler.jsonc) est déployé d'abord, et son adresse est intégrée au site
+# (VITE_OVALGUN_SERVER). Sans ces secrets : site seul, mode en ligne désactivé. Une adresse fixe peut aussi être donnée
+# par la variable de dépôt OVALGUN_SERVER_URL (domaine personnalisé).
 name: Déploiement GitHub Pages
 
 on:
@@ -31,6 +36,33 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+      - name: Serveur en ligne (Cloudflare)
+        id: server
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          FIXED_URL: ${{ vars.OVALGUN_SERVER_URL }}
+        run: |
+          set -o pipefail
+          if [ -n "$FIXED_URL" ]; then
+            echo "url=$FIXED_URL" >> "$GITHUB_OUTPUT"
+          fi
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::notice::Secrets Cloudflare absents : site déployé sans mode en ligne (voir docs/ONLINE.md)."
+            exit 0
+          fi
+          npx wrangler deploy 2>&1 | tee wrangler.log
+          url=$(grep -oE 'https://[a-zA-Z0-9.-]+\.workers\.dev' wrangler.log | head -1)
+          if [ -z "$FIXED_URL" ]; then
+            if [ -z "$url" ]; then echo "::error::Adresse du serveur introuvable dans la sortie de wrangler."; exit 1; fi
+            echo "url=$url" >> "$GITHUB_OUTPUT"
+          fi
+          echo "::notice::Serveur en ligne : ${FIXED_URL:-$url}"
+      - name: Build avec l'adresse du serveur
+        if: steps.server.outputs.url != ''
+        env:
+          VITE_OVALGUN_SERVER: ${{ steps.server.outputs.url }}
+        run: npm run build
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

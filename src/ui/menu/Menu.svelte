@@ -27,6 +27,8 @@
   const DIFF_LABEL: Record<BotDifficulty, string> = { facile: 'Facile', normal: 'Normal', difficile: 'Difficile' };
   const DIFF_OPTIONS = DIFFICULTIES.map((d) => ({ value: d, label: DIFF_LABEL[d] }));
   const team = $derived(teamPreview(app.setup.teamSize, app.setup.role));
+  /** Code de salon saisi (rejoindre). */
+  let roomCode = $state('');
   /** Portraits 3D des classes (rendus une fois en tâche de fond ; la carte garde son signe en attendant). */
   let portraits: Partial<Record<Role, string>> = $state({});
   $effect(() => {
@@ -111,6 +113,31 @@
       <button type="button" class="ghost" onclick={() => app.openPanel('controls')}><Icon name="controls" size="1.15rem" /> Contrôles</button>
       <button type="button" class="ghost" onclick={() => app.openPanel('settings')}><Icon name="settings" size="1.15rem" /> Réglages</button>
     </div>
+    <section class="online" aria-label="En ligne">
+      <span class="label">En ligne · avec tes potes</span>
+      <input
+        class="text"
+        type="text"
+        placeholder="Ton pseudo"
+        maxlength="16"
+        autocomplete="nickname"
+        value={app.playerName}
+        oninput={(e) => app.setName(e.currentTarget.value)}
+      />
+      <button type="button" class="ghost wide" disabled={app.server === ''} onclick={() => app.createRoom()}><Icon name="play" size="1.05rem" /> Créer un salon</button>
+      <form
+        class="join"
+        onsubmit={(e) => {
+          e.preventDefault();
+          app.joinRoom(roomCode);
+        }}
+      >
+        <input class="text code" type="text" placeholder="CODE" maxlength="5" autocomplete="off" spellcheck="false" bind:value={roomCode} />
+        <button type="submit" class="ghost" disabled={app.server === ''}>Rejoindre</button>
+      </form>
+      {#if app.onlineError !== ''}<p class="warn">{app.onlineError}</p>{/if}
+      {#if app.server === ''}<p class="info">Mode en ligne pas encore configuré sur ce site.</p>{/if}
+    </section>
     <ControlsPreview />
     {#if app.padIgnored && !app.padConnected}
       <p class="warn">Manette détectée mais non reconnue (disposition non « standard ») : essaie Chrome ou Edge.</p>
@@ -297,6 +324,42 @@
   }
   .ghost:hover {
     background: var(--panel-hi);
+  }
+  .online {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    padding: 0.7rem;
+    border-radius: var(--r-md);
+    background: var(--panel);
+    box-shadow: inset 0 0 0 0.1rem var(--stroke);
+  }
+  .text {
+    min-width: 0;
+    padding: 0.5rem 0.7rem;
+    border: 0;
+    border-radius: var(--r-sm);
+    background: rgb(10 8 32 / 0.7);
+    box-shadow: inset 0 0 0 0.1rem var(--stroke);
+    color: #fff;
+    font: 800 0.9rem/1.1 var(--font);
+  }
+  .text.code {
+    flex: 1;
+    text-transform: uppercase;
+    letter-spacing: 0.25em;
+    font-weight: 900;
+  }
+  .join {
+    display: flex;
+    gap: 0.45rem;
+  }
+  .ghost.wide {
+    flex: none;
+  }
+  .ghost:disabled {
+    opacity: 0.45;
+    cursor: default;
   }
   .warn,
   .info {

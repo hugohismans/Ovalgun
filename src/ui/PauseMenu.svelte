@@ -51,22 +51,34 @@
       <span class="t1">{m.teamNames[1]}</span>
     </div>
   {/if}
+  {#if app.online !== null}<p class="online-note">Partie en ligne : le match continue pendant la pause.</p>{/if}
   <div class="list">
     <button type="button" id="pause-resume" class="item primary" data-autofocus={app.lastPanel === null ? '' : undefined} onclick={() => app.resume()}><Icon name="play" size="1.2rem" /> Reprendre</button>
     <button type="button" class="item" data-autofocus={app.lastPanel === 'controls' ? '' : undefined} onclick={() => app.openPanel('controls')}><Icon name="controls" size="1.2rem" /> Contrôles</button>
     <button type="button" class="item" data-autofocus={app.lastPanel === 'settings' ? '' : undefined} onclick={() => app.openPanel('settings')}><Icon name="settings" size="1.2rem" /> Réglages</button>
-    <button type="button" class="item" class:armed={armed === 'restart'} onclick={() => confirmThen('restart', () => app.restart())} onblur={disarm('restart')}>
-      <Icon name="restart" size="1.2rem" />
-      {armed === 'restart' ? 'Confirmer : recommencer ?' : 'Recommencer'}
-    </button>
+    {#if app.online === null}
+      <button type="button" class="item" class:armed={armed === 'restart'} onclick={() => confirmThen('restart', () => app.restart())} onblur={disarm('restart')}>
+        <Icon name="restart" size="1.2rem" />
+        {armed === 'restart' ? 'Confirmer : recommencer ?' : 'Recommencer'}
+      </button>
+    {/if}
     <button type="button" class="item danger" class:armed={armed === 'quit'} onclick={() => confirmThen('quit', () => app.quitToMenu())} onblur={disarm('quit')}>
       <Icon name="exit" size="1.2rem" />
-      {armed === 'quit' ? 'Confirmer : quitter le match ?' : 'Quitter vers le menu'}
+      {#if app.online !== null}
+        {armed === 'quit' ? 'Confirmer : quitter le salon ?' : 'Quitter le salon'}
+      {:else}
+        {armed === 'quit' ? 'Confirmer : quitter le match ?' : 'Quitter vers le menu'}
+      {/if}
     </button>
   </div>
 </Panel>
 
 <style>
+  .online-note {
+    margin: 0 0 0.5rem;
+    font: 700 0.8rem/1.3 var(--font);
+    color: var(--text-dim);
+  }
   .score {
     display: flex;
     align-items: center;

@@ -1,0 +1,14 @@
+// Serveur en ligne d'Ovalgun (Cloudflare Worker + Durable Objects). Déploiement : workflow GitHub
+// « Déploiement en ligne » (.github/workflows/online.yml) ou `npm run server:deploy` en local.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ovalgun-server",
+  "main": "server/src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "durable_objects": {
+    "bindings": [{ "name": "ROOMS", "class_name": "MatchRoom" }]
+  },
+  // Durable Objects stockés en SQLite : disponibles sur l'offre gratuite de Cloudflare.
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["MatchRoom"] }],
+  "observability": { "enabled": true }
+}

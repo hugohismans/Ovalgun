@@ -12,7 +12,8 @@
  */
 
 import { debugFlagsFromParams, DEFAULT_SETUP, sanitizeSetup, setupFromParams, type DebugFlags, type MatchSetup } from '../../game/launch';
-import { GameSession, type MenuIntent, type SessionOptions } from '../../game/session';
+import { GameSession, type MenuIntent, type Role, type SessionOptions, type TeamId, type TeamSize, type BotDifficulty } from '../../game/session';
+import { inviteUrl, isRoomCode, NetClient, newRoomCode, normalizeRoomCode, roomFromUrl, serverUrl, type LobbyView } from '../../game/online';
 import { sanitizeSettings, type PlayerSettings } from '../../game/settings';
 import { uiBackSound } from '../../game/uiSound';
 import type { GamepadStyle } from '../../input/gamepadMap';
@@ -22,7 +23,21 @@ import { browserStorage, loadJson, saveJson, STORAGE_KEYS } from '../logic/stora
 import { hud } from './hud.svelte';
 import { nav } from './nav.svelte';
 
-export type Screen = 'menu' | 'game';
+export type Screen = 'menu' | 'game' | 'lobby';
+
+/** État du mode en ligne affiché par l'UI. */
+export interface OnlineState {
+  code: string;
+  status: 'connecting' | 'open' | 'closed';
+  /** Mon identifiant de connexion (fixé par le serveur). */
+  you: string;
+  lobby: LobbyView | null;
+  error: string;
+  invite: string;
+}
+
+/** Clé de stockage du pseudo. */
+const NAME_KEY = 'ovalgun.name';
 export type Panel = 'controls' | 'settings' | null;
 
 /** Seed de base des parties du joueur (la session y ajoute le numéro du match) et du match de fond du menu. */
@@ -55,6 +70,12 @@ class AppState {
   padConnected = $state(false);
   padIgnored = $state(false);
   layout = $state.raw<LayoutLabels | null>(null);
+  /** Mode en ligne : salon courant (null hors ligne), pseudo, adresse du serveur, dernier message d'erreur. */
+  online = $state<OnlineState | null>(null);
+  playerName = $state('');
+  server = $state('');
+  onlineError = $state('');
+  private net: NetClient | null = null;
 
   session: GameSession | null = null;
   flags: DebugFlags = { debug: false, showMenu: true, autopilot: false, passive: false, durationSec: 0 };
@@ -75,6 +96,9 @@ class AppState {
     const stored = sanitizeSetup(loadJson(storage, STORAGE_KEYS.setup));
     this.setup = setupFromParams(params, stored);
     this.settings = sanitizeSettings(loadJson(storage, STORAGE_KEYS.settings));
+    this.server = serverUrl(params);
+    const savedName = loadJson(storage, NAME_KEY);
+    this.playerName = typeof savedName === 'string' ? savedName : '';
     const direct = !this.flags.showMenu;
     const s = new GameSession(canvas, { ...(direct ? this.playOptions() : this.attractOptions()), debug: this.flags.debug });
     this.session = s;
@@ -97,6 +121,8 @@ class AppState {
     s.onMenuIntent = (i) => this.onIntent(i);
     s.start();
     void loadLayoutLabels().then((l) => (this.layout = l));
+    const room = roomFromUrl(params);
+    if (room !== null && !direct) this.joinRoom(room);
     return () => {
       s.dispose();
       this.session = null;
@@ -156,17 +182,128 @@ class AppState {
     this.session?.requestPlay();
   }
 
-  /** Recommencer (pause) / Rejouer (écran de fin) : nouveau match, mêmes choix. */
+  /** Recommencer (pause) / Rejouer (écran de fin) : nouveau match, mêmes choix. En ligne : sans effet (le serveur décide). */
   restart(): void {
     const s = this.session;
-    if (s === null) return;
+    if (s === null || this.net !== null) return;
     this.panel = null;
     s.restart();
     s.requestPlay();
   }
 
-  /** Quitter vers le menu de lancement. */
+  // ---------------------------------------------------------------------------
+  // En ligne
+
+  /** Pseudo (mémorisé). */
+  setName(name: string): void {
+    this.playerName = name.slice(0, 16);
+    saveJson(browserStorage(), NAME_KEY, this.playerName);
+    this.net?.setLobby({ name: this.playerName });
+  }
+
+  /** Crée un salon (code aléatoire) et le rejoint. */
+  createRoom(): void {
+    this.joinRoom(newRoomCode());
+  }
+
+  /** Rejoint le salon `raw` (code saisi ou lien d'invitation). */
+  joinRoom(raw: string): void {
+    const code = normalizeRoomCode(raw);
+    this.onlineError = '';
+    if (this.server === '') {
+      this.onlineError = 'Serveur en ligne non configuré (voir docs/ONLINE.md).';
+      return;
+    }
+    if (!isRoomCode(code)) {
+      this.onlineError = 'Code de salon invalide (5 caractères).';
+      return;
+    }
+    this.leaveRoom(false);
+    const name = this.playerName.trim() || 'Joueur';
+    const net = new NetClient(this.server, code, name, this.setup.role);
+    this.net = net;
+    this.online = { code, status: 'connecting', you: '', lobby: null, error: '', invite: inviteUrl(code) };
+    this.panel = null;
+    this.screen = 'lobby';
+    net.onLobby = (l) => {
+      if (this.online === null) return;
+      this.online = { ...this.online, status: 'open', you: net.you, lobby: l };
+      // Fin de match côté serveur (retour au lobby) pendant qu'on jouait : on revient au salon.
+      if (l.phase === 'lobby' && this.screen === 'game') this.backToLobbyScreen();
+    };
+    net.onStart = (start) => {
+      const s = this.session;
+      if (s === null) return;
+      this.panel = null;
+      this.screen = 'game';
+      s.launch({ mode: 'play', teamSize: start.statics.config.teamSize, humanRole: this.setup.role, seed: 0, online: { client: net, start } });
+      s.requestPlay();
+    };
+    net.onError = (message) => {
+      if (this.online !== null) this.online = { ...this.online, error: message };
+      this.onlineError = message;
+    };
+    net.onClose = () => {
+      const wasPlaying = this.screen !== 'menu';
+      this.net = null;
+      this.online = null;
+      if (wasPlaying) {
+        if (this.onlineError === '') this.onlineError = 'Connexion au salon perdue.';
+        this.toMenuScreen();
+      }
+    };
+  }
+
+  /** Quitte le salon (et revient au menu si demandé). */
+  leaveRoom(toMenu = true): void {
+    const net = this.net;
+    this.net = null;
+    this.online = null;
+    net?.close();
+    if (toMenu) this.toMenuScreen();
+  }
+
+  setOnlineTeam(team: TeamId): void {
+    this.net?.setLobby({ team });
+  }
+
+  setOnlineRole(role: Role): void {
+    this.updateSetup({ role });
+    this.net?.setLobby({ role });
+  }
+
+  setOnlineConfig(change: { teamSize?: TeamSize; difficulty?: BotDifficulty }): void {
+    this.net?.setConfig(change);
+  }
+
+  startOnline(): void {
+    this.net?.start();
+  }
+
+  /** Je suis l'hôte du salon. */
+  get isHost(): boolean {
+    const o = this.online;
+    return o !== null && (o.lobby?.players.some((p) => p.id === o.you && p.host) ?? false);
+  }
+
+  private backToLobbyScreen(): void {
+    this.panel = null;
+    this.screen = 'lobby';
+    this.session?.launch(this.attractOptions());
+  }
+
+  private toMenuScreen(): void {
+    this.panel = null;
+    this.screen = 'menu';
+    this.session?.launch(this.attractOptions());
+  }
+
+  /** Quitter vers le menu de lancement (en ligne : quitte aussi le salon). */
   quitToMenu(): void {
+    if (this.net !== null) {
+      this.leaveRoom(true);
+      return;
+    }
     const s = this.session;
     if (s === null) return;
     this.panel = null;

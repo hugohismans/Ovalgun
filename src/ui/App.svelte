@@ -15,6 +15,7 @@
   import ControlsPanel from './ControlsPanel.svelte';
   import EndScreen from './EndScreen.svelte';
   import Hud from './hud/Hud.svelte';
+  import Lobby from './menu/Lobby.svelte';
   import Menu from './menu/Menu.svelte';
   import PauseMenu from './PauseMenu.svelte';
   import SettingsPanel from './SettingsPanel.svelte';
@@ -79,6 +80,8 @@
 
   {#if app.screen === 'menu'}
     <Menu />
+  {:else if app.screen === 'lobby'}
+    <Lobby />
   {:else if ended}
     <EndScreen />
   {:else if paused && app.panel === null}

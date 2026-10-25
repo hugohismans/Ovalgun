@@ -19,5 +19,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src/sim/**/*.ts", "src/bots/**/*.ts"]
+  "include": ["src/sim/**/*.ts", "src/bots/**/*.ts", "src/net/shared/**/*.ts"]
 }
