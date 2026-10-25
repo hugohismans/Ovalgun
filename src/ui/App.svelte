@@ -11,6 +11,7 @@
   import { onMount } from 'svelte';
   import type { FrameSnapshot } from '../game/session';
   import { TEAM_COLORS } from '../game/matchHud';
+  import { installUiSounds } from '../game/uiSound';
   import ControlsPanel from './ControlsPanel.svelte';
   import EndScreen from './EndScreen.svelte';
   import Hud from './hud/Hud.svelte';
@@ -24,6 +25,7 @@
   let canvas: HTMLCanvasElement;
 
   onMount(() => app.init(canvas));
+  onMount(() => installUiSounds(document));
 
   const s = $derived<FrameSnapshot | null>(hud.snap);
   const inGameScreen = $derived(app.screen === 'game' && s !== null && s.mode === 'play');

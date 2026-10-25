@@ -1,6 +1,6 @@
 /**
  * Réglages du joueur (étape 8), PURS et testés : sensibilité souris, sensibilité caméra manette, inversion Y, aide à la
- * visée manette, vibrations, volume (réservé : pas encore de son). La session les applique à chaud à l'InputManager et
+ * visée manette, vibrations, volume général et volume de la musique. La session les applique à chaud à l'InputManager et
  * aux vibrations (`GameSession.applySettings`) ; l'UI les édite et les mémorise (localStorage, src/ui/logic/storage.ts).
  *
  * `sanitizeSettings` accepte N'IMPORTE QUELLE valeur (JSON relu du stockage, éventuellement corrompu ou d'une ancienne
@@ -24,12 +24,15 @@ export interface PlayerSettings {
   aimAssist: boolean;
   /** Vibrations de la manette. */
   rumble: boolean;
-  /** Volume général 0..1 (réservé : pas encore de son). */
+  /** Volume général 0..1. */
   volume: number;
+  /** Volume de la musique du menu 0..1 (relatif au volume général). */
+  musicVolume: number;
 }
 
-/** Volume par défaut (réservé). */
+/** Volumes par défaut. */
 const DEFAULT_VOLUME = 0.8;
+const DEFAULT_MUSIC_VOLUME = 0.7;
 /** Pas du curseur de volume (exporté pour l'UI). */
 export const VOLUME_STEP = 0.05;
 
@@ -40,6 +43,7 @@ export const DEFAULT_SETTINGS: Readonly<PlayerSettings> = Object.freeze({
   aimAssist: DEFAULT_INPUT_SETTINGS.aimAssist,
   rumble: DEFAULT_RUMBLE,
   volume: DEFAULT_VOLUME,
+  musicVolume: DEFAULT_MUSIC_VOLUME,
 });
 
 /** Nombre borné à [min, max] et ramené au pas `step` (depuis min) ; valeur non finie => `fallback`. */
@@ -65,5 +69,6 @@ export function sanitizeSettings(raw: unknown): PlayerSettings {
     aimAssist: bool(o.aimAssist, d.aimAssist),
     rumble: bool(o.rumble, d.rumble),
     volume: snapToStep(o.volume, 0, 1, VOLUME_STEP, d.volume),
+    musicVolume: snapToStep(o.musicVolume, 0, 1, VOLUME_STEP, d.musicVolume),
   };
 }

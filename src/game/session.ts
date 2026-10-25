@@ -89,6 +89,7 @@ import type { InputProvider } from '../bots';
 import { createBot } from '../bots';
 import { aimAssistApplies, resetAssistCandidates, type AssistCandidate } from '../input/aimAssist';
 import type { GamepadStyle } from '../input/gamepadMap';
+import { audioEngine, type AudioEngine } from '../audio/AudioEngine';
 import { Haptics } from '../input/haptics';
 import { CombatHud, type CombatHudFrame } from './combatHud';
 import { FEEDBACK_SEC, feedbackFor, type Feedback } from './feedback';
@@ -297,6 +298,9 @@ export class GameSession {
   private lockRequestedAt = -Infinity;
   /** « En jeu » à la frame précédente : à la sortie du jeu, la navigation des menus est remise à zéro. */
   private wasInGame = false;
+  /** Son : moteur partagé (musique du menu, effets de jeu, foule). */
+  private readonly audio: AudioEngine = audioEngine();
+  private readonly listener = { pos: { x: 0, y: 0, z: 0 }, fwd: { x: 0, y: 0, z: -1 }, up: { x: 0, y: 1, z: 0 } };
 
   constructor(canvas: HTMLCanvasElement, options: SessionOptions) {
     this.options = options;
@@ -306,6 +310,7 @@ export class GameSession {
     this.renderer = new Renderer(canvas);
     this.renderer.setMatch(this.state, this.renderedHumanId);
     this.input = new InputManager(canvas, { debug: this.debug });
+    this.audio.unlock(window);
     this.faceKickoff(this.state.players[this.humanId].team);
     this.input.onPointerLockChange = (locked) => {
       if (this.mode !== 'play') return;
@@ -431,6 +436,7 @@ export class GameSession {
     resetAssistCandidates(this.candidates, this.state.players);
     this.combatHud.reset();
     this.matchHud.reset();
+    this.audio.resetMatch();
     this.eventFeed.reset();
     this.feedback = null;
     this.pendingGiveBall = false;
@@ -458,6 +464,8 @@ export class GameSession {
   applySettings(s: Readonly<PlayerSettings>): void {
     this.input.applySettings({ mouseSensitivity: s.mouseSensitivity, padSensitivity: s.padSensitivity, invertY: s.invertY, aimAssist: s.aimAssist });
     this.haptics.enabled = s.rumble;
+    this.audio.setVolume(s.volume);
+    this.audio.setMusicVolume(s.musicVolume);
   }
 
   /** Étape 8 : oublie les appuis de navigation en cours (changement d'écran de l'UI). */
@@ -551,8 +559,32 @@ export class GameSession {
 
     const alpha = this.loopStep.alpha;
     this.renderer.render(this.prev, this.state, alpha, this.view(alpha), dt, now);
+    this.updateAudio(dt);
     this.onFrame?.(this.snapshot());
   };
+
+  /**
+   * Son de la frame : musique en fond de menu seulement ; effets et foule en partie (atténués en pause) ; l'auditeur
+   * suit la caméra.
+   */
+  private updateAudio(dt: number): void {
+    const cam = this.renderer.shoulder.camera;
+    const e = cam.matrixWorld.elements;
+    const l = this.listener;
+    l.pos.x = e[12];
+    l.pos.y = e[13];
+    l.pos.z = e[14];
+    l.fwd.x = -e[8];
+    l.fwd.y = -e[9];
+    l.fwd.z = -e[10];
+    l.up.x = e[4];
+    l.up.y = e[5];
+    l.up.z = e[6];
+    const play = this.mode === 'play';
+    this.audio.setMusic(!play);
+    this.audio.setGameState(play, this.paused);
+    this.audio.frame(dt, this.state, play && !this.autopilot ? this.humanId : -1, l);
+  }
 
   /** Ballon pour la mini-flèche hors champ (après le rendu de la frame : caméra et position affichée à jour). */
   private ballView(): BallView | null {
@@ -628,6 +660,7 @@ export class GameSession {
       this.haptics.handleEvents(events, me.id, me.team, nowSec, pad, me.pos, this.teamOf);
     }
     this.renderer.handleEvents(events, this.state, nowSec, this.prev);
+    if (this.mode === 'play') this.audio.handleEvents(events, this.state, this.autopilot ? -1 : this.humanId);
     this.combatHud.handleEvents(events, this.state, this.humanId, nowSec);
     this.eventFeed.handleEvents(events, this.state, this.humanId, nowSec);
     for (const e of events) {
@@ -763,6 +796,8 @@ export class GameSession {
 
   dispose(): void {
     this.stop();
+    this.audio.setMusic(false);
+    this.audio.setGameState(false, false);
     window.removeEventListener('resize', this.onResize);
     this.dprQuery?.removeEventListener('change', this.onDprChange);
     this.reducedMotionQuery?.removeEventListener('change', this.onReducedMotionChange);

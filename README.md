@@ -4,7 +4,8 @@ Rugby arcade 3D où chaque joueur porte une arme qui « plaque » à distance : 
 stabilité** de l'adversaire pour le faire tomber et lui faire lâcher le ballon. Caméra épaule, rythme rapide, style flat
 coloré, placeholders géométriques (aucun asset).
 
-Prototype **solo contre bots** (3v3 ou 5v5, trois rôles, mêlée, matchs de 6 minutes), écrit avec Vite + TypeScript +
+Prototype **solo contre bots** (3v3 ou 5v5, trois rôles, mêlée, matchs de 6 minutes ; personnages 3D animés,
+son et musique de menu synthétiques), écrit avec Vite + TypeScript +
 Three.js + Svelte 5 (runes). Se joue au **clavier / souris ET à la manette** (Xbox, PlayStation, toute manette « standard »
 de la Gamepad API). L'architecture est prête pour un mode online à serveur autoritaire (simulation pure et déterministe,
 bots producteurs d'entrées) : voir [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §20.

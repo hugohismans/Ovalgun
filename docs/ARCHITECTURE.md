@@ -1699,3 +1699,27 @@ capsule (`PLAYER_RADIUS`, `PLAYER_HEIGHT`, `playerHeight`) : aucune règle, aucu
 - **Menu** : portraits 3D des classes sur les cartes de rôle (`portraits.ts` : rendu hors écran une seule fois, contexte
   WebGL temporaire libéré aussitôt ; `src/game/portraits.ts` fait le passe-plat pour l'UI). Bibliothèque de modèles
   partagée (`characterLibrary()`) : chaque fichier n'est téléchargé et décodé qu'une fois.
+
+## 22. Son (synthétique)
+
+Module client `src/audio/` (importé par `src/game` ; l'UI passe par `src/game/uiSound.ts`). Aucun fichier audio :
+tout est synthétisé avec la Web Audio API.
+
+- **Décisions pures** (`soundCues.ts`, testées) : `cuesForEvents(events, state, localId)` traduit les événements de la
+  sim en sons, spatialisés (position dans le monde : tirs, impacts, rebonds, explosions, gestes des autres joueurs) ou
+  2D (retours personnels du joueur local : hitmarker, plaquage réussi / subi, passe refusée ; arbitre ; interface).
+  `crowdExcitement(state)` (porteur proche de l'en-but adverse, mêlée, ballon en l'air), `countdownBeep`, `Throttle`.
+- **Recettes** (`synth.ts`) : un son = une fonction qui programme oscillateurs / bruit filtré / enveloppes sur un
+  contexte (temps réel ou hors ligne). `SYNTH_LEVEL` équilibre le mixage (niveaux mesurés par rendu hors ligne).
+  Remplacer un son par un fichier plus tard : charger le fichier dans le moteur et le jouer à la place de la recette du
+  même nom (l'interface `play(name, pos)` ne change pas).
+- **Moteur** (`AudioEngine.ts`) : contexte créé au premier geste (règle des navigateurs), bus effets / interface /
+  ambiance / musique sous le volume général, compresseur de sortie, panoramique + atténuation par la distance
+  (auditeur = caméra), limite de voix par priorité, anti-rafale par clé ; fond de foule continu piloté par
+  l'excitation (acclamations sur essai, « ooh » sur lâcher / interception) ; pas des joueurs proches (cadence =
+  vitesse / foulée, plus grave pour le pilier) ; battements de cœur quand la stabilité locale est basse ; bips du
+  compte à rebours ; pause = effets et foule atténués. Réglages de mixage : `AUDIO_MIX`.
+- **Musique** (`music.ts`) : menu uniquement (fond du menu en mode `attract`), boucle de 8 mesures à 112 BPM
+  (la mineur, batterie + basse + nappe + arpège, mélodie sur la seconde moitié), programmée en avance sur l'horloge
+  audio ; fondu à l'entrée et à la sortie du menu.
+- **Réglages** : volume général et volume de la musique (menu Réglages, mémorisés).

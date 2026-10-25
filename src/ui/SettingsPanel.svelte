@@ -1,7 +1,7 @@
 <!--
   Réglages (étape 8), mémorisés (localStorage) et appliqués à chaud à l'InputManager et aux vibrations : sensibilité
-  souris, sensibilité caméra manette, inversion Y (manette), aide à la visée manette, vibrations ; volume réservé (pas
-  encore de son). Curseurs : souris, flèches gauche / droite, croix ou stick à la manette (un pas par appui). Focus initial
+  souris, sensibilité caméra manette, inversion Y (manette), aide à la visée manette, vibrations, volume général, volume de
+  la musique du menu. Curseurs : souris, flèches gauche / droite, croix ou stick à la manette (un pas par appui). Focus initial
   sur le premier curseur.
 -->
 <script lang="ts">
@@ -12,7 +12,7 @@
   import { app } from './state/app.svelte';
 
   const mult = (v: number): string => `× ${v.toFixed(2).replace('.', ',')}`;
-  const onRange = (key: 'mouseSensitivity' | 'padSensitivity' | 'volume') => (e: Event) => {
+  const onRange = (key: 'mouseSensitivity' | 'padSensitivity' | 'volume' | 'musicVolume') => (e: Event) => {
     const v = Number((e.currentTarget as HTMLInputElement).value);
     const patch: Partial<PlayerSettings> = { [key]: v };
     app.updateSettings(patch);
@@ -44,10 +44,15 @@
     <Toggle label="Inverser l’axe vertical" hint="caméra à la manette" checked={app.settings.invertY} onchange={(v) => app.updateSettings({ invertY: v })} />
     <Toggle label="Aide à la visée" hint="manette : ralentit et suit légèrement la cible" checked={app.settings.aimAssist} onchange={(v) => app.updateSettings({ aimAssist: v })} />
     <Toggle label="Vibrations" hint="manette : tirs reçus, plaquages, essais…" checked={app.settings.rumble} onchange={(v) => app.updateSettings({ rumble: v })} />
-    <div class="slider disabled">
-      <label for="set-volume">Volume <small>bientôt</small></label>
+    <div class="slider">
+      <label for="set-volume">Volume général</label>
       <output for="set-volume">{Math.round(app.settings.volume * 100)} %</output>
-      <input id="set-volume" type="range" min="0" max="1" step={VOLUME_STEP} value={app.settings.volume} disabled style:--p="{app.settings.volume * 100}%" />
+      <input id="set-volume" type="range" min="0" max="1" step={VOLUME_STEP} value={app.settings.volume} oninput={onRange('volume')} style:--p="{app.settings.volume * 100}%" />
+    </div>
+    <div class="slider">
+      <label for="set-music">Musique du menu</label>
+      <output for="set-music">{Math.round(app.settings.musicVolume * 100)} %</output>
+      <input id="set-music" type="range" min="0" max="1" step={VOLUME_STEP} value={app.settings.musicVolume} oninput={onRange('musicVolume')} style:--p="{app.settings.musicVolume * 100}%" />
     </div>
     <button type="button" class="reset" onclick={() => app.resetSettings()}><Icon name="restart" /> Valeurs par défaut</button>
   </div>
@@ -69,21 +74,11 @@
     background: rgb(10 8 32 / 0.55);
     box-shadow: inset 0 0 0 0.1rem var(--stroke);
   }
-  .slider.disabled {
-    opacity: 0.5;
-  }
   label {
     display: flex;
     align-items: center;
     gap: 0.4rem;
     font: 800 0.9rem/1.2 var(--font);
-  }
-  label small {
-    padding: 0.05rem 0.4rem;
-    border-radius: 999px;
-    background: rgb(255 255 255 / 0.12);
-    font: 800 0.62rem/1.3 var(--font);
-    color: var(--text-dim);
   }
   output {
     font: 900 0.9rem/1 var(--font);

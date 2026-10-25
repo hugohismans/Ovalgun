@@ -14,6 +14,7 @@
 import { debugFlagsFromParams, DEFAULT_SETUP, sanitizeSetup, setupFromParams, type DebugFlags, type MatchSetup } from '../../game/launch';
 import { GameSession, type MenuIntent, type SessionOptions } from '../../game/session';
 import { sanitizeSettings, type PlayerSettings } from '../../game/settings';
+import { uiBackSound } from '../../game/uiSound';
 import type { GamepadStyle } from '../../input/gamepadMap';
 import type { InputDevice } from '../../input/InputManager';
 import { loadLayoutLabels, type LayoutLabels } from '../../input/keymap';
@@ -187,6 +188,7 @@ class AppState {
   /** Retour (B, Échap) : ferme le panneau, ou reprend la partie depuis la pause. */
   back(fromEscape = false): void {
     if (this.panel !== null) {
+      uiBackSound();
       this.closePanel();
       return;
     }

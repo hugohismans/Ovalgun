@@ -1069,3 +1069,27 @@ essais en 3v3, 4–12 en 5v5, ballon porté ≥ 55 % / 45 %) et observer avec `?
 
 Ajouter un modèle : ajouter son nom dans `MODELS` de `scripts/build-characters.mjs`, relancer le script sur le dossier
 glTF du pack Quaternius, déclarer le fichier dans `CHARACTER_MODELS` et une skin dans `SKINS`.
+
+## Son
+
+### Comment tester
+
+- Le son démarre au premier clic ou à la première touche (règle des navigateurs). Menu : musique ; navigation (tic) et
+  validation (tac). Réglages : volume général et volume de la musique, appliqués tout de suite.
+- En partie : compte à rebours (3, 2, 1, sifflet), pas, tirs (un son par arme), impacts, hitmarker et « ding » de
+  plaquage quand c'est toi, chute et sons de passe / réception / coup de pied, sifflet + foule + fanfare (ou thème de
+  défaite) à l'essai, cor de mêlée, alarme de dernière minute, long coup de sifflet de fin. La foule monte quand un
+  porteur approche de l'en-but adverse ; le cœur bat quand ta stabilité est basse. Les sons des autres viennent de
+  leur direction (casque conseillé).
+- `npx vitest run tests/audio` : choix des sons, foule, compte à rebours, musique.
+
+### Réglages (`AUDIO_MIX` dans src/audio/AudioEngine.ts, `SYNTH_LEVEL` dans src/audio/synth.ts)
+
+| Réglage | Effet | Valeur | Piste |
+|---|---|---|---|
+| `sfx` / `ui` / `ambience` / `music` | Volume de chaque bus | 0,8 / 0,7 / 0,5 / 0,45 | équilibrer effets et musique |
+| `crowdBase` / `crowdMax` | Foule au repos / au maximum d'excitation | 0,06 / 0,32 | ↑ ambiance de stade plus présente |
+| `refDistance` / `rolloff` | Atténuation des sons lointains | 5 m / 1,1 | ↑ rolloff : les sons lointains s'effacent plus vite |
+| `heartbeatBelow` | Seuil de stabilité des battements de cœur | 35 % | ↓ alerte plus tardive |
+| `maxVoices` | Voix simultanées max | 28 | ↓ si le mixage sature |
+| `SYNTH_LEVEL.<son>` | Niveau d'un son | — | monter / baisser un son précis |
