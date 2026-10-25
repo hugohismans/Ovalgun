@@ -121,6 +121,8 @@ Panneau « Réglages » (depuis le menu ou la pause), appliqué tout de suite et
 - **Caméra** : champ de vision (vertical, équivalent horizontal 16:9 affiché ; porteur et visée suivent), distance
   (multiplicateur), hauteur (le regard converge vers la droite de tir à 20 m : réticule juste), effet de vitesse (FOV qui
   s'élargit au sprint) ;
+- **Graphismes** : qualité Auto (baisse toute seule si ça rame) / Bas / Moyen / Haut (résolution, densité de la foule,
+  détails de la ville), compteur d'images par seconde (et ping en ligne) ;
 - **Son** : volume général, musique du menu.
 
  Les réglages de gameplay (vitesses, cooldowns, dégâts, bots…) sont

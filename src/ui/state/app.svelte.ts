@@ -13,7 +13,7 @@
 
 import { debugFlagsFromParams, DEFAULT_SETUP, sanitizeSetup, setupFromParams, type DebugFlags, type MatchSetup } from '../../game/launch';
 import { GameSession, type MenuIntent, type Role, type SessionOptions, type TeamId, type TeamSize, type BotDifficulty } from '../../game/session';
-import { inviteUrl, isRoomCode, NetClient, newRoomCode, normalizeRoomCode, roomFromUrl, serverUrl, type LobbyView } from '../../game/online';
+import { inviteUrl, isRoomCode, NetClient, newRoomCode, normalizeRoomCode, roomFromUrl, serverUrl, sessionToken, type LobbyView } from '../../game/online';
 import { sanitizeSettings, type PlayerSettings } from '../../game/settings';
 import { uiBackSound } from '../../game/uiSound';
 import type { GamepadStyle } from '../../input/gamepadMap';
@@ -28,7 +28,8 @@ export type Screen = 'menu' | 'game' | 'lobby';
 /** État du mode en ligne affiché par l'UI. */
 export interface OnlineState {
   code: string;
-  status: 'connecting' | 'open' | 'closed';
+  /** 'reconnecting' : connexion perdue, le client réessaie (la place est gardée par le serveur). */
+  status: 'connecting' | 'open' | 'reconnecting' | 'closed';
   /** Mon identifiant de connexion (fixé par le serveur). */
   you: string;
   lobby: LobbyView | null;
@@ -220,7 +221,7 @@ class AppState {
     }
     this.leaveRoom(false);
     const name = this.playerName.trim() || 'Joueur';
-    const net = new NetClient(this.server, code, name, this.setup.role);
+    const net = new NetClient(this.server, code, name, this.setup.role, sessionToken());
     this.net = net;
     this.online = { code, status: 'connecting', you: '', lobby: null, error: '', invite: inviteUrl(code) };
     this.panel = null;
@@ -242,6 +243,10 @@ class AppState {
     net.onError = (message) => {
       if (this.online !== null) this.online = { ...this.online, error: message };
       this.onlineError = message;
+    };
+    net.onStatus = (status) => {
+      if (this.online === null) return;
+      this.online = { ...this.online, status, ...(status === 'open' ? { error: '' } : {}) };
     };
     net.onClose = () => {
       const wasPlaying = this.screen !== 'menu';

@@ -6,11 +6,33 @@
  * Entrées : chaque client envoie ses PlayerInput par paquets ; elles sont mises en file et consommées une par tick.
  * File vide (paquet en retard, perdu) : on répète la dernière entrée reçue (aucun freinage, aucun faux appui :
  * la sim détecte les fronts montants elle-même). File trop longue (retard accumulé) : les plus anciennes sont jetées.
- * Joueur qui se déconnecte en cours de match : un bot reprend sa place.
+ * Joueur qui se déconnecte en cours de match : un bot reprend sa place, gardée pour lui (jeton de reconnexion du
+ * `hello`) : s'il revient avant la fin du match, il reprend son joueur. Une nouvelle connexion avec le jeton d'un joueur
+ * encore connecté (ancienne connexion morte que le serveur n'a pas encore vue tomber) la remplace directement. Plus aucun
+ * humain dans le match : il continue (ou reste figé si plus personne n'est connecté) au plus RECONNECT_GRACE_TICKS,
+ * puis retour au lobby.
+ *
+ * Compensation de latence (src/sim/lagcomp.ts) : chaque entrée porte le tick que son client affichait ; au tick où elle
+ * est appliquée, le retard (tick courant − tick affiché, borné) est passé à `step` avec l'historique des poses, rempli
+ * après chaque tick.
  */
 
 import { createBot, type InputProvider } from '../../bots';
-import { createMatch, makeInput, step, type BotDifficulty, type MatchEvent, type MatchState, type PlayerInput, type Role, type TeamId, type TeamSize } from '../../sim';
+import {
+  clampLag,
+  createMatch,
+  makeInput,
+  PoseHistory,
+  step,
+  TICK_DT,
+  type BotDifficulty,
+  type MatchEvent,
+  type MatchState,
+  type PlayerInput,
+  type Role,
+  type TeamId,
+  type TeamSize,
+} from '../../sim';
 import { buildMatchSetup, canJoinTeam, teamForNewPlayer } from './lobby';
 import {
   MAX_HUMANS,
@@ -18,6 +40,7 @@ import {
   sanitizeName,
   SNAPSHOT_EVERY,
   splitState,
+  TOKEN_MAX_LENGTH,
   type ClientMessage,
   type LobbyConfig,
   type LobbyPlayer,
@@ -28,20 +51,28 @@ import {
 export interface Peer {
   id: string;
   send(text: string): void;
+  /** Ferme la connexion (remplacée par une reconnexion du même joueur). */
+  close?(): void;
 }
 
 /** Entrées en attente max par joueur (au-delà, les plus anciennes sont jetées : on rattrape le retard). */
 const MAX_QUEUE = 10;
 /** Ticks passés sur le score final avant le retour au lobby (5 s). */
 const END_LINGER_TICKS = 150;
+/** Match sans aucun humain : retour au lobby après ce délai (30 s), le temps qu'un joueur coupé revienne. */
+const RECONNECT_GRACE_TICKS = 900;
 const ROLES: readonly Role[] = ['pilier', 'ailier', 'demi'];
 const DIFFICULTIES: readonly BotDifficulty[] = ['facile', 'normal', 'difficile'];
 
 interface Member {
   peer: Peer;
   player: LobbyPlayer | null;
-  queue: Array<{ seq: number; input: PlayerInput }>;
+  /** Jeton de reconnexion ('' : aucun). */
+  token: string;
+  queue: Array<{ seq: number; input: PlayerInput; view: number }>;
   last: PlayerInput;
+  /** Tick affiché par le client pour la dernière entrée appliquée (-1 : inconnu). */
+  view: number;
   /** Numéro de la dernière entrée appliquée (accusé envoyé dans les instantanés). */
   ack: number;
   joinedAt: number;
@@ -55,10 +86,17 @@ export class RoomCore {
   private simIds = new Map<string, number>();
   private bots = new Map<number, InputProvider>();
   private pendingEvents: MatchEvent[] = [];
+  private readonly history = new PoseHistory();
   private tickCount = 0;
   private endedFor = 0;
   private matchIndex = 0;
   private joinCounter = 0;
+  /** Places gardées pendant le match pour les joueurs coupés : jeton -> joueur du lobby et id dans la sim. */
+  private reserved = new Map<string, { player: LobbyPlayer; simId: number }>();
+  /** Noms des humains du match en cours (renvoyés à un joueur qui revient). */
+  private humans: Record<number, string> = {};
+  /** Ticks consécutifs d'un match sans humain. */
+  private orphanTicks = 0;
 
   constructor(
     readonly code: string,
@@ -74,7 +112,7 @@ export class RoomCore {
   }
 
   join(peer: Peer): void {
-    this.members.set(peer.id, { peer, player: null, queue: [], last: makeInput(), ack: -1, joinedAt: this.joinCounter++ });
+    this.members.set(peer.id, { peer, player: null, token: '', queue: [], last: makeInput(), view: -1, ack: -1, joinedAt: this.joinCounter++ });
   }
 
   leave(id: string): void {
@@ -85,13 +123,15 @@ export class RoomCore {
       const next = this.lobbyPlayers()[0];
       if (next !== undefined) next.host = true;
     }
-    // En match : un bot reprend la place du joueur parti.
+    // En match : un bot reprend la place du joueur parti, gardée pour lui jusqu'à la fin du match (jeton).
     const simId = this.simIds.get(id);
     if (simId !== undefined && this.state !== null) {
       this.simIds.delete(id);
       this.bots.set(simId, createBot(simId, this.config.difficulty, this.seedBase ^ (simId * 7919), { externalIds: [...this.simIds.values()] }));
+      if (m.token !== '' && m.player !== null) this.reserved.set(m.token, { player: { ...m.player, host: false }, simId });
     }
-    if (this.lobbyPlayers().length === 0) this.backToLobby();
+    // Plus personne : le salon retourne au lobby, sauf un match en cours (gardé pour une reconnexion, voir l'en-tête).
+    if (this.lobbyPlayers().length === 0 && this.phase !== 'match') this.backToLobby();
     else this.broadcastLobby();
   }
 
@@ -107,7 +147,7 @@ export class RoomCore {
     if (typeof msg !== 'object' || msg === null) return;
     switch (msg.t) {
       case 'hello':
-        this.hello(m, msg.version, msg.name, msg.role);
+        this.hello(m, msg.version, msg.name, msg.role, msg.token);
         break;
       case 'ping':
         this.send(m, { t: 'pong', c: Number(msg.c) || 0 });
@@ -124,7 +164,11 @@ export class RoomCore {
       case 'input':
         if (Array.isArray(msg.inputs)) {
           const seq0 = Number.isInteger(msg.seq) ? msg.seq : m.ack + 1;
-          msg.inputs.slice(0, MAX_QUEUE).forEach((input, i) => m.queue.push({ seq: seq0 + i, input }));
+          const views = Array.isArray(msg.views) ? msg.views : [];
+          msg.inputs.slice(0, MAX_QUEUE).forEach((input, i) => {
+            const v = views[i];
+            m.queue.push({ seq: seq0 + i, input, view: typeof v === 'number' && Number.isFinite(v) ? v : -1 });
+          });
           while (m.queue.length > MAX_QUEUE) m.queue.shift();
         }
         break;
@@ -135,7 +179,14 @@ export class RoomCore {
   tick(): void {
     const s = this.state;
     if (this.phase !== 'match' || s === null) return;
+    // Match sans humain (tous coupés) : on attend leur retour un moment, puis retour au lobby.
+    this.orphanTicks = this.simIds.size === 0 ? this.orphanTicks + 1 : 0;
+    if (this.orphanTicks > RECONNECT_GRACE_TICKS) {
+      this.backToLobby();
+      return;
+    }
     const frame: Record<number, PlayerInput> = {};
+    const lag: Record<number, number> = {};
     for (const [cid, simId] of this.simIds) {
       const m = this.members.get(cid);
       if (m === undefined) continue;
@@ -143,11 +194,15 @@ export class RoomCore {
       if (next !== undefined) {
         m.last = next.input;
         m.ack = next.seq;
+        m.view = next.view;
       }
       frame[simId] = m.last;
+      // Entrée répétée (file vide) : même tick affiché, donc un retard qui grandit — borné par clampLag.
+      if (m.view >= 0) lag[simId] = clampLag(s.tick - m.view);
     }
     for (const [simId, bot] of this.bots) frame[simId] = bot(s, simId);
-    step(s, frame);
+    step(s, frame, TICK_DT, { lag, history: this.history });
+    this.history.record(s);
     for (const e of s.events) this.pendingEvents.push(e);
     this.tickCount++;
     if (this.tickCount % SNAPSHOT_EVERY === 0) {
@@ -175,17 +230,21 @@ export class RoomCore {
       .map((m) => m.player as LobbyPlayer);
   }
 
-  private hello(m: Member, version: number, name: string, role: Role): void {
+  private hello(m: Member, version: number, name: string, role: Role, token: unknown): void {
     if (m.player !== null) return;
     if (version !== PROTOCOL_VERSION) {
       this.send(m, { t: 'error', message: 'Version du jeu différente : recharge la page (Ctrl+F5).' });
       return;
     }
+    m.token = typeof token === 'string' ? token.slice(0, TOKEN_MAX_LENGTH) : '';
+    if (m.token !== '' && (this.takeOver(m) || this.rejoin(m))) return;
     const players = this.lobbyPlayers();
     if (players.length >= MAX_HUMANS) {
       this.send(m, { t: 'error', message: 'Salon complet (10 joueurs max).' });
       return;
     }
+    // Match abandonné (plus aucun humain dedans) : le nouveau venu ramène le salon au lobby.
+    if (this.phase === 'match' && this.simIds.size === 0) this.backToLobby();
     let team = teamForNewPlayer(players, this.config.teamSize);
     if (team === null && this.config.teamSize === 3) {
       // Plus de 6 humains : on passe automatiquement en 5v5 (si personne ne joue encore).
@@ -201,6 +260,55 @@ export class RoomCore {
     };
     this.send(m, { t: 'welcome', you: m.peer.id, room: this.code });
     this.broadcastLobby();
+  }
+
+  /**
+   * Reconnexion alors que l'ancienne connexion du même jeton est encore là (morte sans que le serveur l'ait vue
+   * tomber) : la nouvelle prend sa place telle quelle (joueur du lobby, hôte, joueur du match) ; l'ancienne est fermée.
+   */
+  private takeOver(m: Member): boolean {
+    let old: Member | undefined;
+    for (const o of this.members.values()) if (o !== m && o.token === m.token && o.player !== null) old = o;
+    if (old === undefined || old.player === null) return false;
+    const oldId = old.peer.id;
+    this.members.delete(oldId);
+    try {
+      old.peer.close?.();
+    } catch {
+      // déjà fermée
+    }
+    m.player = { ...old.player, id: m.peer.id };
+    m.joinedAt = old.joinedAt; // même place dans la liste du salon
+    const simId = this.simIds.get(oldId);
+    if (simId !== undefined) {
+      this.simIds.delete(oldId);
+      this.simIds.set(m.peer.id, simId);
+    }
+    this.welcomeBack(m, simId);
+    return true;
+  }
+
+  /** Retour d'un joueur coupé pendant le match en cours : il reprend son joueur au bot qui le remplaçait. */
+  private rejoin(m: Member): boolean {
+    const slot = this.reserved.get(m.token);
+    if (slot === undefined || this.phase !== 'match' || !this.bots.has(slot.simId)) return false;
+    this.reserved.delete(m.token);
+    this.bots.delete(slot.simId);
+    const hasHost = this.lobbyPlayers().some((p) => p.host);
+    m.player = { ...slot.player, id: m.peer.id, host: !hasHost };
+    this.simIds.set(m.peer.id, slot.simId);
+    this.welcomeBack(m, slot.simId);
+    return true;
+  }
+
+  /** Accueil d'un joueur qui revient : salon, puis le match en cours (état complet) s'il y joue. */
+  private welcomeBack(m: Member, simId: number | undefined): void {
+    this.send(m, { t: 'welcome', you: m.peer.id, room: this.code });
+    this.broadcastLobby();
+    if (simId !== undefined && this.state !== null && this.phase === 'match') {
+      const { statics, dynamic } = splitState(this.state);
+      this.send(m, { t: 'start', playerId: simId, statics, state: { ...dynamic, events: [] }, humans: this.humans });
+    }
   }
 
   private lobbyChange(m: Member, team: TeamId | undefined, role: Role | undefined, name: string | undefined): void {
@@ -238,6 +346,8 @@ export class RoomCore {
     this.phase = 'match';
     this.tickCount = 0;
     this.endedFor = 0;
+    this.history.clear();
+    this.history.record(state);
     this.pendingEvents = [...state.events];
     this.simIds = new Map(Object.entries(setup.playerIds));
     const humanIds = [...this.simIds.values()];
@@ -247,10 +357,14 @@ export class RoomCore {
       const id = this.simIds.get(p.id);
       if (id !== undefined) humans[id] = p.name;
     }
+    this.humans = humans;
+    this.reserved.clear();
+    this.orphanTicks = 0;
     const { statics, dynamic } = splitState(state);
     for (const m of this.members.values()) {
       m.queue = [];
       m.last = makeInput();
+      m.view = -1;
       m.ack = -1;
       const playerId = this.simIds.get(m.peer.id);
       if (playerId !== undefined) this.send(m, { t: 'start', playerId, statics, state: dynamic, humans });
@@ -263,6 +377,12 @@ export class RoomCore {
     this.state = null;
     this.simIds.clear();
     this.bots.clear();
+    this.reserved.clear();
+    this.humans = {};
+    this.orphanTicks = 0;
+    // Plus d'hôte (il est parti pendant le match) : le premier arrivé le devient.
+    const players = this.lobbyPlayers();
+    if (players.length > 0 && !players.some((p) => p.host)) players[0].host = true;
     this.pendingEvents = [];
     this.broadcastLobby();
   }

@@ -102,9 +102,10 @@ import { InputManager, type InputDevice } from '../input/InputManager';
 import { leftGame, type MenuIntent } from '../input/menuNav';
 import { EventFeed, type FeedItem } from './eventFeed';
 import { playerName } from './names';
-import type { PlayerSettings } from './settings';
+import type { PlayerSettings, QualitySetting } from './settings';
+import { AutoQuality } from './autoQuality';
 import { lerpPos } from '../render/interpolate';
-import { STYLE } from '../render/palette';
+import { STYLE, type QualityLevel } from '../render/palette';
 import { Renderer } from '../render/Renderer';
 import { FixedStepLoop, MAX_FRAME_DT } from './loop';
 import { assignRoles } from './roles';
@@ -175,6 +176,8 @@ export interface FrameSnapshot {
   tick: number;
   /** Partie en ligne : ping (ms) ; -1 hors ligne. */
   ping: number;
+  /** Qualité graphique en cours (réglage fixe, ou niveau choisi par Auto). */
+  quality: QualityLevel;
   /** Étape 8 : mode de la session, match terminé, demande de pointer lock en cours. */
   mode: SessionMode;
   paused: boolean;
@@ -300,6 +303,8 @@ export class GameSession {
   private lastTime = -1;
   private readonly loopStep = new FixedStepLoop();
   private fps = 60;
+  private qualitySetting: QualitySetting | null = null;
+  private readonly autoQuality = new AutoQuality();
   private readonly onResize = (): void => this.renderer.resize();
   /** Requête média du rapport de pixels courant, réarmée à chaque changement (zoom, autre écran). */
   private dprQuery: MediaQueryList | null = null;
@@ -497,6 +502,11 @@ export class GameSession {
       aimAssist: s.aimAssist,
     });
     this.renderer.setCameraPrefs({ fov: s.fov, distanceScale: s.cameraDistance, height: s.cameraHeight, speedFov: s.speedFov });
+    if (s.quality !== this.qualitySetting) {
+      this.qualitySetting = s.quality;
+      if (s.quality === 'auto') this.autoQuality.reset();
+      this.renderer.setQuality(s.quality === 'auto' ? this.autoQuality.level : s.quality);
+    }
     this.haptics.enabled = s.rumble;
     this.audio.setVolume(s.volume);
     this.audio.setMusicVolume(s.musicVolume);
@@ -551,9 +561,15 @@ export class GameSession {
     if (!this.running) return;
     this.raf = requestAnimationFrame(this.loop);
     const now = t / 1000;
-    const dt = this.lastTime < 0 ? 0 : Math.min(MAX_FRAME_DT, Math.max(0, now - this.lastTime));
+    const rawDt = this.lastTime < 0 ? 0 : now - this.lastTime;
+    const dt = Math.min(MAX_FRAME_DT, Math.max(0, rawDt));
     this.lastTime = now;
     if (dt > 0) this.fps += (1 / dt - this.fps) * 0.05;
+    // Qualité Auto : baisse d'un niveau si les images par seconde ne suivent pas (durées brutes, pas bornées).
+    if (this.qualitySetting === 'auto' && !this.paused) {
+      const lowered = this.autoQuality.frame(rawDt);
+      if (lowered !== null) this.renderer.setQuality(lowered);
+    }
 
     const padLost = this.input.pollGamepad();
     const pauseRequested = this.input.consumePauseRequest();
@@ -718,7 +734,8 @@ export class GameSession {
     const n = this.loopStep.advance(dt);
     for (let i = 0; i < n; i++) {
       const inp = this.inGame ? this.input.sample() : makeInput({ yaw: this.input.yaw, pitch: this.input.pitch });
-      const seq = net.client.queueInput(inp);
+      // Tick affiché quand l'entrée est lue (frame précédente) : le serveur juge les tirs sur cette vue (lagcomp.ts).
+      const seq = net.client.queueInput(inp, this.renderTick);
       const selfEvents = pred.advance(inp, seq);
       if (selfEvents.length > 0) this.processEvents(selfEvents, nowSec, null);
     }
@@ -855,6 +872,7 @@ export class GameSession {
     return {
       tick: s.tick,
       ping: this.online !== null ? Math.round(this.online.client.rtt) : -1,
+      quality: this.renderer.quality,
       mode: this.mode,
       paused: this.paused,
       ended: this.ended,

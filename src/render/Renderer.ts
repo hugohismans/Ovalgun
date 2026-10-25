@@ -49,7 +49,7 @@ import { localFade, occluderFade, pointSegmentDistance, segmentSegmentDistance, 
 import { FxView } from './FxView';
 import { lerpPos, lerpYaw } from './interpolate';
 import { Environment } from './environment';
-import { ENVIRONMENT, PALETTE, STYLE } from './palette';
+import { ENVIRONMENT, PALETTE, QUALITY, STYLE, type QualityLevel } from './palette';
 import { PassIndicatorView, type PassIndicatorFrame } from './PassIndicatorView';
 import { characterLibrary } from './characters/CharacterLibrary';
 import { PlayerAssets, PlayerView, type PlayerFrame } from './PlayerView';
@@ -137,6 +137,7 @@ export class Renderer {
   private readonly vel: Vec3 = { x: 0, y: 0, z: 0 };
   private readonly frame: PlayerFrame = { feet: this.feet, yaw: 0, pitch: 0, ground: 0, carrier: false, vel: this.vel, celebrate: false };
   private readonly localFeet: Vec3 = { x: 0, y: 0, z: 0 };
+  private qualityLevel: QualityLevel = 'haut';
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
@@ -217,6 +218,19 @@ export class Renderer {
   }
 
   /** Préférence système « animations réduites » : halo d'invulnérabilité sans pulsation. */
+  /** Qualité graphique (palette.ts QUALITY) : résolution de rendu, foule, détails de la ville. Appliquée à chaud. */
+  setQuality(level: QualityLevel): void {
+    if (level === this.qualityLevel) return;
+    this.qualityLevel = level;
+    const q = QUALITY[level];
+    this.environment.setDetail({ crowd: q.crowd, cityProps: q.cityProps });
+    this.resize();
+  }
+
+  get quality(): QualityLevel {
+    return this.qualityLevel;
+  }
+
   /** Réglages de caméra du joueur (FOV, distance, hauteur, effet de vitesse), appliqués à chaud. */
   setCameraPrefs(prefs: Readonly<CameraPrefs>): void {
     this.shoulder.prefs = { ...prefs };
@@ -234,7 +248,8 @@ export class Renderer {
   resize(): void {
     const w = Math.max(1, this.canvas.clientWidth);
     const h = Math.max(1, this.canvas.clientHeight);
-    const ratio = Math.min(window.devicePixelRatio || 1, STYLE.maxPixelRatio);
+    const q = QUALITY[this.qualityLevel];
+    const ratio = Math.min(window.devicePixelRatio || 1, q.pixelRatioMax) * q.renderScale;
     if (this.renderer.getPixelRatio() !== ratio) this.renderer.setPixelRatio(ratio);
     this.renderer.setSize(w, h, false);
     this.shoulder.setAspect(w / h);

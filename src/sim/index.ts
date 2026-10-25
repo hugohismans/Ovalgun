@@ -26,6 +26,8 @@ export {
 } from './field';
 // Match.
 export { createMatch, createPlayer, normalizeConfig, step } from './match';
+// En ligne : compensation de latence (options de step côté serveur).
+export { clampLag, PoseHistory, type StepOptions } from './lagcomp';
 export {
   formationSlot,
   kickoffCarrierIndex,

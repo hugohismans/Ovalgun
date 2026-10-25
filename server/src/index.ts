@@ -5,7 +5,9 @@
  *   fait tourner la simulation autoritaire et les bots (src/net/shared/room.ts) à 30 Hz tant que des joueurs sont là.
  * - `GET /health` : vérification simple (« ok »).
  *
- * Le salon est créé à la première connexion et oublié quand tout le monde est parti (rien n'est stocké).
+ * Le salon est créé à la première connexion et oublié quand tout le monde est parti (rien n'est stocké). Un match dont
+ * tous les joueurs sont coupés reste figé (boucle arrêtée) tant que le Durable Object vit : un joueur qui se reconnecte
+ * le reprend (RoomCore, jeton de reconnexion).
  */
 
 import { DurableObject } from 'cloudflare:workers';
@@ -50,7 +52,7 @@ export class MatchRoom extends DurableObject<Env> {
     const [client, server] = [pair[0], pair[1]];
     server.accept();
     const id = `p${this.nextPeer++}`;
-    room.join({ id, send: (text) => server.send(text) });
+    room.join({ id, send: (text) => server.send(text), close: () => server.close(4000, 'Connexion remplacée') });
     server.addEventListener('message', (ev) => {
       if (typeof ev.data === 'string') room.message(id, ev.data);
     });

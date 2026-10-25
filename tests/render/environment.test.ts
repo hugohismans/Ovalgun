@@ -105,6 +105,47 @@ describe('Décor : Environment', () => {
     env.dispose();
   });
 
+  it('qualité graphique : foule réduite (échantillon réparti partout), détails de la ville masqués, à chaud et après reconstruction', () => {
+    const env = new Environment();
+    const f = createField(5);
+    env.build(f.width, f.length);
+    const countOf = (): number => meshesOf(env.group).reduce((s, m) => s + (m instanceof THREE.InstancedMesh ? m.count : 0), 0);
+    const visible = (): number => meshesOf(env.group).length;
+    const full = countOf();
+    const fullMeshes = visible();
+    env.setDetail({ crowd: 0.25, cityProps: false });
+    expect(countOf()).toBeLessThan(full);
+    expect(visible()).toBe(fullMeshes - 5);
+    // Les spectateurs gardés couvrent les quatre tribunes (ordre mélangé) : boîte englobante des 25 % premiers.
+    const fans = meshesOf(env.group).filter((m) => m instanceof THREE.InstancedMesh && m.count > 0 && m.count < (m.instanceMatrix.count as number)) as THREE.InstancedMesh[];
+    expect(fans.length).toBe(1);
+    const m = new THREE.Matrix4();
+    const p = new THREE.Vector3();
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minZ = Infinity;
+    let maxZ = -Infinity;
+    for (let i = 0; i < fans[0].count; i++) {
+      fans[0].getMatrixAt(i, m);
+      p.setFromMatrixPosition(m);
+      minX = Math.min(minX, p.x);
+      maxX = Math.max(maxX, p.x);
+      minZ = Math.min(minZ, p.z);
+      maxZ = Math.max(maxZ, p.z);
+    }
+    expect(minX).toBeLessThan(-f.width / 2);
+    expect(maxX).toBeGreaterThan(f.width / 2);
+    expect(minZ).toBeLessThan(-f.length / 2);
+    expect(maxZ).toBeGreaterThan(f.length / 2);
+    // Reconstruction (autre terrain) : le niveau de détail est conservé.
+    const small = createField(3);
+    env.build(small.width, small.length);
+    expect(visible()).toBe(fullMeshes - 5);
+    env.setDetail({ crowd: 1, cityProps: true });
+    expect(visible()).toBe(fullMeshes);
+    env.dispose();
+  });
+
   it('excitation de la foule : bornée, montée rapide, descente lente', () => {
     const env = new Environment();
     const cam = new THREE.PerspectiveCamera();

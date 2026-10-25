@@ -125,7 +125,7 @@ describe('RoomCore (serveur autoritaire)', () => {
     expect(Math.hypot(p?.vel.x ?? 0, p?.vel.z ?? 0)).toBeGreaterThan(7);
   });
 
-  it('un joueur qui part en match est remplacé par un bot ; salon vide => retour au lobby', () => {
+  it('un joueur qui part en match est remplacé par un bot ; salon vide en match => match gardé (reconnexion)', () => {
     const { r, a } = room();
     r.message('a', JSON.stringify({ t: 'start' }));
     for (let i = 0; i < 100; i++) r.tick();
@@ -136,7 +136,101 @@ describe('RoomCore (serveur autoritaire)', () => {
     expect(a.last('lobby')?.players).toHaveLength(1);
     r.leave('a');
     expect(r.empty).toBe(true);
+    expect(r.inMatch).toBe(true); // figé tant que personne ne revient (le serveur arrête sa boucle)
+    // Un nouveau venu (sans place réservée) ramène le salon abandonné au lobby.
+    const c = new FakePeer('c');
+    r.join(c);
+    r.message('c', JSON.stringify({ t: 'hello', version: PROTOCOL_VERSION, name: 'Cléo', role: 'demi' }));
     expect(r.inMatch).toBe(false);
+    expect(c.last('lobby')?.players.map((p) => [p.name, p.host])).toEqual([['Cléo', true]]);
+  });
+
+  it('reconnexion : place gardée pendant le match, reprise au bot, état complet renvoyé', () => {
+    const r = new RoomCore('ABCDE', 42);
+    const a = new FakePeer('a');
+    const b = new FakePeer('b');
+    r.join(a);
+    r.join(b);
+    r.message('a', JSON.stringify({ t: 'hello', version: PROTOCOL_VERSION, name: 'Alice', role: 'ailier', token: 'tok-alice' }));
+    r.message('b', JSON.stringify({ t: 'hello', version: PROTOCOL_VERSION, name: 'Bob', role: 'pilier', token: 'tok-bob' }));
+    r.message('a', JSON.stringify({ t: 'start' }));
+    const bobId = b.last('start')?.playerId;
+    for (let i = 0; i < 60; i++) r.tick();
+    r.leave('b');
+    for (let i = 0; i < 60; i++) r.tick();
+    const b2 = new FakePeer('b2');
+    r.join(b2);
+    r.message('b2', JSON.stringify({ t: 'hello', version: PROTOCOL_VERSION, name: 'Bob', role: 'pilier', token: 'tok-bob' }));
+    const start = b2.last('start');
+    expect(start?.playerId).toBe(bobId);
+    expect(start?.state.tick).toBeGreaterThan(100);
+    expect(start?.humans[bobId ?? -1]).toBe('Bob');
+    expect(a.last('lobby')?.players.map((p) => [p.name, p.team, p.role, p.host])).toEqual([
+      ['Alice', 0, 'ailier', true],
+      ['Bob', 1, 'pilier', false],
+    ]);
+    // Ses entrées pilotent de nouveau son joueur (plus de bot) : accusés de réception repartis de 0.
+    for (let i = 0; i < 10; i++) {
+      r.message('b2', JSON.stringify({ t: 'input', seq: i * 2, inputs: [makeInput(), makeInput()] }));
+      r.tick();
+      r.tick();
+    }
+    expect(b2.last('snap')?.acks[bobId ?? -1]).toBeGreaterThanOrEqual(0);
+    // Le même jeton ne sert qu'une fois ; un autre jeton ne vole pas la place.
+    r.leave('b2');
+    const z = new FakePeer('z');
+    r.join(z);
+    r.message('z', JSON.stringify({ t: 'hello', version: PROTOCOL_VERSION, name: 'Zed', role: 'demi', token: 'tok-zed' }));
+    expect(z.last('start')).toBeUndefined();
+  });
+
+  it('reconnexion avant que le serveur voie tomber l’ancienne connexion : elle est remplacée (hôte compris)', () => {
+    const r = new RoomCore('ABCDE', 42);
+    let closed = false;
+    const a = Object.assign(new FakePeer('a'), { close: () => (closed = true) });
+    const b = new FakePeer('b');
+    r.join(a);
+    r.join(b);
+    r.message('a', JSON.stringify({ t: 'hello', version: PROTOCOL_VERSION, name: 'Alice', role: 'ailier', token: 'tok-alice' }));
+    r.message('b', JSON.stringify({ t: 'hello', version: PROTOCOL_VERSION, name: 'Bob', role: 'pilier', token: 'tok-bob' }));
+    r.message('a', JSON.stringify({ t: 'start' }));
+    for (let i = 0; i < 30; i++) r.tick();
+    const a2 = new FakePeer('a2');
+    r.join(a2);
+    r.message('a2', JSON.stringify({ t: 'hello', version: PROTOCOL_VERSION, name: 'Alice', role: 'ailier', token: 'tok-alice' }));
+    expect(closed).toBe(true);
+    expect(a2.last('start')?.playerId).toBe(0);
+    expect(b.last('lobby')?.players.map((p) => [p.id, p.host])).toEqual([
+      ['a2', true],
+      ['b', false],
+    ]);
+    r.leave('a'); // la fermeture de l'ancienne connexion arrive après : sans effet
+    expect(b.last('lobby')?.players).toHaveLength(2);
+  });
+
+  it('match sans plus aucun humain connecté au match : retour au lobby après le délai de grâce', () => {
+    const { r, a, b } = room();
+    r.message('a', JSON.stringify({ t: 'start' }));
+    r.leave('a');
+    // Bob reste connecté mais a quitté le match ? Il y joue encore : le match continue.
+    for (let i = 0; i < 1000; i++) r.tick();
+    expect(r.inMatch).toBe(true);
+    r.leave('b');
+    const c = new FakePeer('c');
+    r.join(c); // connecté sans hello : la boucle tourne, aucun humain dans le match
+    for (let i = 0; i < 950; i++) r.tick();
+    expect(r.inMatch).toBe(false);
+    expect(a.count('lobby') + b.count('lobby')).toBeGreaterThan(0);
+  });
+
+  it('compensation de latence : le tick affiché de chaque entrée est accepté (borné, valeurs invalides ignorées)', () => {
+    const { r } = room();
+    r.message('a', JSON.stringify({ t: 'start' }));
+    r.message('a', JSON.stringify({ t: 'input', seq: 0, inputs: [makeInput(), makeInput()], views: [-1, 'x'] }));
+    r.message('b', JSON.stringify({ t: 'input', seq: 0, inputs: [makeInput()], views: [1e9] }));
+    expect(() => {
+      for (let i = 0; i < 5; i++) r.tick();
+    }).not.toThrow();
   });
 
   it('fin du match : score envoyé puis retour au lobby', () => {

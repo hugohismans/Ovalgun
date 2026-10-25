@@ -303,6 +303,11 @@ export interface Projectile {
   traveled: number;
   /** Dégâts de stabilité de base. */
   damage: number;
+  /**
+   * En ligne seulement (lagcomp.ts) : retard (ticks) de la vue du tireur ; collisions testées contre la géométrie des
+   * joueurs de ce nombre de ticks plus tôt. Absent = aucune compensation.
+   */
+  lag?: number;
 }
 
 export type ZoneKind = 'slow';

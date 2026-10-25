@@ -9,12 +9,14 @@
 import type { BotDifficulty, MatchEvent, MatchState, PlayerInput, Role, TeamId, TeamSize } from '../../sim';
 
 /** Version du protocole : un client et un serveur de versions différentes refusent de jouer ensemble. */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 /** Instantané envoyé tous les SNAPSHOT_EVERY ticks (2 => 15 Hz). */
 export const SNAPSHOT_EVERY = 2;
 /** Entrées regroupées par paquet côté client (2 ticks => 15 messages/s). */
 export const INPUT_BATCH = 2;
+/** Longueur max d'un jeton de reconnexion accepté. */
+export const TOKEN_MAX_LENGTH = 64;
 /** Joueurs humains max par salon (5v5). */
 export const MAX_HUMANS = 10;
 /** Longueur et alphabet des codes de salon (sans caractères ambigus). */
@@ -43,12 +45,19 @@ export type StaticState = Pick<MatchState, 'field' | 'config'>;
 export type DynamicState = Omit<MatchState, 'field' | 'config'>;
 
 export type ClientMessage =
-  | { t: 'hello'; version: number; name: string; role: Role }
+  /**
+   * `token` : jeton de reconnexion (aléatoire, propre à l'onglet) : en le présentant à nouveau, un client qui a perdu
+   * la connexion retrouve sa place (son joueur dans le match en cours, son équipe, son rôle, l'hôte).
+   */
+  | { t: 'hello'; version: number; name: string; role: Role; token?: string }
   | { t: 'lobby'; team?: TeamId; role?: Role; name?: string }
   | { t: 'config'; teamSize?: TeamSize; difficulty?: BotDifficulty }
   | { t: 'start' }
-  /** Entrées de ticks consécutifs ; `seq` = numéro de la première (accusé de réception : `snap.acks`). */
-  | { t: 'input'; seq: number; inputs: PlayerInput[] }
+  /**
+   * Entrées de ticks consécutifs ; `seq` = numéro de la première (accusé de réception : `snap.acks`) ; `views` : pour
+   * chacune, le tick du serveur que le client affichait (fractionnaire, -1 inconnu) : compensation de latence.
+   */
+  | { t: 'input'; seq: number; inputs: PlayerInput[]; views?: number[] }
   | { t: 'ping'; c: number };
 
 export type ServerMessage =

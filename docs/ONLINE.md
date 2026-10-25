@@ -10,10 +10,17 @@
 - Dans le salon : chacun choisit son équipe et son rôle ; l'hôte (le créateur) choisit 3v3 / 5v5 et la difficulté des
   bots qui complètent les équipes, puis lance la partie. Jusqu'à 10 joueurs humains (5v5). À la fin du match, retour au
   salon pour la revanche. Un joueur qui part en cours de match est remplacé par un bot.
+- **Reconnexion automatique** : si ta connexion saute (Wi-Fi, 4G), le jeu affiche « Connexion perdue — reconnexion… »
+  et réessaie tout seul pendant 45 s ; un bot tient ta place en attendant et tu la reprends en revenant. Une coupure
+  que le navigateur ne signale pas est détectée au bout de 6 s sans nouvelles du serveur. Même chose si tu recharges la
+  page et que tu rejoins le même salon (même onglet) avant la fin du match.
 - Pas encore de comptes ni de liste de salons publique (Firebase, plus tard) : on joue entre amis avec le lien.
 - **Prédiction côté client** : ton personnage réagit immédiatement (le client applique tes entrées tout de suite et se
   recale en douceur sur le serveur à chaque instantané). Les autres joueurs, le ballon, les tirs et les plaquages
   restent décidés par le serveur et s'affichent avec ~170 ms de retard lissé.
+- **Compensation de latence** : le serveur juge tes tirs sur ce que TU voyais au moment du tir (il rembobine la
+  position des adversaires du retard de ton affichage, jusqu'à 400 ms). Vise la cible là où tu la vois, pas devant.
+  Revers classique : un adversaire peut parfois être touché alors qu'il vient d'atteindre un abri sur son écran.
 
 ## À faire une fois (≈ 10 minutes)
 

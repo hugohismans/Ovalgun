@@ -25,8 +25,16 @@ export interface StadiumResources {
   atlas: Atlas;
 }
 
+/** Niveau de détail du décor (qualité graphique, palette.ts QUALITY). */
+export interface EnvDetail {
+  crowd: number;
+  cityProps: boolean;
+}
+
 export interface Built {
   group: THREE.Group;
+  /** Applique un niveau de détail (sans rien reconstruire). */
+  setDetail(d: EnvDetail): void;
   dispose(): void;
 }
 
@@ -249,6 +257,9 @@ export function buildStadium(st: StadiumLayout, res: StadiumResources): Built {
   }
 
   const group = new THREE.Group();
+  // Ordre des spectateurs mélangé : une qualité réduite en dessine une partie, répartie partout.
+  fans.shuffle(() => rng.next());
+  const fanTotal = fans.count;
   const meshes: THREE.InstancedMesh[] = [
     boxes.build(res.box, res.boxMat),
     lamps.build(res.box, res.lampMat),
@@ -265,6 +276,9 @@ export function buildStadium(st: StadiumLayout, res: StadiumResources): Built {
   group.add(...meshes, ads);
   return {
     group,
+    setDetail(d: EnvDetail): void {
+      meshes[3].count = Math.round(fanTotal * Math.min(1, Math.max(0, d.crowd)));
+    },
     dispose(): void {
       for (const m of meshes) m.dispose();
       adGeo.dispose();

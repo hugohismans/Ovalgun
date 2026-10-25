@@ -1532,6 +1532,18 @@ export const TURRET_FIRE_CONE_DEG = 5;
 export const TURRET_LEAD_FRACTION = 1;
 
 // ============================================================================
+//  EN LIGNE (lu par la sim, le serveur et le client réseau)
+// ============================================================================
+
+/**
+ * Compensation de latence (lagcomp.ts) : retard maximal (ticks) de la vue d'un joueur que le serveur rembobine pour juger
+ * ses tirs. 12 ticks = 400 ms : interpolation du client (≈ 170 ms) + un aller-retour jusqu'à ≈ 230 ms. Au-delà, le
+ * joueur doit viser un peu devant. ↑ = joueurs très lointains avantagés, tirs « derrière un muret » plus fréquents
+ * pour la cible.
+ */
+export const LAG_COMP_MAX_TICKS = 12;
+
+// ============================================================================
 //  CAMÉRA (lu uniquement par le rendu — regroupé ici pour régler le feeling au même endroit)
 // ============================================================================
 

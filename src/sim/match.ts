@@ -34,6 +34,7 @@ import { updateBallPickup, updateCarrierActions } from './carrier';
 import { updateShooting, updateStatusTimers } from './combat';
 import { BALL_DROP_HEIGHT, BALL_RADIUS, FIRST_KICKOFF_FREEZE_SEC, FIRST_KICKOFF_TEAM, MATCH_DURATION_SEC, ROLES, TICK_DT } from './constants';
 import { createField } from './field';
+import { clampLag, type StepOptions } from './lagcomp';
 import { updateProjectiles } from './projectiles';
 import { readTickInput, type TickInput } from './input';
 import { tickInvulnerability, tickPlayerTimers, updatePlayerMovement } from './player';
@@ -185,9 +186,10 @@ export function createMatch(config: MatchConfig): MatchState {
 /**
  * Avance la simulation d'un tick (TICK_DT). Mute `state` et le renvoie.
  * `dt` n'existe que pour la forme de l'API : toute autre valeur que TICK_DT est refusée
- * (le déterminisme repose sur un pas fixe).
+ * (le déterminisme repose sur un pas fixe). `options` : réservé au serveur en ligne (compensation de latence,
+ * lagcomp.ts) ; absent, la sim est celle du solo.
  */
-export function step(state: MatchState, inputs: InputFrame, dt: number = TICK_DT): MatchState {
+export function step(state: MatchState, inputs: InputFrame, dt: number = TICK_DT, options?: StepOptions): MatchState {
   if (Math.abs(dt - TICK_DT) > 1e-9) throw new Error(`step : dt doit valoir TICK_DT (${TICK_DT}), reçu ${dt}`);
 
   // 1.
@@ -213,10 +215,20 @@ export function step(state: MatchState, inputs: InputFrame, dt: number = TICK_DT
     const carrierAtStart = state.ball.mode === 'carried' ? state.ball.carrierId : -1;
     updateAbilities(state, tickInputs);
     updateCarrierActions(state, tickInputs);
+    const firstNew = state.projectiles.length;
     updateShooting(state, tickInputs, carrierAtStart);
+    // En ligne : retard de la vue du tireur noté sur ses nouveaux projectiles (compensation de latence, lagcomp.ts).
+    const lag = options?.lag;
+    if (lag !== undefined) {
+      for (let i = firstNew; i < state.projectiles.length; i++) {
+        const proj = state.projectiles[i];
+        const l = clampLag(lag[proj.ownerId] ?? 0);
+        if (l > 0) proj.lag = l;
+      }
+    }
   }
-  // 6. (avant le déplacement : positions du début du tick, celles que le tireur voyait)
-  updateProjectiles(state);
+  // 6. (avant le déplacement : positions du début du tick, celles que le tireur voyait — rembobinées en ligne)
+  updateProjectiles(state, options?.history);
   tickInvulnerability(state); // après les projectiles : ils voient l'invulnérabilité du tick précédent
   // 7.
   for (const p of state.players) updatePlayerMovement(state, p, tickInputs[p.id], frozen);

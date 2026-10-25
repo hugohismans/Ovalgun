@@ -50,6 +50,28 @@ export class InstanceBatch {
     this.colors.push(this.c.r, this.c.g, this.c.b);
   }
 
+  /**
+   * Mélange l'ordre des instances (Fisher-Yates, `rand` dans [0, 1)) : les `n` premières forment alors un échantillon
+   * uniforme, ce qui permet d'en dessiner une partie seulement (`InstancedMesh.count`, qualité graphique).
+   */
+  shuffle(rand: () => number): void {
+    const n = this.count;
+    for (let i = n - 1; i > 0; i--) {
+      const j = Math.floor(rand() * (i + 1));
+      if (j === i) continue;
+      for (let k = 0; k < 16; k++) {
+        const t = this.matrices[i * 16 + k];
+        this.matrices[i * 16 + k] = this.matrices[j * 16 + k];
+        this.matrices[j * 16 + k] = t;
+      }
+      for (let k = 0; k < 3; k++) {
+        const t = this.colors[i * 3 + k];
+        this.colors[i * 3 + k] = this.colors[j * 3 + k];
+        this.colors[j * 3 + k] = t;
+      }
+    }
+  }
+
   build(geometry: THREE.BufferGeometry, material: THREE.Material): THREE.InstancedMesh {
     const mesh = new THREE.InstancedMesh(geometry, material, this.count);
     mesh.instanceMatrix.array.set(this.matrices);

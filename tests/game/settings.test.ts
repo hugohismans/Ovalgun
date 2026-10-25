@@ -45,6 +45,12 @@ describe('sanitizeSettings', () => {
     expect(old).toMatchObject({ fov: CAMERA_FOV, cameraDistance: 1, cameraHeight: 0, aimSensitivity: 1, invertMouseY: false, speedFov: true });
   });
 
+  it('graphismes : qualité parmi les choix (Auto par défaut), compteur d’images/s booléen', () => {
+    expect(DEFAULT_SETTINGS.quality).toBe('auto');
+    expect(sanitizeSettings({ quality: 'bas', showFps: true })).toMatchObject({ quality: 'bas', showFps: true });
+    expect(sanitizeSettings({ quality: 'ultra', showFps: 1 })).toMatchObject({ quality: 'auto', showFps: false });
+  });
+
   it('snapToStep : pas depuis le minimum, sans erreur d’arrondi visible', () => {
     expect(snapToStep(0.3, 0, 1, 0.1, 0)).toBe(0.3);
     expect(snapToStep(-5, 0, 1, 0.1, 0)).toBe(0);

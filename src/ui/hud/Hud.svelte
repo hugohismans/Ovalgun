@@ -6,6 +6,7 @@
   Aucune logique de jeu : tout est lu dans l'instantané de la session (hud.svelte.ts).
 -->
 <script lang="ts">
+  import { app } from '../state/app.svelte';
   import { hud } from '../state/hud.svelte';
   import ActionBar from './ActionBar.svelte';
   import Announcer from './Announcer.svelte';
@@ -14,6 +15,7 @@
   import Crosshair from './Crosshair.svelte';
   import DebugInfo from './DebugInfo.svelte';
   import EventFeed from './EventFeed.svelte';
+  import PerfInfo from './PerfInfo.svelte';
   import RoleBadge from './RoleBadge.svelte';
   import ScoreBar from './ScoreBar.svelte';
   import ScrumMeter from './ScrumMeter.svelte';
@@ -37,7 +39,10 @@
     <div class="top-left">
       {#if s?.debugTools}<TrainingTools />{/if}
     </div>
-    <div class="top-right"><EventFeed /></div>
+    <div class="top-right">
+      {#if app.settings.showFps}<PerfInfo />{/if}
+      <EventFeed />
+    </div>
     <Announcer />
     <Callout />
     <div class="bottom-left">
@@ -83,6 +88,10 @@
     position: absolute;
     right: 1rem;
     top: 1rem;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.4rem;
   }
   .bottom-left {
     position: absolute;

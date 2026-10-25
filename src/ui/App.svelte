@@ -88,6 +88,10 @@
     <PauseMenu />
   {/if}
 
+  {#if app.online?.status === 'reconnecting'}
+    <div class="reconnect" role="status"><span class="dot"></span> Connexion perdue — reconnexion…</div>
+  {/if}
+
   {#if app.panel === 'controls'}
     <ControlsPanel />
   {:else if app.panel === 'settings'}
@@ -105,6 +109,39 @@
   .root.pad-play,
   .root.pad-play canvas {
     cursor: none;
+  }
+  .reconnect {
+    position: fixed;
+    top: 4.6rem;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    border-radius: 999px;
+    background: rgb(20 10 40 / 0.85);
+    box-shadow: inset 0 0 0 0.12rem #ff5a7a;
+    color: #fff;
+    font: 800 0.9rem/1 var(--font);
+    pointer-events: none;
+    z-index: 5;
+  }
+  .dot {
+    width: 0.6rem;
+    height: 0.6rem;
+    border-radius: 50%;
+    background: #ff5a7a;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .dot {
+      animation: blink 0.9s ease-in-out infinite alternate;
+    }
+  }
+  @keyframes blink {
+    to {
+      opacity: 0.25;
+    }
   }
   canvas {
     position: fixed;

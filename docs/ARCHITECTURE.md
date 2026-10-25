@@ -1757,6 +1757,23 @@ Mode d'emploi et mise en place : `docs/ONLINE.md`.
   capacité) : retours son / FX immédiats, ignorés quand le serveur les renvoie. UI : bloc « En ligne » du menu, écran Salon (`Lobby.svelte`), pause et fin adaptées.
 - **Déploiement** : le workflow Pages déploie le Worker si les secrets Cloudflare existent et injecte son adresse au
   build (`VITE_OVALGUN_SERVER`) ; `?server=` force une adresse (tests en local).
+- **Compensation de latence** (protocole v3, `src/sim/lagcomp.ts`, testée) : chaque entrée du paquet `input` porte le
+  tick du serveur que le client affichait (`views`, `GameSession.renderTick`). Au tick où `RoomCore` l'applique, le
+  retard `tick − view` (borné par `LAG_COMP_MAX_TICKS`, constants.ts section EN LIGNE) est passé à
+  `step(state, frame, TICK_DT, { lag, history })` ; les projectiles créés par cette entrée le gardent (`Projectile.lag`)
+  et, pendant tout leur vol, sont testés contre la géométrie des adversaires (position interpolée, orientation,
+  posture) `lag` ticks plus tôt, lue dans `PoseHistory` (hors de l'état, rempli après chaque tick). Ne sont pas
+  rembobinés : touchabilité, bouclier levé ou non, jauge, relief, explosions. Sans options (solo, prédiction), la sim est
+  inchangée (déterminisme et tests intacts).
+- **Reconnexion** : `hello.token` (jeton aléatoire par onglet, sessionStorage, `sessionToken()`). `RoomCore` : un
+  joueur coupé en match laisse sa place à un bot et un jeton réservé ; revenu avec ce jeton, il reprend son joueur
+  (`rejoin`) et reçoit un nouveau `start` avec l'état complet ; une nouvelle connexion avec le jeton d'une connexion
+  encore ouverte la remplace (`takeOver`, ancienne fermée, place dans la liste et hôte gardés). Match sans humain :
+  figé si plus personne n'est connecté (le DO arrête sa boucle), sinon retour au lobby après 30 s ; un nouveau venu
+  ramène un match abandonné au lobby. `NetClient` : connexion muette 6 s (pongs toutes les 2 s) ou fermée => statut
+  `reconnecting`, nouvelles tentatives (0,3 s, 1 s, 2 s, 3 s puis toutes les 5 s) pendant 45 s, bandeau dans l'UI
+  (`App.svelte`) ; `onClose` seulement à l'abandon. Testé de bout en bout (wrangler dev, deux navigateurs, coupure franche
+  et coupure silencieuse simulées).
 
 ## 24. Décor : ville et ciel
 
@@ -1825,3 +1842,17 @@ Décisions :
   table de bornes / formats ; le panneau est borné à la hauteur de l'écran (`Panel.svelte`) et défile.
 - **Tests** : `tests/game/settings.test.ts` (bornes, pas, défauts, jamais −0), `tests/render/camera.test.ts` (prefs dans
   `cameraTargets`, convergence du regard, hauteur 0 = invariant exact).
+
+## 26. Qualité graphique
+
+- **Préréglages** (`QUALITY`, palette.ts) : Haut (résolution native jusqu'à ×2 HiDPI), Moyen (×1,25 max, 55 % de la
+  foule), Bas (×1 max puis 70 % de la résolution, 25 % de la foule, ville sans arbres / voitures / objets des toits /
+  parcs). `Renderer.setQuality` : rapport de pixels (`resize`) et `Environment.setDetail` (à chaud, conservé à la
+  reconstruction). Foule : instances mélangées à la construction (`InstanceBatch.shuffle`) puis `InstancedMesh.count`
+  réduit — l'échantillon gardé couvre les quatre tribunes.
+- **Auto** (défaut, `game/autoQuality.ts`, testé) : part de Haut, descend d'un niveau quand la moyenne des images/s
+  d'une fenêtre de 4 s passe sous 48 (`AUTO_QUALITY`), images de plus de 0,25 s ignorées, jamais de remontée. Le
+  niveau courant est dans l'instantané de la session (`quality`) : affiché dans le réglage (« Auto · Moyen ») et à côté
+  du compteur d'images/s.
+- **Réglages** : `quality` ('auto' | 'bas' | 'moyen' | 'haut'), `showFps` (compteur en haut à droite du HUD,
+  `PerfInfo.svelte`, avec le ping en ligne).

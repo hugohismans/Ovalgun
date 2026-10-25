@@ -1,7 +1,8 @@
 <!--
   Réglages (étape 8), mémorisés (localStorage) et appliqués à chaud (InputManager, caméra, vibrations, son), par
   rubriques : souris (sensibilité, en visée, inversion Y), manette (sensibilité caméra, inversion Y, aide à la visée,
-  vibrations), caméra (champ de vision, distance, hauteur, effet de vitesse), son (volume général, musique du menu).
+  vibrations), caméra (champ de vision, distance, hauteur, effet de vitesse), graphismes (qualité, compteur d'images/s),
+  son (volume général, musique du menu).
   Curseurs : souris, flèches gauche / droite, croix ou stick à la manette (un pas par appui). Focus initial sur le premier
   curseur.
 -->
@@ -22,7 +23,10 @@
     SETTINGS_SENSITIVITY_STEP,
     VOLUME_STEP,
     type PlayerSettings,
+    type QualitySetting,
   } from '../game/settings';
+  import Segmented from './common/Segmented.svelte';
+  import { hud } from './state/hud.svelte';
   import Icon from './common/Icon.svelte';
   import Panel from './common/Panel.svelte';
   import Toggle from './common/Toggle.svelte';
@@ -53,6 +57,14 @@
     volume,
     musicVolume: volume,
   };
+
+  const QUALITY_NAMES = { haut: 'Haut', moyen: 'Moyen', bas: 'Bas' } as const;
+  const qualityOptions = $derived<ReadonlyArray<{ value: QualitySetting; label: string; hint?: string }>>([
+    { value: 'auto', label: 'Auto', hint: app.settings.quality === 'auto' && hud.snap ? QUALITY_NAMES[hud.snap.quality] : 'adaptée' },
+    { value: 'bas', label: 'Bas', hint: 'léger' },
+    { value: 'moyen', label: 'Moyen' },
+    { value: 'haut', label: 'Haut', hint: 'le plus beau' },
+  ]);
 
   const onRange = (key: RangeKey) => (e: Event) => {
     const v = Number((e.currentTarget as HTMLInputElement).value);
@@ -101,6 +113,13 @@
     {@render slider('cameraHeight', 'Hauteur', 'le réticule reste juste vers 20 m')}
     <Toggle label="Effet de vitesse" hint="le champ s’élargit au sprint" checked={app.settings.speedFov} onchange={(v) => app.updateSettings({ speedFov: v })} />
 
+    <h3>Graphismes</h3>
+    <div class="group">
+      <span class="group-label">Qualité <small>résolution, foule, détails de la ville — Auto baisse si ça rame</small></span>
+      <Segmented label="Qualité graphique" options={qualityOptions} value={app.settings.quality} onselect={(v: QualitySetting) => app.updateSettings({ quality: v })} />
+    </div>
+    <Toggle label="Afficher les images/s" hint="en haut à droite en jeu (et le ping en ligne)" checked={app.settings.showFps} onchange={(v) => app.updateSettings({ showFps: v })} />
+
     <h3>Son</h3>
     {@render slider('volume', 'Volume général')}
     {@render slider('musicVolume', 'Musique du menu')}
@@ -113,6 +132,22 @@
     display: flex;
     flex-direction: column;
     gap: 0.55rem;
+  }
+  .group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.55rem 0.8rem 0.7rem;
+    border-radius: var(--r-md);
+    background: rgb(10 8 32 / 0.55);
+    box-shadow: inset 0 0 0 0.1rem var(--stroke);
+  }
+  .group-label {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.2rem 0.5rem;
+    font: 800 0.9rem/1.2 var(--font);
   }
   .slider {
     display: grid;

@@ -231,8 +231,6 @@ export const STYLE = {
   invulnPulseRate: 9,
   /** Distance (m) au-delà de laquelle un saut entre deux ticks est une téléportation (pas d'interpolation). */
   teleportDist: 4,
-  /** Rapport pixels physiques / CSS maximal du rendu (écrans HiDPI, zoom du navigateur). ↑ = plus net, plus coûteux. */
-  maxPixelRatio: 2,
   /**
    * Passe finale : joueurs estompés près de la caméra (fadeMath.ts, tramage « alpha hash »). Autres joueurs : opaques au-delà
    * de `cameraFadeFar` (m, de la caméra à la surface de leur capsule), presque invisibles à `cameraFadeNear` ; entre la
@@ -822,3 +820,31 @@ export const ENVIRONMENT = {
   skylineColors: ['#93b2e6', '#a3b5ea', '#8eaee0', '#a9c0ee'] as const,
   skylineHaze: 0.25,
 } as const;
+
+/** Niveau de qualité graphique (réglages : Auto choisit parmi ceux-ci, voir game/autoQuality.ts). */
+export type QualityLevel = 'bas' | 'moyen' | 'haut';
+
+export interface QualityPreset {
+  /** Rapport pixels physiques / CSS maximal (écrans HiDPI, zoom du navigateur). ↑ = plus net, plus coûteux. */
+  pixelRatioMax: number;
+  /** Échelle de la résolution de rendu (1 = native) : < 1 = image agrandie, plus floue, beaucoup moins coûteuse. */
+  renderScale: number;
+  /** Part des spectateurs dessinés (0..1, répartis uniformément dans les tribunes). */
+  crowd: number;
+  /** Détails de la ville : arbres, voitures, objets des toits, parcs. */
+  cityProps: boolean;
+}
+
+/** Préréglages de qualité, du plus beau au plus léger. Le coût dominant est le nombre de pixels (résolution). */
+export const QUALITY: Readonly<Record<QualityLevel, QualityPreset>> = {
+  haut: { pixelRatioMax: 2, renderScale: 1, crowd: 1, cityProps: true },
+  moyen: { pixelRatioMax: 1.25, renderScale: 1, crowd: 0.55, cityProps: true },
+  bas: { pixelRatioMax: 1, renderScale: 0.7, crowd: 0.25, cityProps: false },
+};
+
+/**
+ * Qualité « Auto » (game/autoQuality.ts) : on part de Haut et on descend d'un niveau si la moyenne des images par seconde
+ * sur une fenêtre de `windowSec` secondes passe sous `minFps` (images de plus de `maxFrameSec` ignorées : onglet caché,
+ * chargement). Jamais de remontée (pas d'oscillation). ↑ minFps = descend plus volontiers.
+ */
+export const AUTO_QUALITY = { windowSec: 4, minFps: 48, maxFrameSec: 0.25 } as const;

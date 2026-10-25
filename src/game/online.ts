@@ -47,3 +47,28 @@ export function roomFromUrl(params: URLSearchParams): string | null {
   const code = normalizeRoomCode(raw);
   return isRoomCode(code) ? code : null;
 }
+
+/** Clé du jeton de reconnexion (sessionStorage : propre à l'onglet, survit à un rechargement). */
+const TOKEN_KEY = 'ovalgun.token';
+
+/**
+ * Jeton de reconnexion de cet onglet : le serveur rend sa place à un joueur qui revient avec le même (coupure, ou
+ * rechargement de la page puis retour dans le même salon pendant le match). Stockage indisponible : jeton de session.
+ */
+export function sessionToken(): string {
+  let token = '';
+  try {
+    token = window.sessionStorage.getItem(TOKEN_KEY) ?? '';
+  } catch {
+    // stockage interdit
+  }
+  if (!/^[a-z0-9-]{8,64}$/i.test(token)) {
+    token = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : newRoomCode() + newRoomCode() + newRoomCode();
+    try {
+      window.sessionStorage.setItem(TOKEN_KEY, token);
+    } catch {
+      // stockage interdit : jeton valable jusqu'au rechargement
+    }
+  }
+  return token;
+}

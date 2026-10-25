@@ -8,7 +8,7 @@ import * as THREE from 'three';
 import { ENVIRONMENT as E } from '../palette';
 import { InstanceBatch } from './instancing';
 import type { BoxSpec, CityLayout } from './layout';
-import type { Built } from './Stadium';
+import type { Built, EnvDetail } from './Stadium';
 
 export interface CityResources {
   box: THREE.BufferGeometry;
@@ -127,8 +127,13 @@ export function buildCity(city: CityLayout, res: CityResources): Built {
   meshes.push(carMesh);
 
   group.add(...meshes);
+  // Détails coupés en qualité réduite : objets des toits, arbres, voitures, parcs.
+  const props: THREE.Object3D[] = [meshes[2], meshes[4], meshes[5], carMesh, parks];
   return {
     group,
+    setDetail(d: EnvDetail): void {
+      for (const o of props) o.visible = d.cityProps;
+    },
     dispose(): void {
       for (const m of meshes) m.dispose();
       for (const g of geos) g.dispose();

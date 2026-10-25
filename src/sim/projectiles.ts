@@ -22,7 +22,8 @@
  *   4. toute disparition émet 'projectile_end' (traceurs, étincelles du rendu).
  *
  * Appelé AVANT le déplacement des joueurs (match.ts) : le segment d'un tick est testé contre les capsules au DÉBUT
- * du tick, c'est-à-dire là où le tireur les voyait (au demi-tick d'interpolation près) quand il a tiré.
+ * du tick, c'est-à-dire là où le tireur les voyait (au demi-tick d'interpolation près) quand il a tiré. En ligne, un
+ * projectile qui porte `lag` est testé contre la géométrie rembobinée de ce retard (lagcomp.ts).
  */
 
 import {
@@ -35,6 +36,7 @@ import {
   type WeaponStats,
 } from './constants';
 import { blastLosOrigin, explode } from './explosion';
+import type { PoseHistory } from './lagcomp';
 import { playerHeight } from './playerStatus';
 import { segmentCapsuleEntry, segmentTerrainEntry, startsInsideLeaving } from './raycast';
 import { segmentShieldEntry, shieldArcCovers, shieldPoint, shieldUp } from './shield';
@@ -77,7 +79,7 @@ function grenadeImpact(state: MatchState, proj: Projectile, w: WeaponStats, hit:
  * Une corde de durée `h` (TICK_DT pour une balle, TICK_DT / PROJECTILE_ARC_SUBSTEPS pour une grenade) : déplacement,
  * premier contact, effets. Renvoie 'ended' si le projectile disparaît.
  */
-function stepSegment(state: MatchState, proj: Projectile, owner: PlayerState, w: WeaponStats, h: number): SegmentResult {
+function stepSegment(state: MatchState, proj: Projectile, owner: PlayerState, w: WeaponStats, h: number, history: PoseHistory | undefined): SegmentResult {
   const from = proj.pos;
   const g = w.gravity;
   let tx = from.x + proj.vel.x * h;
@@ -100,13 +102,17 @@ function stepSegment(state: MatchState, proj: Projectile, owner: PlayerState, w:
   const dz = tz - from.z;
   const dir = len > 1e-12 ? { x: dx / len, y: dy / len, z: dz / len } : { x: 0, y: 0, z: 1 };
 
+  // En ligne (lagcomp.ts) : géométrie des joueurs telle que le tireur la voyait (`lag` ticks avant le début de ce tick).
+  const lagTick = history !== undefined && proj.lag !== undefined && proj.lag > 0 ? state.tick - 1 - proj.lag : null;
+  const geo = (p: PlayerState): PlayerState => (lagTick === null || history === undefined ? p : history.rewound(p, lagTick));
+
   // Premier contact : relief, puis boucliers adverses, puis joueurs adverses touchables, strictement plus tôt.
   const tTerrain = segmentTerrainEntry(state.field, from, to);
   let tHit = tTerrain >= 0 ? tTerrain : 2;
   let shieldOwner: PlayerState | null = null;
   for (const p of state.players) {
     if (p.team === proj.team || !shieldUp(p)) continue;
-    const t = segmentShieldEntry(from, to, p);
+    const t = segmentShieldEntry(from, to, geo(p));
     if (t >= 0 && t < tHit) {
       tHit = t;
       shieldOwner = p;
@@ -116,10 +122,11 @@ function stepSegment(state: MatchState, proj: Projectile, owner: PlayerState, w:
   const hitRadius = PLAYER_RADIUS + PROJECTILE_HIT_RADIUS;
   for (const p of state.players) {
     if (p.team === proj.team || !isHittable(p)) continue;
-    const ph = playerHeight(p);
-    const t = segmentCapsuleEntry(from, to, p.pos, ph, hitRadius);
+    const g = geo(p);
+    const ph = playerHeight(g);
+    const t = segmentCapsuleEntry(from, to, g.pos, ph, hitRadius);
     // Départ DANS la capsule (adversaire collé à l'épaule) d'un tir qui s'en éloigne : pas de touche « sans viser ».
-    if (t === 0 && proj.traveled === 0 && startsInsideLeaving(from, { x: dx, y: dy, z: dz }, p.pos, ph, hitRadius)) continue;
+    if (t === 0 && proj.traveled === 0 && startsInsideLeaving(from, { x: dx, y: dy, z: dz }, g.pos, ph, hitRadius)) continue;
     if (t >= 0 && t < tHit) {
       tHit = t;
       target = p;
@@ -133,9 +140,9 @@ function stepSegment(state: MatchState, proj: Projectile, owner: PlayerState, w:
     // Bouclier : surface franchie (règle 1), ou pilier touché par un tir venu de son arc frontal (règle 2).
     let blocker = shieldOwner;
     let blockPos = hit;
-    if (target !== null && shieldBlocks(target, dir)) {
+    if (target !== null && shieldBlocks(geo(target), dir)) {
       blocker = target;
-      blockPos = shieldPoint(target, -dir.x, -dir.z, hit.y);
+      blockPos = shieldPoint(geo(target), -dir.x, -dir.z, hit.y);
     }
     if (blocker !== null) {
       state.events.push({ type: 'blocked', targetId: blocker.id, sourceId: proj.ownerId, pos: { x: blockPos.x, y: blockPos.y, z: blockPos.z } });
@@ -180,14 +187,14 @@ function expire(state: MatchState, proj: Projectile, w: WeaponStats): void {
  * Avance un projectile d'un tick (une corde, ou PROJECTILE_ARC_SUBSTEPS cordes sur la parabole d'une grenade).
  * Renvoie faux s'il disparaît (impact, portée, durée de vie).
  */
-function stepProjectile(state: MatchState, proj: Projectile): boolean {
+function stepProjectile(state: MatchState, proj: Projectile, history: PoseHistory | undefined): boolean {
   const owner = state.players[proj.ownerId];
   if (owner === undefined) return false; // état forgé : propriétaire inconnu, retiré sans effet
   const w = ROLES[owner.role].weapon;
   const n = w.gravity > 0 ? Math.max(1, PROJECTILE_ARC_SUBSTEPS) : 1;
   const h = TICK_DT / n;
   for (let k = 0; k < n; k++) {
-    if (stepSegment(state, proj, owner, w, h) === 'ended') return false;
+    if (stepSegment(state, proj, owner, w, h, history) === 'ended') return false;
   }
   if (proj.ttl > 0) proj.ttl--;
   if (proj.ttl <= 0) {
@@ -197,13 +204,16 @@ function stepProjectile(state: MatchState, proj: Projectile): boolean {
   return true;
 }
 
-/** Étape 6 de `step` (avant le déplacement des joueurs) : déplacement et collisions de tous les projectiles (ordre des ids), compactage en place. */
-export function updateProjectiles(state: MatchState): void {
+/**
+ * Étape 6 de `step` (avant le déplacement des joueurs) : déplacement et collisions de tous les projectiles (ordre des ids),
+ * compactage en place. `history` : géométrie passée des joueurs (en ligne, compensation de latence, lagcomp.ts).
+ */
+export function updateProjectiles(state: MatchState, history?: PoseHistory): void {
   const list = state.projectiles;
   let n = 0;
   for (let i = 0; i < list.length; i++) {
     const proj = list[i];
-    if (stepProjectile(state, proj)) list[n++] = proj;
+    if (stepProjectile(state, proj, history)) list[n++] = proj;
   }
   list.length = n;
 }

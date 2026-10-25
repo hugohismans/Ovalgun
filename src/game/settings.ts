@@ -1,6 +1,7 @@
 /**
  * Réglages du joueur (étape 8), PURS et testés : sensibilités (souris, manette, en visée), inversions Y, aide à la visée
- * manette, caméra (FOV, distance, hauteur, effet de vitesse), vibrations, volume général et volume de la musique. La
+ * manette, caméra (FOV, distance, hauteur, effet de vitesse), qualité graphique, compteur d'images par seconde,
+ * vibrations, volume général et volume de la musique. La
  * session les applique à chaud à l'InputManager, à la caméra et aux vibrations (`GameSession.applySettings`) ; l'UI les
  * édite et les mémorise (localStorage, src/ui/logic/storage.ts).
  *
@@ -25,6 +26,11 @@ import {
   SETTINGS_SENSITIVITY_STEP,
 } from '../sim';
 import { DEFAULT_INPUT_SETTINGS, DEFAULT_RUMBLE } from '../input/InputManager';
+import type { QualityLevel } from '../render/palette';
+
+/** Qualité graphique choisie : un niveau fixe, ou Auto (game/autoQuality.ts). */
+export type QualitySetting = 'auto' | QualityLevel;
+const QUALITY_SETTINGS: readonly QualitySetting[] = ['auto', 'bas', 'moyen', 'haut'];
 
 // Pour l'UI (qui n'importe pas la sim) : bornes et pas des curseurs.
 export {
@@ -64,6 +70,10 @@ export interface PlayerSettings {
   cameraHeight: number;
   /** FOV qui s'élargit avec la vitesse (sprint, esquive). */
   speedFov: boolean;
+  /** Qualité graphique (résolution, foule, détails de la ville). */
+  quality: QualitySetting;
+  /** Compteur d'images par seconde affiché en jeu. */
+  showFps: boolean;
   /** Vibrations de la manette. */
   rumble: boolean;
   /** Volume général 0..1. */
@@ -89,6 +99,8 @@ export const DEFAULT_SETTINGS: Readonly<PlayerSettings> = Object.freeze({
   cameraDistance: 1,
   cameraHeight: 0,
   speedFov: true,
+  quality: 'auto',
+  showFps: false,
   rumble: DEFAULT_RUMBLE,
   volume: DEFAULT_VOLUME,
   musicVolume: DEFAULT_MUSIC_VOLUME,
@@ -121,6 +133,8 @@ export function sanitizeSettings(raw: unknown): PlayerSettings {
     cameraDistance: snapToStep(o.cameraDistance, SETTINGS_CAMERA_DISTANCE_MIN, SETTINGS_CAMERA_DISTANCE_MAX, SETTINGS_CAMERA_STEP, d.cameraDistance),
     cameraHeight: snapToStep(o.cameraHeight, SETTINGS_CAMERA_HEIGHT_MIN, SETTINGS_CAMERA_HEIGHT_MAX, SETTINGS_CAMERA_STEP, d.cameraHeight),
     speedFov: bool(o.speedFov, d.speedFov),
+    quality: QUALITY_SETTINGS.includes(o.quality as QualitySetting) ? (o.quality as QualitySetting) : d.quality,
+    showFps: bool(o.showFps, d.showFps),
     rumble: bool(o.rumble, d.rumble),
     volume: snapToStep(o.volume, 0, 1, VOLUME_STEP, d.volume),
     musicVolume: snapToStep(o.musicVolume, 0, 1, VOLUME_STEP, d.musicVolume),

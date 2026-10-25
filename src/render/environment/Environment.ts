@@ -29,7 +29,7 @@ import {
   type EnvUniforms,
 } from './materials';
 import { Sky } from './Sky';
-import { buildStadium, createFanGeometry, FAN_SHOULDER_Y, type Built, type StadiumResources } from './Stadium';
+import { buildStadium, createFanGeometry, FAN_SHOULDER_Y, type Built, type EnvDetail, type StadiumResources } from './Stadium';
 
 /** Direction VERS le soleil (normalisée), partagée avec la lumière directionnelle du Renderer. */
 export function sunDirection(): THREE.Vector3 {
@@ -55,6 +55,7 @@ export class Environment {
   private targetExcitement: number = E.crowdIdleExcitement;
   private excitement: number = E.crowdIdleExcitement;
   private motionScale = 1;
+  private detail: EnvDetail = { crowd: 1, cityProps: true };
 
   constructor() {
     this.atlas = createAtlas();
@@ -107,7 +108,16 @@ export class Environment {
     this.uniforms.plaza.value.set(city.plazaX, city.plazaZ);
     this.uniforms.radius.value = city.radius;
     this.site = [buildStadium(st, this.stadiumRes), buildCity(city, this.cityRes)];
-    for (const b of this.site) this.group.add(b.group);
+    for (const b of this.site) {
+      b.setDetail(this.detail);
+      this.group.add(b.group);
+    }
+  }
+
+  /** Niveau de détail (qualité graphique) : part de la foule dessinée, détails de la ville. Appliqué tout de suite. */
+  setDetail(d: EnvDetail): void {
+    this.detail = { ...d };
+    for (const b of this.site) b.setDetail(this.detail);
   }
 
   /** Excitation visée de la foule (0 = calme, 1 = délire) ; lissée dans `update`. */
