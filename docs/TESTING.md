@@ -656,3 +656,102 @@ comprennent la réaction, les rafales et l'erreur de visée de la difficulté.
 
 Réglages purement visuels (bouclier, grenades, explosions, zones, aperçus du demi, zone de mêlée, bannières « MÊLÉE ! » et « Mêlée gagnée
 par … ») : `src/render/palette.ts` (`PALETTE`, `STYLE`, `FX.scrumStart` / `scrumWon`).
+
+## Étape 8 — HUD et menu
+
+Le jeu s'ouvre sur un **menu de lancement** (un match bots contre bots tourne en fond, caméra de biais) : format 3v3 / 5v5, rôle
+(cartes avec vitesse, portée, dégâts et capacité tirés de `ROLES`), difficulté des bots, mode entraînement, aperçu de l'équipe,
+aperçu des contrôles clavier ET manette, JOUER. En jeu, un vrai **HUD** : score et chrono, jauge de stabilité, pastilles
+d'actions, rôle, mini-flèche vers le ballon hors champ, flux d'événements, grandes annonces, messages personnels près du
+réticule. **Pause** (Échap / Start) : reprendre, contrôles, réglages, recommencer, quitter. **Écran de fin** : résultat, joueur
+du match, statistiques, Rejouer / Menu. Tout se pilote à la souris, au clavier et à la manette. La correction de l'étape 8 a
+réglé l'aide à la visée après un passage par le menu, la navigation qui « défilait » toute seule dans la pause et plusieurs
+détails d'ergonomie (voir docs/ARCHITECTURE.md §16, « Correction de l'étape 8 »).
+
+### Comment tester
+
+1. **Tests automatiques** : `npm test`. Étape 8 :
+   - `tests/game/ballArrow.test.ts` : projection, bord de l'écran, ballon derrière, continuité sur le côté, zones du HUD évitées
+     et **marge des zones** (le disque et la pointe ne recouvrent plus l'étiquette sous le score) ;
+   - `tests/ui/focusNav.test.ts` (navigation spatiale, cartes surélevées, boucle verticale), `tests/ui/controlHints.test.ts`
+     (glyphes clavier / Xbox / PlayStation, AZERTY / QWERTY, couverture de la keymap), `tests/ui/storage.test.ts`
+     (localStorage absent / qui jette / corrompu) ;
+   - `tests/game/settings.test.ts` (réglages, choix, URL, debug), `tests/game/eventFeed.test.ts`, `tests/game/roleCards.test.ts`
+     (cartes, aperçu, **note de composition tirée de `TEAM_ROLES_*`**), `tests/game/matchHud.test.ts` (chrono au dixième,
+     **joueur du match** : poids, égalité => le premier, tout à zéro => personne) ;
+   - `tests/input/menuNav.test.ts` : fronts, répétition, stick, reset, **stick maintenu en jeu puis pause : aucune répétition
+     avant relâchement** ; `tests/input/aimAssist.test.ts` : **candidats de l'aide à la visée recréés à chaque match** (5v5 ->
+     3v3 -> 5v5) ;
+   - `npm run typecheck` : svelte-check sans avertissement (accessibilité comprise).
+2. **Menu** : `npm run dev`, ouvrir `http://localhost:5173/` (sans paramètre).
+   - Souris : cliquer les choix. Clavier : flèches (navigation), Entrée / Espace (valider), Tab, Échap (retour, ferme un
+     panneau). Manette : croix ou stick gauche, A valider, B retour, **Start = jouer**.
+   - Contrôles / Réglages ouverts depuis le menu : Tab reste dans le panneau (le menu derrière le voile est inerte) ; le focus
+     part sur la première option (sensibilité souris, bascule Xbox / PlayStation), pas sur « Retour ». Contrôles : **LB / RB**
+     basculent les glyphes Xbox / PlayStation.
+   - Les choix sont mémorisés (rechargement de la page). Paramètres d'URL toujours acceptés :
+     `?size=5&role=pilier&difficulty=difficile&training`. `?debug` lance la partie tout de suite (sans pointer lock, session
+     dans `window.__ovalgun.session`) ; `?debug&menu` passe par le menu ; `?debug&duration=20` = match de 20 s.
+3. **En jeu** (`?debug`, ou par le menu) :
+   - jauge de stabilité (bas au centre, contour sombre, lisible sur l'herbe) : fais-toi tirer dessus — elle tremble et flashe,
+     la perte reste blanche un instant ; jaune sous 65 %, rouge + vignette sous 35 % ; plaqué : « PLAQUÉ 3,0 s » qui se remplit
+     jusqu'au relevé ; après le relevé ou pendant un plongeon : « INVULNÉRABLE » ;
+   - pastilles : esquive (Maj bref / B), glissade (C / X), capacité (A en AZERTY, Q en QWERTY / LB), arme (munitions, rouge à
+     ≤ 25 % du chargeur, rechargement R / Y) ; porteur (G / View en entraînement) : plongeon, passe (avec le nom de la cible,
+     « aucune cible » sinon) et coup de pied. Les touches affichées suivent le périphérique utilisé (glyphes PlayStation avec
+     une manette Sony) ;
+   - ballon hors champ (B / croix ↓ pour le lâcher au centre, puis tourne-toi) : flèche au bord, jaune (libre), couleur
+     d'équipe (porté), dorée (mêlée), distance en mètres ; ballon derrière toi : en bas, au-dessus de la jauge ; ballon
+     au-dessus de l'écran : sous le score ET sous son étiquette (« ENTRAÎNEMENT », « DERNIÈRE MINUTE »), sans la recouvrir ;
+   - flux en haut à droite (plaquages, interceptions, essais, mêlées), annonces au centre (3, 2, 1, JOUEZ !, ESSAI !, MÊLÉE !,
+     DERNIÈRE MINUTE), messages personnels à droite du réticule (« Aucun coéquipier derrière », « Interception ! »…) ;
+   - dernière minute : `__ovalgun.session.state.clockTicks = 1900` (chrono rouge pulsant), puis `= 290` (dixièmes) ;
+   - **aide à la visée après le menu** (manette) : `?debug&menu&size=3`, Start (partie 3v3), vise près d'un adversaire : la
+     caméra ralentit sur chacun des 3 adversaires ; `__ovalgun.session.candidates` a 6 entrées, équipes 0, 0, 0, 1, 1, 1.
+4. **Pause** : Échap (clavier, aussi en `?debug`) ou Start (manette).
+   - Manette : cours au stick gauche, appuie sur Start **en gardant le stick** : le focus reste sur « Reprendre » tant que le
+     stick n'est pas relâché (avant la correction, il défilait jusqu'à « Quitter vers le menu »).
+   - « Recommencer » / « Quitter vers le menu » : un premier appui (A, Entrée, clic) fait passer le bouton au rouge « Confirmer
+     … ? » pendant 2,5 s, un second appui exécute ; changer de bouton annule.
+   - Reprendre : B ou Start (manette), Entrée / clic sur « Reprendre ». Au clavier hors `?debug`, Échap ne peut pas reprendre (le
+     navigateur refuse le pointer lock demandé sur Échap) : l'aide n'affiche pas « Échap », et Échap met le focus sur
+     « Reprendre ».
+   - Réglages : sensibilités (curseurs : souris, flèches gauche / droite, croix), inversion Y, aide à la visée, vibrations —
+     appliqués tout de suite et mémorisés. Contrôles : toutes les correspondances (bascule Xbox / PlayStation, LB / RB). Au
+     retour d'un panneau, le focus revient sur son bouton ; l'anneau de focus jaune est entier (plus rogné à gauche / droite).
+5. **Fin** : `?debug&duration=20`. Joueur du match suivi de son équipe (« Ailier 1 · Bleu »), statistiques, Rejouer / Menu
+   actifs après 1,5 s (souris, Entrée, A) ; **Start = Rejouer**. Le A ou le Start maintenu au coup de sifflet n'agit pas (il
+   faut le relâcher).
+6. **Accessibilité** : activer « réduire les animations » dans le système : plus de pulsations ni de tremblements.
+
+### Ce qu'on doit voir / ressentir
+
+- Le menu se lit d'un coup d'œil et se pilote entièrement à la manette sans jamais perdre le focus (anneau jaune) ; la souris
+  n'affiche pas d'anneau. Un stick ou un bouton maintenu en quittant le jeu ne fait rien dans le menu suivant.
+- En jeu, l'essentiel est en bas au centre (jauge + actions) et en haut au centre (score) ; rien ne masque le joueur ni le
+  réticule. En 21:9, le HUD reste groupé au centre ; en 900×600 tout reste lisible (le menu de lancement défile).
+- Le A ou le Start qui ferme un menu ne fait pas sauter / ne rouvre pas la pause ; aucune action destructrice (recommencer,
+  quitter, relancer depuis la fin) ne part sur un seul appui réflexe.
+- Mesures (Playwright, 1280×720, fausse manette, SwiftShader) : menu -> partie 3v3 : 6 candidats d'aide à la visée, équipes
+  0, 0, 0, 1, 1, 1 (avant la correction : 10, dont les ids 3 et 4 en équipe 0 et 4 fantômes) ; `?debug` -> pause -> quitter vers
+  le menu : 0 erreur et le match de fond avance (avant : une exception par frame, fond figé) ; stick maintenu 1,2 s dans la
+  pause : focus fixe sur « Reprendre » (avant : il parcourait la liste) ; ballon au-dessus de l'écran : haut de la pointe à
+  84 px, sous l'étiquette du score (bas à 72 px ; avant : disque centré à 83 px, par-dessus l'étiquette).
+
+### Constantes utiles pour ajuster le feeling
+
+| Constante | Effet | Valeur actuelle | Piste de réglage |
+|---|---|---|---|
+| `MENU_NAV_REPEAT_DELAY_SEC` / `MENU_NAV_REPEAT_SEC` (constants.ts) | Délai avant répétition et intervalle de répétition de la croix / du stick dans les menus | 0,38 s / 0,11 s | 0,3 / 0,08 pour des listes plus longues ; 0,5 / 0,15 si le focus « file » trop vite |
+| `MENU_NAV_STICK_THRESHOLD` (constants.ts) | Inclinaison du stick gauche qui compte comme une direction dans les menus | 0,55 | 0,7 si un stick usé fait bouger le focus tout seul |
+| `SETTINGS_SENSITIVITY_MIN` / `_MAX` / `_STEP` (constants.ts) | Bornes et pas des curseurs de sensibilité (souris, caméra manette) | × 0,25 / × 3 / 0,05 | Pas 0,1 pour régler plus vite à la manette |
+| `STYLE.endScreenInputDelaySec` (palette.ts) | Délai avant que Rejouer / Menu / Start acceptent un appui sur l'écran de fin | 1,5 s (1 s avant la correction) | 2 s si des joueurs relancent encore sans voir les statistiques |
+| `STYLE.mvpWeights` (palette.ts) | Poids des statistiques du « joueur du match » (essais, plaquages, interceptions, passes) | 3 / 1 / 2 / 1 | Plaquages à 2 pour valoriser la défense |
+| `STYLE.stabilityBarLowFraction` / `stabilityBarMidFraction` (palette.ts) | Jauge rouge (+ vignette) / jaune sous ces fractions | 0,35 / 0,65 | Rouge à 0,4 pour prévenir plus tôt |
+| `STYLE.ammoLowFraction` (palette.ts) | Pastille d'arme rouge à cette fraction du chargeur ou moins (au moins 1 cartouche) | 0,25 | 0,4 pour prévenir plus tôt avec le fusil à pompe (5 cartouches : rouge à 2) |
+| `STYLE.feedSec` / `feedFadeSec` / `feedMax` (palette.ts) | Durée, fondu et nombre de lignes du flux d'événements | 4,5 s / 0,6 s / 5 | 3 lignes en 5v5 si le flux se remplit trop |
+| `STYLE.clockTenthsBelowSec` (palette.ts) | Chrono au dixième de seconde sous ce seuil | 10 s | 0 pour ne jamais afficher les dixièmes |
+| `STYLE.spectator*` (palette.ts) | Caméra du match de fond du menu (hauteur, recul, suivi, balancement, champ) | voir palette.ts | `spectatorHeight` plus haut pour une vue plus lisible |
+| `ARROW_REACH_REM` / `EDGE_REM` (ui/hud/BallArrow.svelte) | Rayon de la mini-flèche (marge des zones évitées) / marge aux bords de l'écran | 2,4 rem / 2,6 rem | Garder `EDGE_REM` ≥ `ARROW_REACH_REM` |
+| `CONFIRM_MS` (ui/PauseMenu.svelte) | Fenêtre de confirmation de « Recommencer » / « Quitter » | 2 500 ms | 4 000 ms si la confirmation expire avant le second appui |
+| `HUD_RATE` (ui/state/hud.svelte.ts) | Fréquence de publication du gros instantané du HUD (la flèche et le réticule suivent chaque frame) | 30 Hz | 20 Hz sur machine lente |

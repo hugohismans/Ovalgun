@@ -90,6 +90,20 @@ export const NO_ASSIST: Readonly<AimAssistResult> = Object.freeze({
   targetId: -1,
 });
 
+/**
+ * (Re)crée les candidats de l'aide à la visée pour les joueurs d'un match : un par joueur, à l'index de son id, avec son
+ * équipe (positions remplies à chaque frame par la session). Réécrit `out` en place. À appeler à CHAQUE nouveau match :
+ * depuis l'étape 8, la taille d'équipe change dans une même session (menu en 5v5 -> partie en 3v3), et des candidats
+ * d'un match précédent donneraient de mauvaises équipes ou des « fantômes » (correction de l'étape 8).
+ */
+export function resetAssistCandidates(
+  out: AssistCandidate[],
+  players: readonly Readonly<{ id: number; team: TeamId; status: PlayerStatus }>[],
+): void {
+  out.length = 0;
+  for (const p of players) out.push({ id: p.id, team: p.team, status: p.status, x: 0, y: 0, z: 0, height: 0 });
+}
+
 /** Cible la plus proche angulairement de la visée, dans le cône d'aide, ou null. */
 export function findAssistTarget(q: AimAssistQuery): { candidate: AssistCandidate; angle: number } | null {
   const dir = aimDir(q.yaw, q.pitch);

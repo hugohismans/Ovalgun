@@ -3,8 +3,9 @@
  * et joueurs au sol, suivi borné et seulement quand le joueur agit.
  */
 import { describe, expect, it } from 'vitest';
-import { AimAssist, aimAssistApplies, findAssistTarget, type AimAssistQuery, type AssistCandidate } from '../../src/input/aimAssist';
+import { AimAssist, aimAssistApplies, findAssistTarget, resetAssistCandidates, type AimAssistQuery, type AssistCandidate } from '../../src/input/aimAssist';
 import { createMatch, debugGiveBall, startPlayNow } from '../../src/sim';
+import { assignRoles } from '../../src/game/roles';
 import {
   AIM_ASSIST_ANGLE_DEG,
   AIM_ASSIST_MAX_TRACK_DEG_PER_SEC,
@@ -124,3 +125,22 @@ describe('aide à la visée : quand elle s’applique (étape 7)', () => {
     expect(aimAssistApplies(t, t.players[1])).toBe(false); // porteur
   });
 });
+
+describe('resetAssistCandidates (correction de l’étape 8)', () => {
+  it('un candidat par joueur, à l’index de son id et avec son équipe, après un changement de taille d’équipe', () => {
+    // Menu (match de fond 5v5) puis partie 3v3 dans la même session : avant la correction, les 10 candidats du 5v5
+    // restaient (ids 3 et 4 en équipe 0 = adversaires ignorés, ids 6 à 9 fantômes) ; 3v3 -> 5v5 : candidats manquants.
+    const out: AssistCandidate[] = [];
+    const m5 = createMatch({ teamSize: 5, seed: 1, roles: assignRoles(5, 'ailier') });
+    resetAssistCandidates(out, m5.players);
+    expect(out.length).toBe(10);
+    const m3 = createMatch({ teamSize: 3, seed: 2, roles: assignRoles(3, 'ailier') });
+    resetAssistCandidates(out, m3.players);
+    expect(out.map((c) => [c.id, c.team])).toEqual(m3.players.map((p) => [p.id, p.team]));
+    expect(out.map((c) => c.team)).toEqual([0, 0, 0, 1, 1, 1]);
+    resetAssistCandidates(out, m5.players);
+    expect(out.length).toBe(10);
+    out.forEach((c, i) => expect(c.id).toBe(i));
+  });
+});
+

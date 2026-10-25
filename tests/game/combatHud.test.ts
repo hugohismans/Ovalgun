@@ -75,3 +75,17 @@ describe('CombatHud', () => {
     expect(hud.frame(10, me, 0, s).vignette).toBe(1);
   });
 });
+
+describe('CombatHud (étape 8)', () => {
+  it('hitTakenSeq change à chaque tir reçu par le joueur local (tremblement de la jauge), pas pour les autres', () => {
+    const s = match();
+    const hud = new CombatHud();
+    const me = s.players[0];
+    expect(hud.frame(0, me, 0, s).hitTakenSeq).toBe(0);
+    hud.handleEvents([{ type: 'hit', targetId: 0, sourceId: 3, amount: 5, pos: { x: 0, y: 1, z: 0 } }], s, 0, 1);
+    hud.handleEvents([{ type: 'hit', targetId: 1, sourceId: 3, amount: 5, pos: { x: 0, y: 1, z: 0 } }], s, 0, 1.1);
+    expect(hud.frame(1.2, me, 0, s).hitTakenSeq).toBe(1);
+    hud.handleEvents([{ type: 'hit', targetId: 0, sourceId: 4, amount: 5, pos: { x: 0, y: 1, z: 0 } }], s, 0, 1.3);
+    expect(hud.frame(1.4, me, 0, s).hitTakenSeq).toBe(2);
+  });
+});

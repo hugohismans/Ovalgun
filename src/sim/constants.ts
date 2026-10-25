@@ -1664,3 +1664,27 @@ export const GAMEPAD_RUMBLE_EFFECTS: Readonly<Record<RumbleCue, Readonly<RumbleE
 export const RUMBLE_HARD_LANDING_SPEED = 9;
 /** « explosionNear » : explosion à moins de (rayon d'explosion × cette valeur) des pieds du joueur local. ↑ = vibre pour des explosions plus lointaines. */
 export const RUMBLE_EXPLOSION_NEAR_MULT = 1.5;
+
+// ============================================================================
+//  MENUS ET RÉGLAGES DU JOUEUR (étape 8 : lu uniquement par src/input, src/game et src/ui)
+// ============================================================================
+
+/**
+ * Navigation à la manette dans les menus : inclinaison du stick gauche (0..1, après la zone morte de déplacement) qui
+ * compte comme une direction (croix directionnelle : appui simple). ↑ = il faut un geste plus franc pour bouger le focus.
+ */
+export const MENU_NAV_STICK_THRESHOLD = 0.55;
+/**
+ * Répétition d'une direction maintenue dans les menus (croix ou stick) : délai avant la première répétition, puis
+ * intervalle entre deux répétitions (s). ↓ = défilement plus rapide d'une liste ou d'un curseur.
+ */
+export const MENU_NAV_REPEAT_DELAY_SEC = 0.38;
+export const MENU_NAV_REPEAT_SEC = 0.11;
+/**
+ * Curseurs de sensibilité des réglages (souris : multiplicateur de MOUSE_SENSITIVITY ; caméra manette : multiplicateur
+ * de GAMEPAD_LOOK_YAW_SPEED_DEG / GAMEPAD_LOOK_PITCH_SPEED_DEG) : bornes et pas. 1 = valeurs de ce fichier.
+ * ↑ MAX = le joueur peut accélérer davantage sa caméra.
+ */
+export const SETTINGS_SENSITIVITY_MIN = 0.25;
+export const SETTINGS_SENSITIVITY_MAX = 3;
+export const SETTINGS_SENSITIVITY_STEP = 0.05;

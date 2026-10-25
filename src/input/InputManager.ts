@@ -14,6 +14,11 @@
  * - Porteur (`setCarrier`) : il ne vise pas — la visée ne rapproche pas la caméra et ne change pas les sensibilités.
  * - Tout est relâché sur blur / perte du pointer lock / pause.
  * - Mode debug (?debug) : le clavier et les clics sont acceptés sans pointer lock (tests Playwright).
+ * - Étape 8 : réglages du joueur appliqués à chaud (`applySettings` : sensibilités, inversion Y, aide à la visée) ;
+ *   `gameplayActive` (faux dans les menus : le clavier ne pilote plus le joueur et n'empêche plus les actions par défaut
+ *   des touches, il sert seulement à choisir le périphérique actif) ; `pointerLockAllowed` (le canvas ne capte pas le
+ *   pointer lock quand un menu est ouvert) ; intentions de navigation des menus à la manette (`consumeMenuIntents`,
+ *   menuNav.ts) ; demande de pointer lock en cours (`lockPending`).
  */
 
 import {
@@ -21,6 +26,7 @@ import {
   AIM_ASSIST_MIN_INPUT,
   clamp,
   GAMEPAD_INVERT_Y,
+  GAMEPAD_RUMBLE,
   MOUSE_AIM_SENSITIVITY_MULT,
   MOUSE_SENSITIVITY,
   PITCH_MAX,
@@ -33,6 +39,7 @@ import { GamepadInput, GamepadPicker, readGamepads, type GamepadLike } from './g
 import { DEFAULT_GAMEPAD_MAP, type GamepadMap } from './gamepadMap';
 import { composeInput, PressLatch, TapHoldState } from './inputLogic';
 import { actionBit, actionsForKey, actionsForMouse, DEFAULT_KEYMAP, type Keymap } from './keymap';
+import { MenuNavReader, type MenuIntent } from './menuNav';
 
 export type InputDevice = 'keyboard' | 'gamepad';
 
@@ -52,6 +59,27 @@ const BIT_DODGE_SPRINT = actionBit('dodgeSprint');
 const BIT_AIM = actionBit('aim');
 const BIT_DEBUG_GIVE = actionBit('debugGiveBall');
 const BIT_DEBUG_RESET = actionBit('debugResetBall');
+
+/**
+ * Réglages du joueur appliqués par l'InputManager (étape 8). Les sensibilités sont des multiplicateurs des constantes
+ * (MOUSE_SENSITIVITY, GAMEPAD_LOOK_*_SPEED_DEG) ; 1 = valeurs de constants.ts.
+ */
+export interface InputSettings {
+  mouseSensitivity: number;
+  padSensitivity: number;
+  invertY: boolean;
+  aimAssist: boolean;
+}
+
+export const DEFAULT_INPUT_SETTINGS: Readonly<InputSettings> = {
+  mouseSensitivity: 1,
+  padSensitivity: 1,
+  invertY: GAMEPAD_INVERT_Y,
+  aimAssist: AIM_ASSIST_ENABLED,
+};
+
+/** Vibrations activées par défaut (réglage du joueur, appliqué par la session à Haptics). */
+export const DEFAULT_RUMBLE = GAMEPAD_RUMBLE;
 
 /** Demandes des outils de test (G / B au clavier, View / croix ↓ à la manette) depuis le dernier appel. */
 export interface DebugRequests {
@@ -76,6 +104,18 @@ export class InputManager {
   onPointerLockChange: ((locked: boolean) => void) | null = null;
   /** Appelé quand le périphérique actif change (glyphes de l'UI). */
   onDeviceChange: ((device: InputDevice) => void) | null = null;
+  /**
+   * Le joueur local est en jeu (ni menu, ni pause, ni écran de fin) : le clavier et la souris le pilotent. Faux : une
+   * touche ne fait que rendre le clavier actif (glyphes), sans empêcher son action par défaut (Tab, Espace, flèches des
+   * menus).
+   */
+  gameplayActive = true;
+  /** Un clic sur le canvas peut demander le pointer lock (faux quand un menu est ouvert). */
+  pointerLockAllowed = true;
+  /** Une demande de pointer lock est en cours (ni accordée, ni refusée). */
+  lockPending = false;
+  /** Réglages du joueur (étape 8), modifiables à chaud. */
+  readonly settings: InputSettings = { ...DEFAULT_INPUT_SETTINGS };
 
   private readonly keymap: Keymap;
   private readonly debug: boolean;
@@ -91,6 +131,8 @@ export class InputManager {
   /** Actions des outils de test pressées depuis le dernier `consumeDebugRequests` (masque actionBit). */
   private debugPressed = 0;
   private lastPad: GamepadLike | null = null;
+  private readonly menuNav = new MenuNavReader();
+  private menuIntents: MenuIntent[] = [];
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -100,7 +142,7 @@ export class InputManager {
     this.debug = opts.debug ?? false;
     this.gamepad = new GamepadInput(opts.gamepadMap ?? DEFAULT_GAMEPAD_MAP);
     this.gamepadsSource = opts.gamepadsSource ?? readGamepads;
-    this.aimAssist.enabled = AIM_ASSIST_ENABLED;
+    this.aimAssist.enabled = this.settings.aimAssist;
 
     this.listen(window, 'keydown', (e) => this.onKey(e as KeyboardEvent, true));
     this.listen(window, 'keyup', (e) => this.onKey(e as KeyboardEvent, false));
@@ -108,8 +150,13 @@ export class InputManager {
     this.listen(window, 'mouseup', (e) => this.onMouseButton(e as MouseEvent, false));
     this.listen(document, 'mousemove', (e) => this.onMouseMove(e as MouseEvent));
     this.listen(canvas, 'contextmenu', (e) => e.preventDefault());
-    this.listen(canvas, 'click', () => this.requestPointerLock());
+    this.listen(canvas, 'click', () => {
+      if (this.pointerLockAllowed) this.requestPointerLock();
+    });
     this.listen(document, 'pointerlockchange', () => this.onLockChange());
+    this.listen(document, 'pointerlockerror', () => {
+      this.lockPending = false;
+    });
     this.listen(window, 'blur', () => this.releaseAll());
     this.listen(document, 'visibilitychange', () => {
       if (document.hidden) this.releaseAll();
@@ -121,6 +168,13 @@ export class InputManager {
     this.listeners.push([target, type, fn]);
   }
 
+  /** Applique des réglages du joueur (étape 8), à chaud : sensibilités, inversion Y, aide à la visée. */
+  applySettings(s: Partial<InputSettings>): void {
+    Object.assign(this.settings, s);
+    this.aimAssist.enabled = this.settings.aimAssist;
+    if (!this.settings.aimAssist) this.aimAssist.reset();
+  }
+
   /** Initialise l'orientation (yaw/pitch du joueur au début du match). */
   setOrientation(yaw: number, pitch: number): void {
     this.yaw = wrapAngle(yaw);
@@ -130,11 +184,16 @@ export class InputManager {
   /** Demande le pointer lock (doit être appelé dans un geste utilisateur : clic). */
   requestPointerLock(): void {
     if (document.pointerLockElement === this.canvas) return;
+    this.lockPending = true;
     try {
       const r = this.canvas.requestPointerLock() as unknown;
-      if (r instanceof Promise) r.catch(() => undefined);
+      if (r instanceof Promise)
+        r.catch(() => {
+          this.lockPending = false;
+        });
     } catch {
       // Navigateur sans pointer lock (ou refusé) : on reste en pause clavier.
+      this.lockPending = false;
     }
   }
 
@@ -162,6 +221,12 @@ export class InputManager {
   }
 
   private onKey(e: KeyboardEvent, down: boolean): void {
+    if (!this.gameplayActive) {
+      // Menus : la touche sert seulement à rendre le clavier actif ; son action par défaut est conservée.
+      if (down) this.setDevice('keyboard');
+      if (!down && this.heldKeys.delete(e.code)) this.recomputeHeld();
+      return;
+    }
     const actions = actionsForKey(this.keymap, e.code);
     if (actions === 0) return;
     if (!down) {
@@ -192,6 +257,10 @@ export class InputManager {
       if ((actions & BIT_DODGE_SPRINT) !== 0 && !this.anyHeld(BIT_DODGE_SPRINT)) this.shift.release(nowSec());
       return;
     }
+    if (!this.gameplayActive) {
+      this.setDevice('keyboard');
+      return;
+    }
     if (actions === 0 || !this.acceptsKeyboard) return;
     this.setDevice('keyboard');
     this.heldMouse.set(e.button, actions);
@@ -200,18 +269,23 @@ export class InputManager {
   }
 
   private onMouseMove(e: MouseEvent): void {
-    if (!this.pointerLocked) return;
     const dx = e.movementX;
     const dy = e.movementY;
     if (!Number.isFinite(dx) || !Number.isFinite(dy)) return;
+    if (!this.pointerLocked) {
+      // Menus : la souris redevient le périphérique actif (glyphes clavier), sans tourner la caméra.
+      if (!this.gameplayActive && Math.abs(dx) + Math.abs(dy) >= MOUSE_ACTIVITY_PX) this.setDevice('keyboard');
+      return;
+    }
     if (Math.abs(dx) + Math.abs(dy) >= MOUSE_ACTIVITY_PX) this.setDevice('keyboard');
-    const sens = MOUSE_SENSITIVITY * (this.aiming ? MOUSE_AIM_SENSITIVITY_MULT : 1);
+    const sens = MOUSE_SENSITIVITY * this.settings.mouseSensitivity * (this.aiming ? MOUSE_AIM_SENSITIVITY_MULT : 1);
     this.yaw = wrapAngle(this.yaw - dx * sens);
     this.pitch = clamp(this.pitch - dy * sens, PITCH_MIN, PITCH_MAX);
   }
 
   private onLockChange(): void {
     const locked = document.pointerLockElement === this.canvas;
+    this.lockPending = false;
     if (locked === this.pointerLocked) return;
     this.pointerLocked = locked;
     if (locked) this.setDevice('keyboard');
@@ -272,6 +346,11 @@ export class InputManager {
     this.lastPad = pad;
     this.gamepad.update(pad);
     if (this.gamepad.active) this.setDevice('gamepad');
+    const intents = this.menuNav.update(pad, nowSec());
+    if (intents.length > 0) {
+      this.setDevice('gamepad');
+      for (const i of intents) this.menuIntents.push(i);
+    }
     if (wasConnected && !this.gamepad.connected && this.activeDevice === 'gamepad') {
       this.setDevice('keyboard');
       return true;
@@ -296,9 +375,27 @@ export class InputManager {
       this.aimAssist.reset();
     }
     this.lastAssist = assist;
-    const { yawRate, pitchRate } = this.gamepad.lookRates(dt, assist.slowdown, GAMEPAD_INVERT_Y);
-    this.yaw = wrapAngle(this.yaw + yawRate * dt + assist.yawCorrection);
-    this.pitch = clamp(this.pitch + pitchRate * dt + assist.pitchCorrection, PITCH_MIN, PITCH_MAX);
+    const { yawRate, pitchRate } = this.gamepad.lookRates(dt, assist.slowdown, this.settings.invertY);
+    const k = this.settings.padSensitivity;
+    this.yaw = wrapAngle(this.yaw + yawRate * k * dt + assist.yawCorrection);
+    this.pitch = clamp(this.pitch + pitchRate * k * dt + assist.pitchCorrection, PITCH_MIN, PITCH_MAX);
+  }
+
+  /**
+   * Intentions de navigation des menus à la manette (croix / stick, A, B, Start, LB / RB) depuis le dernier appel.
+   * La session les transmet à l'UI quand un menu est ouvert, et les jette en jeu.
+   */
+  consumeMenuIntents(): MenuIntent[] {
+    if (this.menuIntents.length === 0) return EMPTY_INTENTS;
+    const out = this.menuIntents;
+    this.menuIntents = [];
+    return out;
+  }
+
+  /** Oublie les appuis de navigation en cours (changement d'écran) : un bouton encore enfoncé n'agit plus. */
+  resetMenuNav(): void {
+    this.menuIntents = [];
+    this.menuNav.reset(this.lastPad);
   }
 
   /** Vrai une fois après Start (pause / reprise). */
@@ -344,5 +441,7 @@ export class InputManager {
   }
 }
 
-/** Horloge client (s) : uniquement pour la durée d'appui de Shift (jamais dans la sim). */
+const EMPTY_INTENTS: MenuIntent[] = [];
+
+/** Horloge client (s) : durée d'appui de Shift, répétition de la navigation des menus (jamais dans la sim). */
 const nowSec = (): number => performance.now() / 1000;

@@ -29,6 +29,14 @@
  *    observé depuis sa caméra ; clavier / souris / manette ignorés pour lui).
  *  - Étape 7 (mêlée) : rien de spécifique ici — les événements de la mêlée passent par les mêmes canaux (HUD de match :
  *    décompte, « MÊLÉE ! », « Mêlée gagnée par … » ; vibrations ; zone de capture dessinée par le rendu).
+ *  - Étape 8 (HUD et menus, docs/ARCHITECTURE.md §16) : deux modes. `attract` = fond du menu de lancement (match bots contre
+ *    bots en entraînement, caméra spectateur, jamais en pause, aucune vibration) ; `play` = la partie du joueur.
+ *    `launch(options)` passe de l'un à l'autre (nouveau match, même rendu). Les menus (UI) reçoivent les intentions de
+ *    navigation de la manette (`onMenuIntent` : croix / stick, A, B, Start, LB / RB) quand aucun jeu n'est en cours (menu,
+ *    pause, écran de fin) ; en jeu, elles sont jetées et Start met en pause. La reprise, « Recommencer », « Rejouer » et le
+ *    retour au menu sont décidés par l'UI (`requestPlay`, `restart`, `launch`). Réglages du joueur appliqués à chaud
+ *    (`applySettings`). Instantané enrichi : flux d'événements (eventFeed.ts), ballon en repère caméra pour la mini-flèche
+ *    hors champ (ballArrow.ts), invulnérabilité, régénération, cooldowns totaux, nom de la cible de passe…
  */
 
 import {
@@ -61,27 +69,60 @@ import {
   type PlayerStatus,
   type BotDifficulty,
   type Role,
+  type TeamId,
   type TeamSize,
+  type Vec3,
   DEFAULT_BOT_DIFFICULTY,
+  DIVE_COOLDOWN_SEC,
+  DOWN_DURATION_SEC,
+  SLIDE_COOLDOWN_SEC,
+  canCarrierAct,
   lerpAngle,
 } from '../sim';
 import type { InputProvider } from '../bots';
 import { createBot } from '../bots';
-import { aimAssistApplies, type AssistCandidate } from '../input/aimAssist';
+import { aimAssistApplies, resetAssistCandidates, type AssistCandidate } from '../input/aimAssist';
 import type { GamepadStyle } from '../input/gamepadMap';
 import { Haptics } from '../input/haptics';
 import { CombatHud, type CombatHudFrame } from './combatHud';
 import { FEEDBACK_SEC, feedbackFor, type Feedback } from './feedback';
 import { MatchHud, type MatchHudFrame } from './matchHud';
 import { InputManager, type InputDevice } from '../input/InputManager';
+import { leftGame, type MenuIntent } from '../input/menuNav';
+import { EventFeed, type FeedItem } from './eventFeed';
+import { playerName } from './names';
+import type { PlayerSettings } from './settings';
 import { lerpPos } from '../render/interpolate';
 import { STYLE } from '../render/palette';
 import { Renderer } from '../render/Renderer';
 import { FixedStepLoop, MAX_FRAME_DT } from './loop';
 import { assignRoles } from './roles';
 
-// Pour l'UI (qui n'importe pas la sim) : difficulté des bots et taille d'équipe lues dans l'URL.
-export { DEFAULT_BOT_DIFFICULTY, type BotDifficulty, type TeamSize } from '../sim';
+// Pour l'UI (qui n'importe pas la sim) : difficulté des bots, taille d'équipe, rôles, équipes.
+export { DEFAULT_BOT_DIFFICULTY, type BotDifficulty, type Role, type TeamId, type TeamSize } from '../sim';
+export type { MenuIntent } from '../input/menuNav';
+
+/** `play` : la partie du joueur ; `attract` : match bots contre bots en fond du menu (caméra spectateur). */
+export type SessionMode = 'play' | 'attract';
+
+/** Délai (s) au-delà duquel une demande de pointer lock sans réponse est abandonnée (le menu de pause réapparaît). */
+const LOCK_PENDING_TIMEOUT_SEC = 1.5;
+
+/** Qui a le ballon, vu par le joueur local (couleur de la mini-flèche). */
+export type BallHolder = 'mine' | 'ally' | 'enemy' | 'free' | 'scrum' | 'dead';
+
+/** Ballon pour la mini-flèche hors champ (étape 8) : repère caméra de la dernière frame + état. */
+export interface BallView {
+  /** Position affichée du ballon dans le repère caméra (x droite, y haut, la caméra regarde vers −z). */
+  cam: Vec3;
+  tanHalfFovY: number;
+  /** Taille d'affichage (px CSS). */
+  width: number;
+  height: number;
+  /** Distance horizontale joueur local -> ballon (m). */
+  distance: number;
+  holder: BallHolder;
+}
 
 export interface SessionOptions {
   teamSize: TeamSize;
@@ -96,12 +137,21 @@ export interface SessionOptions {
   passive?: boolean;
   /** Le joueur 0 est aussi piloté par un bot (?debug&autopilot) : match bots contre bots, vu depuis sa caméra. */
   autopilot?: boolean;
+  /** Étape 8 : mode de la session (défaut `play`) ; `attract` impose autopilote, entraînement et caméra spectateur. */
+  mode?: SessionMode;
+  /** Durée du match (s) ; défaut MATCH_DURATION_SEC (?debug&duration=… pour un écran de fin rapide). */
+  durationSec?: number;
 }
 
 /** Instantané pour l'UI, produit à chaque frame. */
 export interface FrameSnapshot {
   tick: number;
+  /** Étape 8 : mode de la session, match terminé, demande de pointer lock en cours. */
+  mode: SessionMode;
   paused: boolean;
+  ended: boolean;
+  awaitingLock: boolean;
+  debug: boolean;
   pointerLocked: boolean;
   activeDevice: InputDevice;
   gamepadConnected: boolean;
@@ -125,14 +175,26 @@ export interface FrameSnapshot {
   stabilityMax: number;
   /** Stabilité basse (sous STYLE.stabilityBarLowFraction) : jauge rouge dans le HUD. */
   stabilityLow: boolean;
+  /** Stabilité moyenne (sous STYLE.stabilityBarMidFraction) : jauge jaune. */
+  stabilityMid: boolean;
   /** Temps restant au sol / à se relever (s), 0 si actif. */
   statusSec: number;
+  /** Durée totale au sol + relevé (s) : progression de « PLAQUÉ ». */
+  statusTotalSec: number;
+  /** Invulnérabilité restante (s : plongeon, fin de relevé), 0 sinon. */
+  invulnSec: number;
+  /** La jauge remonte (délai de régénération écoulé, jauge incomplète). */
+  regenerating: boolean;
   role: Role;
+  roleLabel: string;
+  team: TeamId;
   /** Arme (étape 5) : munitions, chargeur, rechargement (progression 0..1, -1 hors rechargement), tir possible. */
   ammo: number;
   magazine: number;
   reloadProgress: number;
   canShoot: boolean;
+  /** Munitions basses (au plus STYLE.ammoLowFraction du chargeur, au moins 1 ; hors rechargement) : pastille rouge. */
+  ammoLow: boolean;
   /**
    * Capacité : nom, implémentée, temps actif restant (s : sprint boosté, bouclier ; pour le demi, vie restante de SA
    * zone), durée et cooldown totaux (s), indication contextuelle (« appuie à nouveau pour baisser » bouclier levé).
@@ -144,6 +206,11 @@ export interface FrameSnapshot {
   abilityDurationSec: number;
   abilityCooldownSec: number;
   dodgeCooldownSec: number;
+  /** Cooldowns totaux de la glissade et du plongeon (s, dernière minute comprise) : anneaux des pastilles. */
+  slideCooldownSec: number;
+  diveCooldownSec: number;
+  /** Le porteur local peut passer / taper (ni plongeon, ni récupération : canCarrierAct). */
+  canCarrierAct: boolean;
   /** Retours de visée : hitmarker, direction des tirs reçus, vignette. */
   combat: CombatHudFrame;
   /** Images par seconde (lissées). */
@@ -152,12 +219,18 @@ export interface FrameSnapshot {
   assistTarget: number;
   /** Cible de la passe assistée affichée (-1 : aucune ou pas porteur). */
   passTarget: number;
+  /** Nom de la cible de passe (« Pilier 1 »), chaîne vide sans cible. */
+  passTargetName: string;
   /** Retour texte temporaire en cours (null : aucun) ; `seq` change à chaque nouveau message. */
   feedback: (Feedback & { seq: number }) | null;
   /** Outils de test disponibles (?debug ou entraînement). */
   debugTools: boolean;
   /** Étape 6 : score, chrono, coup d'envoi, essai, dernière minute, écran de fin. */
   match: MatchHudFrame;
+  /** Étape 8 : flux d'événements (plaquages, interceptions, essais, mêlées). */
+  feed: FeedItem[];
+  /** Étape 8 : ballon pour la mini-flèche hors champ (null : ballon mort ou porté par le joueur local). */
+  ball: BallView | null;
 }
 
 export class GameSession {
@@ -170,17 +243,21 @@ export class GameSession {
   readonly haptics = new Haptics();
   readonly combatHud = new CombatHud();
   readonly matchHud = new MatchHud();
+  readonly eventFeed = new EventFeed();
   /** Producteurs d'entrées des autres joueurs (bots, étape 6), appelés avec (état, id). Absent => entrée neutre. */
   readonly inputProviders = new Map<number, InputProvider>();
   onFrame: ((s: FrameSnapshot) => void) | null = null;
+  /**
+   * Étape 8 : intentions de navigation de la manette (menus), appelé seulement quand aucun jeu n'est en cours (menu
+   * `attract`, pause, écran de fin). En jeu, elles sont jetées (A = saut) et Start met en pause.
+   */
+  onMenuIntent: ((intent: MenuIntent) => void) | null = null;
 
   paused: boolean;
-  private readonly options: SessionOptions;
+  private options: SessionOptions;
   /** Nombre de matchs relancés (la seed du match suivant en dépend : options.seed + matchIndex). */
   private matchIndex = 0;
   private readonly debug: boolean;
-  /** Outils de test (ballon pour moi / au centre) : seulement en ?debug ou en entraînement. */
-  readonly debugTools: boolean;
   private pendingGiveBall = false;
   private pendingResetBall = false;
   private feedback: Feedback | null = null;
@@ -194,27 +271,28 @@ export class GameSession {
   private readonly onResize = (): void => this.renderer.resize();
   private readonly candidates: AssistCandidate[] = [];
   private readonly tmpFeet = { x: 0, y: 0, z: 0 };
+  private lockRequestedAt = -Infinity;
+  /** « En jeu » à la frame précédente : à la sortie du jeu, la navigation des menus est remise à zéro. */
+  private wasInGame = false;
 
   constructor(canvas: HTMLCanvasElement, options: SessionOptions) {
     this.options = options;
     this.debug = options.debug ?? false;
-    this.debugTools = this.debug || (options.training ?? false);
     this.state = this.newMatch();
     this.prev = cloneState(this.state);
     this.renderer = new Renderer(canvas);
-    this.renderer.setMatch(this.state, this.humanId);
+    this.renderer.setMatch(this.state, this.renderedHumanId);
     this.input = new InputManager(canvas, { debug: this.debug });
     const me = this.state.players[this.humanId];
     this.input.setOrientation(me.yaw, me.pitch);
     this.input.onPointerLockChange = (locked) => {
+      if (this.mode !== 'play') return;
       if (locked) this.setPaused(false);
       else if (!this.debug && this.input.activeDevice === 'keyboard' && !this.ended) this.setPaused(true);
     };
-    this.paused = !this.debug;
+    this.paused = this.mode === 'play' && !this.debug;
     this.installProviders();
-    for (const p of this.state.players) {
-      this.candidates.push({ id: p.id, team: p.team, status: p.status, x: 0, y: 0, z: 0, height: 0 });
-    }
+    resetAssistCandidates(this.candidates, this.state.players);
     window.addEventListener('resize', this.onResize);
     if (this.debug) (window as unknown as { __ovalgun?: { session: GameSession } }).__ovalgun = { session: this };
   }
@@ -222,6 +300,26 @@ export class GameSession {
   /** Vrai quand le match est terminé (écran de fin). */
   get ended(): boolean {
     return this.state.phase === 'ended';
+  }
+
+  /** Outils de test (ballon pour moi / au centre) : seulement en partie, en ?debug ou en entraînement. */
+  get debugTools(): boolean {
+    return this.mode === 'play' && (this.debug || (this.options.training ?? false));
+  }
+
+  /** Mode de la session (étape 8). */
+  get mode(): SessionMode {
+    return this.options.mode ?? 'play';
+  }
+
+  /** Vrai quand le joueur joue (partie en cours, ni pause, ni écran de fin, ni menu). */
+  get inGame(): boolean {
+    return this.mode === 'play' && !this.paused && !this.ended;
+  }
+
+  /** Joueur marqué comme humain par le rendu (anneau) : aucun en fond de menu. */
+  private get renderedHumanId(): number {
+    return this.mode === 'attract' ? -1 : this.humanId;
   }
 
   /** Nouveau match (seed = options.seed + matchIndex), en phase de coup d'envoi. */
@@ -237,14 +335,15 @@ export class GameSession {
       teamSize: o.teamSize,
       seed: o.seed + this.matchIndex,
       roles: assignRoles(o.teamSize, o.humanRole),
-      training: o.training ?? false,
+      training: (o.training ?? false) || this.mode === 'attract',
       kickoffReceivers: receivers,
+      ...(o.durationSec !== undefined && o.durationSec > 0 ? { durationSec: o.durationSec } : {}),
     });
   }
 
-  /** Vrai si le joueur 0 est piloté par un bot (?debug&autopilot). */
+  /** Vrai si le joueur 0 est piloté par un bot (?debug&autopilot, ou fond du menu). */
   get autopilot(): boolean {
-    return this.options.autopilot ?? false;
+    return (this.options.autopilot ?? false) || this.mode === 'attract';
   }
 
   /**
@@ -274,10 +373,13 @@ export class GameSession {
     this.matchIndex++;
     this.state = this.newMatch();
     this.prev = cloneState(this.state);
-    this.renderer.setMatch(this.state, this.humanId);
+    this.renderer.setMatch(this.state, this.renderedHumanId);
     this.installProviders();
+    // Candidats de l'aide à la visée recréés : `launch()` peut changer la taille d'équipe (menu 5v5 -> partie 3v3).
+    resetAssistCandidates(this.candidates, this.state.players);
     this.combatHud.reset();
     this.matchHud.reset();
+    this.eventFeed.reset();
     this.feedback = null;
     this.pendingGiveBall = false;
     this.pendingResetBall = false;
@@ -285,8 +387,30 @@ export class GameSession {
     const me = this.state.players[this.humanId];
     this.input.setOrientation(me.yaw, me.pitch);
     this.loopStep.reset();
-    // Au clavier (hors ?debug), on attend le pointer lock demandé par l'UI : l'overlay de pause sert de repli.
-    if (!this.debug && this.input.activeDevice === 'keyboard') this.setPaused(true);
+    this.input.resetMenuNav();
+    if (this.mode === 'attract') this.setPaused(false);
+    // Au clavier (hors ?debug), on attend le pointer lock demandé par l'UI : le menu de pause sert de repli.
+    else if (!this.debug && this.input.activeDevice === 'keyboard') this.setPaused(true);
+  }
+
+  /**
+   * Étape 8 : change de partie (menu -> jeu, jeu -> menu). Garde le mode debug de la construction ; nouveau match,
+   * nouveaux bots, même rendu. Au clavier, l'UI demande ensuite le pointer lock (`requestPlay`, dans le geste utilisateur).
+   */
+  launch(options: Omit<SessionOptions, 'debug'>): void {
+    this.options = { ...options, debug: this.debug };
+    this.restart();
+  }
+
+  /** Étape 8 : applique les réglages du joueur, à chaud (sensibilités, inversion Y, aide à la visée, vibrations). */
+  applySettings(s: Readonly<PlayerSettings>): void {
+    this.input.applySettings({ mouseSensitivity: s.mouseSensitivity, padSensitivity: s.padSensitivity, invertY: s.invertY, aimAssist: s.aimAssist });
+    this.haptics.enabled = s.rumble;
+  }
+
+  /** Étape 8 : oublie les appuis de navigation en cours (changement d'écran de l'UI). */
+  resetMenuNav(): void {
+    this.input.resetMenuNav();
   }
 
   start(): void {
@@ -301,13 +425,21 @@ export class GameSession {
     cancelAnimationFrame(this.raf);
   }
 
-  /** Bouton « Jouer » de l'overlay : pointer lock au clavier, reprise directe à la manette / en debug. */
+  /**
+   * « Jouer » / « Reprendre » (geste utilisateur) : pointer lock au clavier (la reprise suit l'obtention du verrou),
+   * reprise directe à la manette / en debug.
+   */
   requestPlay(): void {
+    if (this.mode !== 'play' || this.ended) return;
     if (this.debug || this.input.activeDevice === 'gamepad') this.setPaused(false);
-    this.input.requestPointerLock();
+    if (this.input.activeDevice === 'keyboard') {
+      this.lockRequestedAt = this.lastTime;
+      this.input.requestPointerLock();
+    }
   }
 
   setPaused(paused: boolean): void {
+    if (paused && this.mode !== 'play') return; // le fond du menu ne se met jamais en pause
     if (this.paused === paused) return;
     this.paused = paused;
     this.input.releaseAll();
@@ -330,12 +462,26 @@ export class GameSession {
     if (dt > 0) this.fps += (1 / dt - this.fps) * 0.05;
 
     const padLost = this.input.pollGamepad();
-    // Manette active débranchée en jeu (batterie, câble) : pause, comme sur console (pas sur l'écran de fin).
-    if (padLost && !this.paused && !this.debug && !this.ended) this.setPaused(true);
-    if (this.input.consumePauseRequest() && !this.ended) this.setPaused(!this.paused);
-    const confirm = this.input.consumeConfirm();
-    if (confirm && this.paused) this.setPaused(false);
-    else if (confirm && this.ended && this.matchHud.canReplay(now)) this.restart();
+    const pauseRequested = this.input.consumePauseRequest();
+    this.input.consumeConfirm(); // A : saut en jeu ; dans les menus, l'UI lit les intentions de navigation
+    const intents = this.input.consumeMenuIntents();
+    if (this.inGame) {
+      // Manette active débranchée en jeu (batterie, câble) : pause, comme sur console. Start : pause (la reprise passe par
+      // le menu de pause de l'UI). Les intentions de navigation de cette frame sont jetées (A = saut).
+      if ((padLost && !this.debug) || pauseRequested) this.setPaused(true);
+    }
+    if (leftGame(this.wasInGame, this.inGame)) {
+      // Sortie du jeu (Start, manette débranchée, Échap, pointer lock perdu, fin du match — ici ou depuis la frame
+      // précédente) : le stick / la croix / les boutons encore maintenus depuis le jeu n'agissent pas dans le menu qui
+      // s'ouvre (sinon la répétition du stick de course ferait défiler le focus jusqu'à « Quitter vers le menu »).
+      this.input.resetMenuNav();
+    } else if (!this.inGame && this.onMenuIntent !== null) {
+      for (const intent of intents) this.onMenuIntent(intent);
+    }
+    this.wasInGame = this.inGame;
+    if (this.input.lockPending && now - this.lockRequestedAt > LOCK_PENDING_TIMEOUT_SEC) this.input.lockPending = false;
+    this.input.gameplayActive = this.inGame;
+    this.input.pointerLockAllowed = this.mode === 'play' && !this.ended;
     const me = this.state.players[this.humanId];
     this.input.setCarrier(isCarrier(this.state, me));
 
@@ -356,12 +502,37 @@ export class GameSession {
     this.onFrame?.(this.snapshot());
   };
 
+  /** Ballon pour la mini-flèche hors champ (après le rendu de la frame : caméra et position affichée à jour). */
+  private ballView(): BallView | null {
+    const s = this.state;
+    const b = s.ball;
+    if (b.mode === 'dead' || s.phase === 'ended') return null;
+    const me = s.players[this.humanId];
+    let holder: BallHolder = 'free';
+    if (b.mode === 'carried') {
+      const c = s.players[b.carrierId];
+      holder = c === undefined ? 'free' : c.id === me.id ? 'mine' : c.team === me.team ? 'ally' : 'enemy';
+    } else if (b.mode === 'scrum') holder = 'scrum';
+    if (holder === 'mine') return null;
+    const pos = this.renderer.ballDisplayPos;
+    const cam = this.renderer.toCameraSpace(pos, { x: 0, y: 0, z: 0 });
+    return {
+      cam,
+      tanHalfFovY: this.renderer.tanHalfFovY,
+      width: this.renderer.viewportWidth,
+      height: this.renderer.viewportHeight,
+      distance: Math.hypot(pos.x - me.pos.x, pos.z - me.pos.z),
+      holder,
+    };
+  }
+
   /**
    * Regard de la caméra locale : celui de la souris / manette (non interpolé, visée réactive) ; en autopilote, celui du
    * bot (yaw / pitch du joueur 0 interpolés entre les deux derniers ticks).
    */
-  private view(alpha: number): { localId: number; yaw: number; pitch: number; aiming: boolean } {
-    if (!this.autopilot) return { localId: this.humanId, yaw: this.input.yaw, pitch: this.input.pitch, aiming: this.input.aiming };
+  private view(alpha: number): { localId: number; yaw: number; pitch: number; aiming: boolean; spectator: boolean } {
+    const spectator = this.mode === 'attract';
+    if (!this.autopilot) return { localId: this.humanId, yaw: this.input.yaw, pitch: this.input.pitch, aiming: this.input.aiming, spectator };
     const pc = this.state.players[this.humanId];
     const pp = this.prev.players[this.humanId] ?? pc;
     return {
@@ -369,6 +540,7 @@ export class GameSession {
       yaw: lerpAngle(pp.yaw, pc.yaw, alpha),
       pitch: pp.pitch + (pc.pitch - pp.pitch) * alpha,
       aiming: (pc.lastButtons & Buttons.AIM) !== 0,
+      spectator,
     };
   }
 
@@ -398,9 +570,13 @@ export class GameSession {
         this.input.exitPointerLock();
       }
     }
-    this.haptics.handleEvents(events, me.id, me.team, nowSec, this.input.activeDevice === 'gamepad' ? this.input.activeGamepad : null, me.pos);
+    // Aucune vibration en fond de menu (match bots contre bots).
+    if (this.mode === 'play') {
+      this.haptics.handleEvents(events, me.id, me.team, nowSec, this.input.activeDevice === 'gamepad' ? this.input.activeGamepad : null, me.pos);
+    }
     this.renderer.handleEvents(events, this.state, nowSec, this.prev);
     this.combatHud.handleEvents(events, this.state, this.humanId, nowSec);
+    this.eventFeed.handleEvents(events, this.state, this.humanId, nowSec);
     for (const e of events) {
       const fb = feedbackFor(e, this.state, this.humanId);
       if (fb !== null) this.showFeedback(fb, nowSec);
@@ -461,9 +637,15 @@ export class GameSession {
     const me = s.players[this.humanId];
     const role = ROLES[me.role];
     const reloadTotal = Math.max(1, cooldownTicks(s, role.weapon.reloadSec));
+    const carrier = isCarrier(s, me);
+    const passTarget = this.renderer.passTargetId;
     return {
       tick: s.tick,
+      mode: this.mode,
       paused: this.paused,
+      ended: this.ended,
+      awaitingLock: this.input.lockPending,
+      debug: this.debug,
       pointerLocked: this.input.pointerLocked,
       activeDevice: this.input.activeDevice,
       gamepadConnected: this.input.gamepad.connected,
@@ -473,7 +655,7 @@ export class GameSession {
       move: me.move,
       status: me.status,
       onGround: me.onGround,
-      carrier: isCarrier(s, me),
+      carrier,
       aiming: this.input.aiming,
       sprinting: this.input.gamepad.sprinting || (me.lastButtons & Buttons.SPRINT) !== 0,
       dodgeCd: ticksToSec(me.dodgeCd),
@@ -483,26 +665,39 @@ export class GameSession {
       stability: me.stability,
       stabilityMax: role.stabilityMax,
       stabilityLow: me.stability <= role.stabilityMax * STYLE.stabilityBarLowFraction,
+      stabilityMid: me.stability < role.stabilityMax * STYLE.stabilityBarMidFraction,
       statusSec: me.status === 'active' ? 0 : ticksToSec(me.statusTicks) + (me.status === 'down' ? GETUP_DURATION_SEC : 0),
+      statusTotalSec: DOWN_DURATION_SEC + GETUP_DURATION_SEC,
+      invulnSec: ticksToSec(me.invulnTicks),
+      regenerating: me.status === 'active' && me.regenDelayTicks === 0 && me.stability < role.stabilityMax,
       role: me.role,
+      roleLabel: role.label,
+      team: me.team,
       ammo: me.ammo,
       magazine: role.weapon.magazine,
       reloadProgress: me.reloadTicks > 0 ? Math.min(1, 1 - me.reloadTicks / reloadTotal) : -1,
       canShoot: canShoot(s, me) && weaponImplemented(role.weapon),
+      ammoLow: me.reloadTicks === 0 && me.ammo <= Math.max(1, Math.floor(role.weapon.magazine * STYLE.ammoLowFraction)),
       abilityLabel: role.ability.label,
       abilityImplemented: abilityImplemented(me),
       abilityActiveSec: abilityActive(me) ? ticksToSec(me.abilityTicks) : this.ownZoneSec(me.id),
-      abilityHint: me.role === 'pilier' && abilityActive(me) ? 'appuie à nouveau pour baisser' : '',
+      abilityHint: me.role === 'pilier' && abilityActive(me) ? 'réappuie : baisser' : '',
       abilityDurationSec: role.ability.duration,
       abilityCooldownSec: cooldownTicks(s, role.ability.cooldown) / TICK_RATE,
-      dodgeCooldownSec: cooldownTicks(s, isCarrier(s, me) ? CARRIER_DODGE_COOLDOWN_SEC : DODGE_COOLDOWN_SEC) / TICK_RATE,
+      dodgeCooldownSec: cooldownTicks(s, carrier ? CARRIER_DODGE_COOLDOWN_SEC : DODGE_COOLDOWN_SEC) / TICK_RATE,
+      slideCooldownSec: cooldownTicks(s, SLIDE_COOLDOWN_SEC) / TICK_RATE,
+      diveCooldownSec: cooldownTicks(s, DIVE_COOLDOWN_SEC) / TICK_RATE,
+      canCarrierAct: carrier && canCarrierAct(me),
       combat: this.combatHud.frame(this.lastTime, me, this.input.yaw, s),
       fps: this.fps,
       assistTarget: this.input.lastAssist.targetId,
-      passTarget: this.renderer.passTargetId,
+      passTarget,
+      passTargetName: passTarget >= 0 ? playerName(s, passTarget) : '',
       feedback: this.feedback !== null && this.lastTime < this.feedbackUntil ? { ...this.feedback, seq: this.feedbackSeq } : null,
       debugTools: this.debugTools,
       match: this.matchHud.frame(s, this.humanId, this.lastTime),
+      feed: this.eventFeed.frame(this.lastTime),
+      ball: this.ballView(),
     };
   }
 

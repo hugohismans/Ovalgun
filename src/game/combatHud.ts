@@ -32,6 +32,8 @@ export interface CombatHudFrame {
   damage: DamageIndicator[];
   /** Opacité de la vignette rouge (0 : aucune). */
   vignette: number;
+  /** Étape 8 : compteur de tirs reçus par le joueur local (change à chaque tir : la jauge de stabilité tremble / flashe). */
+  hitTakenSeq: number;
 }
 
 interface Received {
@@ -57,6 +59,7 @@ export class CombatHud {
   private readonly received: Received[] = [];
   private nextKey = 0;
   private lastHitTakenAt = -Infinity;
+  private hitTakenSeq = 0;
 
   /** Événements d'un tick pour le joueur local. */
   handleEvents(events: readonly MatchEvent[], state: MatchState, localId: number, nowSec: number): void {
@@ -65,6 +68,7 @@ export class CombatHud {
         if (e.sourceId === localId && e.targetId !== localId) this.marker(false, nowSec);
         if (e.targetId === localId) {
           this.lastHitTakenAt = nowSec;
+          this.hitTakenSeq++;
           const src = state.players[e.sourceId];
           const existing = this.received.find((r) => r.sourceId === e.sourceId);
           const r = existing ?? { key: this.nextKey++, sourceId: e.sourceId, x: 0, z: 0, at: 0 };
@@ -120,6 +124,7 @@ export class CombatHud {
           : null,
       damage,
       vignette: Math.min(1, low + flash),
+      hitTakenSeq: this.hitTakenSeq,
     };
   }
 

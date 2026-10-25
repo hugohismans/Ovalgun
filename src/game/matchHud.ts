@@ -1,5 +1,5 @@
 /**
- * Boucle de match côté HUD (étape 6, minimal : le HUD complet est l'étape 8), PUR et testé (le temps est passé en
+ * Boucle de match côté HUD (étape 6 ; affiché par le HUD de l'étape 8 : ScoreBar, Announcer, ScrumMeter, EndScreen), PUR et testé (le temps est passé en
  * paramètre) : score et chrono (mm:ss), compte à rebours du coup d'envoi (« 3, 2, 1, JOUEZ ! »), bannière d'essai,
  * indicateur « DERNIÈRE MINUTE », écran de fin (score final, statistiques par joueur) ; étape 7 : mêlée (« MÊLÉE ! »,
  * décompte, temps restant, prolongation, « Mêlée gagnée par … »).
@@ -11,15 +11,26 @@
 import { inScrumZone, ROLES, TICK_RATE, type MatchEvent, type MatchPhase, type MatchState, type Role, type TeamId } from '../sim';
 import { PALETTE, STYLE } from '../render/palette';
 import { scrumGauge } from '../render/ScrumView';
+import { playerName } from './names';
 
 /** Noms affichés des équipes (couleurs du rendu : équipe 0 orange, équipe 1 bleu). */
 export const TEAM_NAMES: readonly [string, string] = ['Orange', 'Bleu'];
 /** Couleurs des équipes pour l'UI (les mêmes que le rendu : PALETTE.teams). */
 export const TEAM_COLORS: readonly [string, string] = [PALETTE.teams[0].main, PALETTE.teams[1].main];
 
-/** Chrono « m:ss » à partir de ticks restants, arrondi à la seconde SUPÉRIEURE (0:00 seulement à la fin). */
-export function formatClock(ticks: number): string {
-  const total = Math.max(0, Math.ceil(ticks / TICK_RATE));
+/**
+ * Chrono « m:ss » à partir de ticks restants, arrondi à la seconde SUPÉRIEURE (0:00 seulement à la fin). Étape 8 : sous
+ * `tenthsBelowSec` secondes (STYLE.clockTenthsBelowSec dans le HUD), « s,d » au dixième (arrondi supérieur : « 0,1 »
+ * jusqu'au dernier tick, « 0,0 » à la fin) ; 0 = jamais.
+ */
+export function formatClock(ticks: number, tenthsBelowSec = 0): string {
+  const t = Math.max(0, ticks);
+  if (tenthsBelowSec > 0 && t < tenthsBelowSec * TICK_RATE) {
+    // Arrondi supérieur, plafonné juste sous le seuil (pas de « 10,0 » entre « 0:10 » et « 9,9 »).
+    const tenths = Math.min(tenthsBelowSec * 10 - 1, Math.ceil((t * 10) / TICK_RATE - 1e-9));
+    return `${Math.floor(tenths / 10)},${tenths % 10}`;
+  }
+  const total = Math.ceil(t / TICK_RATE);
   const m = Math.floor(total / 60);
   const s = total % 60;
   return `${m}:${s < 10 ? '0' : ''}${s}`;
@@ -31,6 +42,8 @@ export interface PlayerLine {
   team: TeamId;
   role: Role;
   roleLabel: string;
+  /** Nom affiché (« Ailier 1 », names.ts). */
+  name: string;
   local: boolean;
   tries: number;
   tackles: number;
@@ -64,6 +77,26 @@ export interface FinalResult {
   players: PlayerLine[];
   /** A / Entrée acceptés (délai STYLE.endScreenInputDelaySec écoulé depuis la fin). */
   canReplay: boolean;
+  /** « Joueur du match » (matchMvp : STYLE.mvpWeights), −1 : personne (aucune statistique). */
+  mvpId: number;
+}
+
+/**
+ * « Joueur du match » (étape 8), PUR : la ligne au plus grand score Σ statistique × STYLE.mvpWeights ; en cas d'égalité,
+ * la première dans l'ordre donné (celui de l'écran de fin) ; −1 si tous les scores sont nuls (ou aucune ligne).
+ */
+export function matchMvp(players: readonly Readonly<Pick<PlayerLine, 'id' | 'tries' | 'tackles' | 'interceptions' | 'passes'>>[]): number {
+  const w = STYLE.mvpWeights;
+  let best = -1;
+  let bestScore = 0;
+  for (const p of players) {
+    const sc = p.tries * w.tries + p.tackles * w.tackles + p.interceptions * w.interceptions + p.passes * w.passes;
+    if (sc > bestScore) {
+      bestScore = sc;
+      best = p.id;
+    }
+  }
+  return best;
 }
 
 /** Mêlée en cours (étape 7) : décompte, équipe qui mène, prolongation, temps restant de la phase en cours. */
@@ -96,8 +129,10 @@ export interface MatchHudFrame {
   score: [number, number];
   localTeam: TeamId;
   teamNames: readonly [string, string];
-  /** Chrono « m:ss » ; en entraînement, chrono figé (`training`). */
+  /** Chrono « m:ss » (« s,d » dans les STYLE.clockTenthsBelowSec dernières secondes) ; en entraînement, chrono figé (`training`). */
   clock: string;
+  /** Chrono au dixième (dernières secondes) : mis en valeur par l'UI. */
+  clockUrgent: boolean;
   training: boolean;
   lastMinute: boolean;
   /** Bannière « DERNIÈRE MINUTE » (quelques secondes après son déclenchement). */
@@ -115,11 +150,6 @@ export interface MatchHudFrame {
   scrumCall: boolean;
   scrumResult: ScrumResult | null;
 }
-
-const playerLabel = (state: MatchState, id: number): string => {
-  const p = state.players[id];
-  return p === undefined ? `#${id}` : `${ROLES[p.role].label} #${id}`;
-};
 
 export class MatchHud {
   private playCallUntil = -Infinity;
@@ -198,7 +228,7 @@ export class MatchHud {
         team: t.team,
         teamName: TEAM_NAMES[t.team],
         scorerId: t.scorerId,
-        scorerLabel: playerLabel(state, t.scorerId),
+        scorerLabel: playerName(state, t.scorerId),
         ours: t.team === localTeam,
         mine: t.scorerId === localId,
         score: t.score,
@@ -209,7 +239,8 @@ export class MatchHud {
       score: [state.score[0], state.score[1]],
       localTeam,
       teamNames: TEAM_NAMES,
-      clock: formatClock(state.clockTicks),
+      clock: formatClock(state.clockTicks, STYLE.clockTenthsBelowSec),
+      clockUrgent: !state.config.training && state.phase !== 'ended' && state.clockTicks < STYLE.clockTenthsBelowSec * TICK_RATE,
       training: state.config.training,
       lastMinute: state.lastMinute,
       lastMinuteBanner: state.phase !== 'ended' && nowSec < this.lastMinuteUntil,
@@ -249,6 +280,7 @@ export class MatchHud {
           team: p.team,
           role: p.role,
           roleLabel: ROLES[p.role].label,
+          name: playerName(state, p.id),
           local: p.id === localId,
           tries: p.stats.tries,
           tackles: p.stats.tackles,
@@ -265,6 +297,7 @@ export class MatchHud {
       outcome: winner === -1 ? 'draw' : winner === localTeam ? 'win' : 'loss',
       players,
       canReplay: this.canReplay(nowSec),
+      mvpId: matchMvp(players),
     };
   }
 }

@@ -1,5 +1,5 @@
 /**
- * Retours texte temporaires pour le joueur local (étape 4, en attendant le vrai HUD de l'étape 8) :
+ * Retours texte temporaires pour le joueur local (étape 4 ; étape 8 : affichés par le HUD près du réticule, hud/Callout.svelte) :
  * « Aucun coéquipier derrière », « Interception ! », « Plaqué ! », « Plaquage ! »…
  * Table PURE (testée) : événement -> message.
  */

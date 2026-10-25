@@ -1,3 +1,37 @@
+/*
+ * Styles globaux et jetons de couleur de l'UI (étape 8). Style flat coloré (Splatoon / Rocket League) : fonds
+ * bleu nuit, pastilles saturées, typographie grasse et italique pour les titres. Les couleurs d'équipe (--t0, --t1)
+ * sont redéfinies par App.svelte depuis TEAM_COLORS (src/game/matchHud.ts : les mêmes que le rendu).
+ * Taille de base fluide (rem) : le HUD et les menus s'adaptent de 900×600 à 4K, en 16:9 comme en 21:9.
+ */
+
+:root {
+  --t0: #ff7417;
+  --t1: #1f8cff;
+  --ink: #0f0d2b;
+  --panel: rgb(18 15 52 / 0.86);
+  --panel-solid: #1a1747;
+  --panel-hi: #2a2563;
+  --stroke: rgb(255 255 255 / 0.14);
+  --text: #ffffff;
+  --text-dim: #cfcbf5;
+  --text-faint: #9a96c8;
+  --accent: #ffe12e;
+  --good: #3dffa0;
+  --bad: #ff4466;
+  --warn: #ffb02e;
+  --violet: #7b5cff;
+  --pink: #ff4fa3;
+  --cyan: #5ee7ff;
+  --focus: #ffe12e;
+  --r-sm: 0.5rem;
+  --r-md: 0.85rem;
+  --r-lg: 1.3rem;
+  --font: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-size: clamp(12px, 0.75vmin + 8px, 19px);
+  color-scheme: dark;
+}
+
 html,
 body {
   margin: 0;
@@ -5,6 +39,29 @@ body {
   height: 100%;
   overflow: hidden;
   background: #1b1f3a;
-  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  color: var(--text);
+  font-family: var(--font);
   user-select: none;
+  -webkit-font-smoothing: antialiased;
 }
+
+button {
+  font-family: inherit;
+  color: inherit;
+}
+
+/* Anneau de focus : visible au clavier et à la manette (classe posée par nav.svelte.ts), jamais sous la souris. */
+:focus {
+  outline: none;
+}
+:focus-visible,
+.nav-visible :focus {
+  outline: 0.2rem solid var(--focus);
+  outline-offset: 0.18rem;
+}
+
+/*
+ * Accessibilité : les pulsations, tremblements et « pops » sont déclarés dans chaque composant sous
+ * `@media (prefers-reduced-motion: no-preference)` ; les fondus d'information (hitmarker, flux) restent, mais
+ * sans mouvement.
+ */

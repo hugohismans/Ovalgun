@@ -19,4 +19,10 @@ appel de `step()`, alimentation du rendu (interpolation) et du HUD.
   `autopilot` (`?debug&autopilot`) : le joueur 0 aussi (match bots contre bots vu depuis sa caméra). Le joueur humain reçoit le
   ballon aux coups d'envoi de son équipe (`MatchConfig.kickoffReceivers`, hors autopilote).
 
-Voir docs/ARCHITECTURE.md §8.
+- Étape 8 : `launch(options)` (modes `play` / `attract` : fond du menu), `applySettings`, `onMenuIntent` (navigation manette
+  des menus) ; modules purs `ballArrow.ts` (flèche hors champ), `eventFeed.ts` + `names.ts` (flux d'événements), `roleCards.ts`
+  (cartes du menu, `compositionText`), `settings.ts` (réglages), `launch.ts` (choix de lancement, URL, drapeaux de debug),
+  `matchMvp` (matchHud.ts : joueur du match). À chaque match, la session recrée les candidats de l'aide à la visée
+  (`resetAssistCandidates`) et, à la sortie du jeu (pause, fin), remet la navigation des menus à zéro (`leftGame`).
+
+Voir docs/ARCHITECTURE.md §8 et §16.

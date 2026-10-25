@@ -106,6 +106,36 @@ export const DEFAULT_GAMEPAD_MAP: GamepadMap = {
   confirmButton: 0,
 };
 
+/**
+ * Boutons de navigation dans les menus (étape 8), en DONNÉES comme le reste du mapping : croix directionnelle,
+ * valider (A / Croix), retour (B / Rond), Start (jouer / reprendre / rejouer), LB / RB (précédent / suivant : bascule
+ * Xbox / PlayStation du panneau des contrôles).
+ * Le stick gauche (`DEFAULT_GAMEPAD_MAP.moveAxes`) navigue aussi.
+ */
+export interface MenuPadMap {
+  up: number;
+  down: number;
+  left: number;
+  right: number;
+  confirm: number;
+  back: number;
+  start: number;
+  prev: number;
+  next: number;
+}
+
+export const DEFAULT_MENU_PAD_MAP: MenuPadMap = {
+  up: 12,
+  down: 13,
+  left: 14,
+  right: 15,
+  confirm: 0,
+  back: 1,
+  start: 9,
+  prev: 4,
+  next: 5,
+};
+
 /** Famille de glyphes à afficher. */
 export type GamepadStyle = 'xbox' | 'playstation';
 

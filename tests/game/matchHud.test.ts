@@ -3,7 +3,7 @@
  * écran de fin. Pur : le temps est passé en paramètre.
  */
 import { describe, expect, it } from 'vitest';
-import { formatClock, MatchHud, TEAM_NAMES } from '../../src/game/matchHud';
+import { formatClock, MatchHud, matchMvp, TEAM_NAMES } from '../../src/game/matchHud';
 import { STYLE } from '../../src/render/palette';
 import {
   BALL_RADIUS,
@@ -66,7 +66,7 @@ describe('MatchHud', () => {
     hud.handleEvents([{ type: 'try', team: 0, scorerId: 1 }], s, 10);
     const tb = hud.frame(s, 0, 10).tryBanner;
     expect(tb).toMatchObject({ team: 0, teamName: TEAM_NAMES[0], scorerId: 1, ours: true, mine: false, score: [TRY_POINTS, 0] });
-    expect(tb?.scorerLabel).toContain('#1');
+    expect(tb?.scorerLabel).toBe('Demi 2');
     expect(hud.frame(s, 4, 10).tryBanner?.ours).toBe(false); // vu par un joueur de l'équipe 1
     s.phase = 'play';
     expect(hud.frame(s, 0, 10).tryBanner).toBeNull();
@@ -174,3 +174,39 @@ describe('MatchHud : mêlée (étape 7)', () => {
     expect(k.scrumCall).toBe(false);
   });
 });
+
+describe('formatClock (étape 8 : dixièmes dans les dernières secondes)', () => {
+  it('« s,d » sous le seuil, arrondi supérieur ; m:ss au-dessus ; 0 = jamais', () => {
+    expect(formatClock(secToTicks(10), 10)).toBe('0:10');
+    expect(formatClock(secToTicks(10) - 1, 10)).toBe('9,9');
+    expect(formatClock(secToTicks(4.5), 10)).toBe('4,5');
+    expect(formatClock(1, 10)).toBe('0,1');
+    expect(formatClock(0, 10)).toBe('0,0');
+    expect(formatClock(secToTicks(4.5))).toBe('0:05');
+    expect(formatClock(secToTicks(75), 10)).toBe('1:15');
+  });
+});
+
+describe('matchMvp (étape 8 : joueur du match, STYLE.mvpWeights)', () => {
+  const line = (id: number, tries = 0, tackles = 0, interceptions = 0, passes = 0) => ({ id, tries, tackles, interceptions, passes });
+  it('plus grand score pondéré ; égalité => le premier dans l’ordre donné ; tout à zéro => personne', () => {
+    const w = STYLE.mvpWeights;
+    expect(matchMvp([])).toBe(-1);
+    expect(matchMvp([line(0), line(1), line(4)])).toBe(-1);
+    // Un essai vaut w.tries plaquages : à égalité de score, le premier de la liste l'emporte.
+    expect(matchMvp([line(3, 0, w.tries), line(1, 1)])).toBe(3);
+    expect(matchMvp([line(1, 1), line(3, 0, w.tries)])).toBe(1);
+    expect(matchMvp([line(0, 0, w.tries + 1), line(1, 1)])).toBe(0);
+    expect(matchMvp([line(0, 0, 0, 0, 1), line(5, 0, 0, 1)])).toBe(w.interceptions > w.passes ? 5 : 0);
+  });
+
+  it('écran de fin : mvpId fourni par MatchHud', () => {
+    const s = createMatch({ teamSize: 3, seed: 1, roles: [['pilier', 'ailier', 'demi'], ['pilier', 'ailier', 'demi']] });
+    s.players[4].stats.tries = 2;
+    s.phase = 'ended';
+    const hud = new MatchHud();
+    const fin = hud.frame(s, 0, 10).final;
+    expect(fin?.mvpId).toBe(4);
+  });
+});
+

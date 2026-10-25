@@ -14,7 +14,7 @@ src/
   input/   Clavier/souris (pointer lock) ET manette (Gamepad API) -> un PlayerInput par tick.
            Remapping via keymap.ts / gamepadMap.ts (données, pas de touches en dur).
   game/    Colle côté client : boucle à pas fixe, assemblage des entrées (humain + bots), appel de step(), alimentation du rendu et du HUD.
-  ui/      Svelte 5 (runes) : menu, HUD, overlays.
+  ui/      Svelte 5 (runes) : menu, HUD, pause, fin, contrôles, réglages (étape 8, §16). Logique pure dans ui/logic.
 tests/     Vitest (environnement node) : simulation, bots, architecture.
 ```
 
@@ -1149,3 +1149,113 @@ Constats écartés ou partiels :
   pour le « clignotement » (hystérésis).
 - **Ballon libre 31–40 % du temps** : accepté comme prix du rythme (voir ci-dessus), pas de changement de règle.
 
+
+## 16. Étape 8 : HUD et menus
+
+| Fichier | Rôle |
+|---|---|
+| `ui/App.svelte` | Racine : canvas + routeur d'écrans (menu -> partie -> pause -> fin -> menu, panneaux par-dessus), clavier des menus (flèches, Échap). |
+| `ui/state/app.svelte.ts` | État de l'application en runes : écran, panneau, choix du menu, réglages, périphérique actif ; transitions (`play`, `resume`, `restart`, `quitToMenu`, `back`) ; intentions manette -> navigation. |
+| `ui/state/hud.svelte.ts` | Instantané de la session pour le HUD : `snap` (≤ 30 Hz + changements discrets) et `fast` (chaque frame : flèche du ballon, retours de visée). |
+| `ui/state/nav.svelte.ts` | Navigation au VRAI focus du navigateur (portée `navScope`, spatiale, curseurs, anneau de focus visible au clavier / à la manette). |
+| `ui/logic/focusNav.ts` | PUR : navigation spatiale (direction, score d'alignement, boucle verticale). |
+| `ui/logic/controlHints.ts` | PUR : glyphes clavier / manette d'une action selon le périphérique et la famille (Xbox / PlayStation), structure du panneau des contrôles (`CONTROLS`, `CONTROL_GROUPS`). |
+| `ui/logic/storage.ts` | PUR : JSON dans un stockage clé-valeur, try/catch partout (localStorage absent, qui jette, contenu corrompu). |
+| `ui/hud/*` | `Hud` (calques), `ScoreBar`, `ScrumMeter`, `Announcer`, `StabilityGauge`, `ActionBar` + `CooldownPill` + `WeaponPill`, `RoleBadge`, `BallArrow`, `Crosshair`, `EventFeed`, `Callout`, `TrainingTools`, `DebugInfo`. |
+| `ui/menu/*`, `ui/common/*` | Menu de lancement (`Menu`, `RoleCard`, `ControlsPreview`) ; `Glyph` (touches, boutons Xbox / PS, sticks, croix), `Icon` (signes géométriques), `Segmented`, `Toggle`, `Panel`, `NavHints`. |
+| `ui/PauseMenu.svelte`, `EndScreen.svelte`, `ControlsPanel.svelte`, `SettingsPanel.svelte` | Pause, écran de fin, contrôles, réglages. |
+| `game/ballArrow.ts` | PUR : mini-flèche hors champ (projection, ballon derrière la caméra, bord de l'écran, zones du HUD évitées). |
+| `game/eventFeed.ts`, `game/names.ts` | PURS : flux d'événements (plaquages, interceptions, essais, mêlées), noms affichés (« Pilier 2 », « Toi »). |
+| `game/roleCards.ts` | PUR : cartes de rôle (valeurs de ROLES, notes relatives 1..5, aperçu de l'équipe). |
+| `game/settings.ts`, `game/launch.ts` | PURS : réglages du joueur et choix de lancement validés (`sanitize*`), paramètres d'URL et drapeaux de debug. |
+| `input/menuNav.ts` | PUR : manette -> intentions de navigation (fronts, répétition, stick, boutons déjà enfoncés ignorés). |
+| `render/SpectatorCamera.ts` | Caméra de biais qui suit le ballon (fond du menu). |
+
+Décisions :
+
+- **UI = lecture seule** : aucune règle de jeu dans `src/ui` ; tout vient de l'instantané `FrameSnapshot` de la session (enrichi : flux,
+  ballon en repère caméra, invulnérabilité, régénération, cooldowns totaux, nom de la cible de passe…) ou des modules purs de `src/game`.
+  L'UI n'importe toujours que `game` et `input` (test d'architecture) ; les valeurs de ROLES passent par `game/roleCards.ts`.
+- **Performance** : un instantané par frame est produit (comme avant), mais l'UI ne publie le gros instantané qu'à 30 Hz (et aussitôt sur un
+  changement discret : pause, fin, phase, porteur, statut, tir reçu, hitmarker…) ; ce qui suit la caméra (flèche, indicateurs de tirs reçus,
+  réticule) est publié à chaque frame dans un petit objet séparé. `$state.raw` (pas de proxy profond), sous-composants qui ne lisent que leurs champs.
+- **Fond du menu** : la session a deux modes. `attract` = match bots contre bots (5v5, entraînement, autopilote du joueur 0, caméra spectateur,
+  aucune vibration, jamais en pause, pas d'anneau « humain ») ; `play` = la partie. `GameSession.launch(options)` passe de l'un à l'autre sans
+  recréer le rendu ni le contexte WebGL. `?debug` lance la partie directement (comportement des étapes précédentes, scripts Playwright) ;
+  `?debug&menu` affiche le menu ; `?debug&duration=<s>` raccourcit le match (écran de fin rapide).
+- **Pause et menus** : la session décide encore des mises en pause automatiques (pointer lock perdu au clavier, Start, manette active
+  débranchée) ; la REPRISE, « Recommencer », « Rejouer » et le retour au menu sont décidés par l'UI. Les intentions de navigation de la manette
+  (`MenuNavReader` dans l'InputManager) sont transmises par `GameSession.onMenuIntent` seulement quand aucun jeu n'est en cours (menu, pause,
+  fin) : en jeu elles sont jetées (A = saut) — l'état « en jeu » est évalué AVANT de traiter Start, donc le Start qui met en pause ne reprend pas
+  aussitôt. Le A / Start qui ferme un menu ne fait pas sauter (reset des entrées à la reprise, comme avant). L'ancien `consumeConfirm` de la session
+  (A = reprendre / rejouer) est remplacé par les menus.
+- **Clavier dans les menus** : `InputManager.gameplayActive` faux (menu, pause, fin) => les touches ne pilotent plus le joueur ni n'empêchent leur
+  action par défaut (Tab, Espace, flèches) ; elles rendent seulement le clavier actif (glyphes). `pointerLockAllowed` : le canvas ne demande le
+  pointer lock qu'en partie. `lockPending` : après « Jouer » / « Reprendre » au clavier, le menu de pause attend la réponse du navigateur (au plus
+  1,5 s) au lieu de clignoter. Limite : Échap ne peut pas reprendre la partie au clavier hors `?debug` (le navigateur refuse le pointer lock sur
+  Échap) ; « Reprendre » (clic / Entrée) ou Start à la manette le font.
+- **Navigation** : vrai focus du navigateur (Tab, Entrée, lecteurs d'écran), navigation spatiale pure pour la croix / le stick / les flèches,
+  gauche / droite font varier un curseur, B / Échap = retour, Start = jouer (menu) / reprendre (pause) / rejouer (fin),
+  LB / RB = glyphes Xbox / PlayStation (panneau des contrôles). Focus initial `[data-autofocus]`, focus
+  rendu à l'ouverture d'un panneau (au retour d'un panneau de la pause, sur son bouton). Anneau de focus visible au clavier / à la manette,
+  masqué quand la souris bouge. Pas de piège de focus : la portée courante est la dernière du DOM ; un menu resté monté
+  sous un panneau (menu de lancement sous Contrôles / Réglages) est `inert`, donc Tab ne l'atteint pas derrière le voile ;
+  le menu de pause, lui, est démonté pendant un panneau.
+- **Répétition** à la manette : `MENU_NAV_REPEAT_DELAY_SEC` / `MENU_NAV_REPEAT_SEC`, seuil du stick `MENU_NAV_STICK_THRESHOLD`
+  (constants.ts, section MENUS ET RÉGLAGES DU JOUEUR) ; boutons de navigation en données (`DEFAULT_MENU_PAD_MAP`, gamepadMap.ts).
+- **Réglages** (localStorage `ovalgun.settings.v1`) : sensibilité souris et caméra manette (multiplicateurs de `MOUSE_SENSITIVITY` /
+  `GAMEPAD_LOOK_*_SPEED_DEG`, bornes et pas `SETTINGS_SENSITIVITY_*`), inversion Y (manette), aide à la visée, vibrations, volume réservé ;
+  appliqués à chaud (`GameSession.applySettings` -> `InputManager.applySettings`, `Haptics.enabled`). Choix du menu (`ovalgun.setup.v1`) :
+  taille, rôle, difficulté, entraînement ; l'URL prime (debug). Valeurs relues validées (`sanitizeSettings`, `sanitizeSetup`).
+- **Mini-flèche du ballon** : position affichée du ballon en repère caméra (après le rendu) -> `offscreenArrow` : projection devant la caméra ;
+  derrière, direction sans division par la profondeur (continue sur le côté), pile derrière => bas de l'écran ; placée au bord de l'écran
+  (marge) ou au bord de la première zone du HUD traversée (score, jauge + actions, rôle). Couleur : libre (jaune), allié / adversaire (couleur
+  de son équipe), mêlée (doré) ; distance horizontale. Masquée quand le joueur local porte le ballon ou que le ballon est mort.
+- **HUD** : zone sûre centrée d'au plus 2,05 × la hauteur (en 21:9 les coins restent près du centre) ; taille de base fluide
+  (`font-size: clamp(12px, 0.75vmin + 8px, 19px)`, tout en rem). Jauge de stabilité : couleur par niveau, traînée de perte, tremblement + flash à
+  chaque tir reçu (deux animations identiques alternées : la barre n'est pas recréée), « PLAQUÉ » + temps et progression du relevé,
+  invulnérabilité (liseré + étiquette). Pastilles radiales (SVG) : esquive, glissade / plongeon, passe (cible) et coup de pied quand on porte,
+  capacité (durée active ou recharge ; zone du demi : vie de la zone), arme (munitions, rechargement) ; touche ou bouton du périphérique
+  actif. Messages personnels (feedback.ts) près du réticule, à droite (la caméra épaule place le joueur à gauche). Grandes annonces au centre.
+  Durées du flux et seuil des dixièmes du chrono : `STYLE.feed*`, `STYLE.clockTenthsBelowSec` (palette.ts, visuel).
+- **Accessibilité** : contrastes (fonds bleu nuit opaques derrière les textes, libellés des pastilles sur pastille sombre), tailles en rem,
+  pulsations / tremblements / « pops » sous `prefers-reduced-motion: no-preference` (les fondus d'information restent), rôles ARIA (radiogroup,
+  switch, dialog, status), glyphes avec libellé.
+- **Remapping** (plus tard) : le panneau des contrôles est construit depuis `CONTROLS` (une ligne = des actions de `Keymap` / `GamepadMap`) ;
+  rendre une cellule éditable consistera à remplacer ces liaisons et à passer la nouvelle carte à l'InputManager. Pas d'édition maintenant.
+- **Tests** : `tests/game/ballArrow.test.ts`, `eventFeed.test.ts`, `roleCards.test.ts`, `settings.test.ts` (+ lancement / URL),
+  `matchHud.test.ts` (dixièmes), `combatHud.test.ts` (compteur de tirs reçus), `tests/input/menuNav.test.ts`, `tests/ui/focusNav.test.ts`,
+  `controlHints.test.ts`, `storage.test.ts` ; correction : `aimAssist.test.ts` (`resetAssistCandidates`),
+  `menuNav.test.ts` (stick maintenu en jeu puis pause, `leftGame`), `matchHud.test.ts` (`matchMvp`), `ballArrow.test.ts`
+  (marge des zones évitées), `roleCards.test.ts` (`compositionText`). Vérification visuelle Playwright (menu clavier et fausse manette, HUD, pause, réglages, fin ;
+  1280×720, 1920×1080, 900×600, 2560×1080).
+- **Correction de l'étape 8 (constats de relecture)** :
+  - *Aide à la visée après `launch()`* : les candidats (`AssistCandidate`, un par joueur, avec son équipe) n'étaient
+    construits qu'à la création de la session ; depuis que `launch()` change la taille d'équipe (menu 5v5 -> partie 3v3),
+    ils gardaient les équipes du 5v5 (2 adversaires sur 3 ignorés, 4 « fantômes ») ou manquaient (3v3 -> 5v5 : exception à
+    chaque frame, fond du menu figé). Ils sont recréés à chaque match (`resetAssistCandidates`, aimAssist.ts, testé).
+  - *Navigation remise à zéro à la sortie du jeu* : `GameSession.loop` retient « en jeu » à la frame précédente et appelle
+    `resetMenuNav()` quand on en sort (Start, manette débranchée, Échap, pointer lock perdu, fin du match ; `leftGame`,
+    menuNav.ts). Un stick / une croix / un bouton maintenu depuis le jeu est ignoré jusqu'à son relâchement (avant : la
+    répétition du stick de course faisait défiler le focus de la pause jusqu'à « Quitter vers le menu »).
+  - *Pause* : « Recommencer » et « Quitter vers le menu » demandent un second appui (le bouton passe au rouge « Confirmer
+    … ? » pendant 2,5 s ; quitter le bouton annule). Au clavier hors `?debug`, l'aide n'annonce plus « Échap : Reprendre »
+    et Échap met le focus sur « Reprendre » (Entrée / clic reprennent, dans un geste accepté par le navigateur).
+  - *Écran de fin* : « Joueur du match » calculé par `matchMvp` (matchHud.ts, testé ; poids `STYLE.mvpWeights`, `mvpId`
+    dans `FinalResult`), suivi du nom de son équipe (les noms « Ailier 1 »… existent dans les deux équipes) ; Start =
+    Rejouer ; délai d'activation `STYLE.endScreenInputDelaySec` porté de 1 à 1,5 s (des A répétés au coup de sifflet ne
+    sautent plus les statistiques).
+  - *Seuils visuels hors de l'UI* : jauge jaune (`STYLE.stabilityBarMidFraction`) et munitions basses
+    (`STYLE.ammoLowFraction`) arrivent par l'instantané (`stabilityMid`, `ammoLow`) ; pas du volume exporté
+    (`VOLUME_STEP`, settings.ts) ; note de composition du 5v5 tirée de `TEAM_ROLES_5V5` (`compositionText`, roleCards.ts).
+  - *Mini-flèche* : chaque zone évitée est agrandie du rayon de la flèche (disque + pointe, `avoidMargin` de
+    `offscreenArrow`, 2,4 rem) : elle ne recouvre plus l'étiquette « ENTRAÎNEMENT » / « DERNIÈRE MINUTE » sous le score.
+  - *Panneaux* : focus initial sur la première option (curseur de sensibilité souris, bascule Xbox / PlayStation) et non
+    plus sur « Retour » ; LB / RB basculent les glyphes du panneau des contrôles (`app.controlsStyle`) ; le corps des
+    panneaux laisse la place de l'anneau de focus (il était rogné à gauche et à droite) ; menu de lancement `inert` sous
+    un panneau.
+  - *Lisibilité* : contour sombre extérieur de la jauge de stabilité (vert menthe sur herbe ≈ 2:1 avant) et libellé
+    « STABILITÉ » sur pastille sombre.
+- **Limites connues** : en 900×600 le menu défile (l'aperçu des contrôles passe sous les cartes) ; la zone « rôle » évitée par la flèche suppose
+  la mise en page large (en petite fenêtre l'indicateur de rôle monte en haut à gauche) ; navigation spatiale : depuis le bout d'une rangée,
+  « droite » peut atteindre la colonne de droite plus bas (Contrôles / Réglages) — voulu, il n'y a rien d'autre à droite.

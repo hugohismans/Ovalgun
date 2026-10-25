@@ -385,8 +385,48 @@ export const STYLE = {
   playCallSec: 0.9,
   /** Bannière « DERNIÈRE MINUTE » au déclenchement (s) ; l'indicateur reste ensuite près du chrono. */
   lastMinuteBannerSec: 2.6,
-  /** Écran de fin : délai avant d'accepter A / Entrée (s), pour qu'un saut en cours ne relance pas le match. */
-  endScreenInputDelaySec: 1.0,
+  /**
+   * Écran de fin : délai avant d'accepter A / Entrée / Start (s), pour qu'un saut en cours ou des A répétés au coup de
+   * sifflet ne relancent pas le match sans laisser voir les statistiques (1 s avant la correction de l'étape 8).
+   */
+  endScreenInputDelaySec: 1.5,
+
+  // --- HUD et menus (étape 8, lus par la session / src/game ; l'UI n'importe pas le rendu) ---
+  /** Flux d'événements (plaquages, interceptions, essais, mêlées) : durée d'une ligne (s), fondu final (s), lignes max. */
+  feedSec: 4.5,
+  feedFadeSec: 0.6,
+  feedMax: 5,
+  /** Chrono affiché au dixième de seconde sous cette valeur (s) ; 0 = jamais. */
+  clockTenthsBelowSec: 10,
+  /** Jauge de stabilité jaune sous cette fraction du maximum (rouge sous `stabilityBarLowFraction`). */
+  stabilityBarMidFraction: 0.65,
+  /** Pastille d'arme « munitions basses » (rouge) à cette fraction du chargeur ou moins (au moins 1 cartouche). */
+  ammoLowFraction: 0.25,
+  /**
+   * « Joueur du match » de l'écran de fin (présentation, aucune règle de jeu) : score = somme des statistiques × poids ;
+   * le premier dans l'ordre de l'écran de fin (ton équipe d'abord, puis par id) l'emporte en cas d'égalité ; personne si
+   * tous les scores sont nuls. ↑ un poids = cette statistique compte davantage.
+   */
+  mvpWeights: { tries: 3, tackles: 1, interceptions: 2, passes: 1 },
+
+  // --- Caméra « spectateur » du menu (étape 8 : match bots contre bots en fond du menu de lancement) ---
+  /** Hauteur (m), recul sur le côté du terrain (m au-delà de la touche), avance le long du terrain (fraction de z du ballon). */
+  spectatorHeight: 10,
+  spectatorSideOffset: 3,
+  spectatorFollowZ: 0.8,
+  /** Recul de la caméra derrière le ballon le long du terrain (m) : on voit le jeu en biais. */
+  spectatorBackZ: -8,
+  /**
+   * Décalage du point visé le long du terrain (m) : le ballon apparaît à droite de l'écran (la colonne du menu occupe la
+   * gauche).
+   */
+  spectatorLookOffsetZ: -9,
+  /** Lissage de la position et du point visé (1/s) ; balancement lent (m, rad/s). */
+  spectatorBlendRate: 1.6,
+  spectatorSwayAmp: 4,
+  spectatorSwayRate: 0.12,
+  /** Champ de vision vertical (degrés). */
+  spectatorFov: 50,
 } as const;
 
 /** Un anneau d'effet : au sol ou face caméra, rayon de départ / d'arrivée (m), durée (s), délai (s). */

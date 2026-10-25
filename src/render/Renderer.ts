@@ -10,6 +10,9 @@
  * ralentissement et aperçus du demi local — point de pose de la zone quand la capacité est prête, point d'impact de la
  * grenade en visée (ZoneView) ; zone de capture de la mêlée (ScrumView : rayon exact, répartition, progression,
  * prolongation).
+ * Étape 8 : caméra « spectateur » (`ViewInput.spectator` : fond du menu, match bots contre bots, SpectatorCamera) et
+ * lectures pour le HUD : position affichée du ballon (`ballDisplayPos`), passage en repère caméra (`toCameraSpace`),
+ * champ de vision (`tanHalfFovY`) — la mini-flèche vers le ballon hors champ (src/game/ballArrow.ts).
  */
 
 import * as THREE from 'three';
@@ -41,6 +44,7 @@ import { PALETTE, STYLE } from './palette';
 import { PassIndicatorView, type PassIndicatorFrame } from './PassIndicatorView';
 import { PlayerAssets, PlayerView, type PlayerFrame } from './PlayerView';
 import { ShoulderCamera } from './ShoulderCamera';
+import { SpectatorCamera } from './SpectatorCamera';
 import { ScrumView } from './ScrumView';
 import { ZoneView, type AimPreviewFrame } from './ZoneView';
 
@@ -52,6 +56,11 @@ export interface ViewInput {
   yaw: number;
   pitch: number;
   aiming: boolean;
+  /**
+   * Étape 8 : caméra spectateur (vue de biais qui suit le ballon, fond du menu) au lieu de la caméra épaule ; les
+   * indicateurs du joueur local (passe, aperçus du demi) sont masqués.
+   */
+  spectator?: boolean;
 }
 
 /** Ciel : sphère à dégradé vertical (haut / horizon / bas), sans brouillard. */
@@ -147,6 +156,8 @@ export class Renderer {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene = new THREE.Scene();
   readonly shoulder: ShoulderCamera;
+  private readonly spectatorCam = new SpectatorCamera();
+  private readonly tmpVec = new THREE.Vector3();
   private readonly assets = new PlayerAssets();
   private field: FieldView | null = null;
   private backdrop: THREE.Group | null = null;
@@ -211,6 +222,36 @@ export class Renderer {
       return v;
     });
     this.interpFeet = state.players.map(() => ({ x: 0, y: 0, z: 0 }));
+    this.spectatorCam.reset();
+  }
+
+  /** Position AFFICHÉE du ballon à la dernière frame (interpolée, ballon porté replacé sur le porteur). */
+  get ballDisplayPos(): Readonly<Vec3> {
+    return this.ballPos;
+  }
+
+  /** Point du monde dans le repère de la caméra de la dernière frame (x droite, y haut, la caméra regarde vers −z). */
+  toCameraSpace(p: Readonly<Vec3>, out: Vec3): Vec3 {
+    const cam = this.shoulder.camera;
+    this.tmpVec.set(p.x, p.y, p.z).applyMatrix4(cam.matrixWorldInverse);
+    out.x = this.tmpVec.x;
+    out.y = this.tmpVec.y;
+    out.z = this.tmpVec.z;
+    return out;
+  }
+
+  /** Tangente du demi-angle vertical du champ de vision courant. */
+  get tanHalfFovY(): number {
+    return Math.tan((this.shoulder.camera.fov * Math.PI) / 360);
+  }
+
+  /** Taille d'affichage du canvas (px CSS). */
+  get viewportWidth(): number {
+    return Math.max(1, this.canvas.clientWidth);
+  }
+
+  get viewportHeight(): number {
+    return Math.max(1, this.canvas.clientHeight);
   }
 
   private clearMatch(): void {
@@ -276,7 +317,8 @@ export class Renderer {
     // Caméra épaule (avant le ballon : la traînée s'oriente vers la caméra).
     const lp = curr.players[view.localId];
     const lpPrev = prev.players[view.localId] ?? lp;
-    if (lp !== undefined) {
+    const spectator = view.spectator ?? false;
+    if (lp !== undefined && !spectator) {
       const vx = lpPrev.vel.x + (lp.vel.x - lpPrev.vel.x) * a;
       const vz = lpPrev.vel.z + (lp.vel.z - lpPrev.vel.z) * a;
       this.shoulder.update(
@@ -302,6 +344,10 @@ export class Renderer {
       lerpPos(this.ballPos, prev.ball.pos, curr.ball.pos, a);
     }
     const ballGround = groundHeight(field, this.ballPos.x, this.ballPos.z);
+    if (spectator) {
+      this.spectatorCam.update(this.shoulder.camera, field, this.ballPos, dt, timeSec);
+      this.shoulder.camera.updateMatrixWorld();
+    }
     this.ball.update(curr.ball, prev.ball, a, this.ballPos, carrierYaw, ballGround, this.shoulder.camera.position, timeSec);
 
     this.updatePassIndicator(curr, view, carrierId, timeSec);
@@ -325,7 +371,7 @@ export class Renderer {
   private updatePassIndicator(curr: MatchState, view: ViewInput, carrierId: number, timeSec: number): void {
     const f = this.passFrame;
     const me = curr.players[view.localId];
-    f.visible = me !== undefined && me.id === carrierId && canCarrierAct(me);
+    f.visible = me !== undefined && me.id === carrierId && canCarrierAct(me) && view.spectator !== true;
     this.passTargetId = -1;
     if (me !== undefined && f.visible) {
       const target = selectPassTarget(curr, me.id, view.yaw);
@@ -362,7 +408,7 @@ export class Renderer {
     f.zone = null;
     f.grenade = null;
     const me = curr.players[view.localId];
-    if (me === undefined || me.role !== 'demi' || me.status !== 'active') return;
+    if (me === undefined || me.role !== 'demi' || me.status !== 'active' || view.spectator === true) return;
     f.team = me.team;
     if (me.abilityCd === 0) {
       const at = slowZonePlacement(curr, me, view.yaw, view.pitch);
