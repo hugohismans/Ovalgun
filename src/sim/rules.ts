@@ -29,10 +29,10 @@
  * sur la pause d'essai (phase 'ended').
  */
 
-import { BALL_RADIUS, KICKOFF_FREEZE_SEC, LAST_MINUTE_SEC, ROLES, TRY_PAUSE_SEC, TRY_POINTS } from './constants';
+import { BALL_RADIUS, KICKOFF_FREEZE_SEC, LAST_MINUTE_SEC, PLAYER_RADIUS, ROLES, TRY_PAUSE_SEC, TRY_POINTS } from './constants';
 import { carryPosition } from './ball';
 import { giveBall } from './carrier';
-import { groundHeight } from './field';
+import { groundHeight, supportHeight } from './field';
 import { placeForKickoff } from './formation';
 import { isInOpponentInGoal, opponentTeam } from './queries';
 import { secToTicks } from './time';
@@ -138,9 +138,17 @@ export function updatePhase(state: MatchState): void {
 // Étape 11 de step : essai, chrono, dernière minute, fin
 // ---------------------------------------------------------------------------
 
-/** Ballon mort, posé au sol sous sa position (essai aplati, fin du match) : immobile, sans porteur. */
-function killBall(state: MatchState, x: number, z: number): void {
+/**
+ * Ballon mort, posé au sol sous sa position (essai aplati, fin du match) : immobile, sans porteur. Ramené dans l'arène
+ * (passe finale : les mains d'un marqueur collé à la touche sont BALL_CARRY_SIDE > PLAYER_RADIUS au-delà de son axe, le
+ * ballon mort restait jusqu'à 5 cm derrière le mur invisible).
+ */
+function killBall(state: MatchState, rawX: number, rawZ: number): void {
   const b = state.ball;
+  const hw = state.field.width / 2 - BALL_RADIUS;
+  const hl = state.field.length / 2 - BALL_RADIUS;
+  const x = Math.min(hw, Math.max(-hw, rawX));
+  const z = Math.min(hl, Math.max(-hl, rawZ));
   b.mode = 'dead';
   b.carrierId = -1;
   b.passTargetId = -1;
@@ -182,14 +190,25 @@ function checkTry(state: MatchState): void {
 /**
  * Fin du match (chrono à 0) : phase 'ended' (définitive), événement 'match_end' avec le score final (égalité
  * possible), ballon mort posé au sol, projectiles retirés, mêlée en cours oubliée (étape 7), vitesses des joueurs remises à 0 (positions conservées :
- * step ne les fait plus évoluer).
+ * step ne les fait plus évoluer). Un joueur en l'air (saut, grimpe, knockback) est posé au sol sous ses pieds (passe
+ * finale : il restait suspendu derrière l'écran de fin translucide) ; une grimpe est menée à son terme (sommet du muret).
  */
 function endMatch(state: MatchState): void {
   const b = state.ball;
   killBall(state, b.pos.x, b.pos.z);
   state.projectiles = [];
   state.scrum = null;
-  for (const p of state.players) p.vel = { x: 0, y: 0, z: 0 };
+  for (const p of state.players) {
+    p.vel = { x: 0, y: 0, z: 0 };
+    if (p.move === 'climb') p.pos.y = Math.max(p.pos.y, p.climbTargetY);
+    if (!p.onGround || p.move === 'climb') {
+      p.pos.y = supportHeight(state.field, p.pos.x, p.pos.z, PLAYER_RADIUS);
+      p.onGround = true;
+      p.airTicks = 0;
+    }
+    p.move = 'run';
+    p.moveTicks = 0;
+  }
   state.phase = 'ended';
   state.phaseTicks = 0;
   state.events.push({ type: 'match_end', score: [state.score[0], state.score[1]] });

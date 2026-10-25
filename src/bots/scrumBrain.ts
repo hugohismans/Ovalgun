@@ -44,6 +44,7 @@ import {
   BOT_SCRUM_JOIN_DIST,
   BOT_SCRUM_LEAD_MARGIN,
   BOT_SCRUM_REACH_SLACK_SEC,
+  BOT_SCRUM_SUPPORTERS,
   BOT_SCRUM_THREAT_MARGIN,
   BOT_SPACE_AHEAD,
   BOT_SUPPORT_DEPTH,
@@ -289,8 +290,9 @@ export function decideScrum(mem: BotMemory, state: Readonly<MatchState>, me: Pla
   let goal: Point;
   let role: TacticalRole;
   if (leading) {
-    // Soutien derrière la zone (cône de passe du futur porteur), de part et d'autre ; au-delà de deux, l'espace devant.
-    if (k < 2) {
+    // Soutien derrière la zone (cône de passe du futur porteur), de part et d'autre ; au-delà de BOT_SCRUM_SUPPORTERS,
+    // l'espace devant.
+    if (k < BOT_SCRUM_SUPPORTERS) {
       const side = n === 1 ? (ctx.cx > 0 ? -1 : 1) : k === 0 ? -1 : 1;
       goal = clampToField(state, ctx.cx + side * BOT_SUPPORT_LATERAL * scale, ctx.cz - dir * (ctx.r + BOT_SUPPORT_DEPTH));
       role = 'support';

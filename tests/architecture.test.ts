@@ -56,6 +56,9 @@ const FORBIDDEN: Array<[RegExp, string]> = [
   [/\bglobalThis\b/, 'globalThis'],
   [/\bIntl\b/, 'Intl'],
   [/\btoLocale\w*\b/, 'toLocale*'],
+  // Dépendants du ramasse-miettes (deref, rappels de finalisation) ou de la mémoire partagée entre threads (passe finale).
+  [/\bWeakRef\b|\bFinalizationRegistry\b/, 'WeakRef / FinalizationRegistry (dépend du GC)'],
+  [/\bSharedArrayBuffer\b|\bAtomics\b/, 'mémoire partagée (SharedArrayBuffer / Atomics)'],
   // Défense en profondeur (vitest ne compile pas via tsconfig.sim.json).
   [/\bconsole\b/, 'console'],
   [/\bstructuredClone\b/, 'structuredClone'],

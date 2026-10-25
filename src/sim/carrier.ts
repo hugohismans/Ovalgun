@@ -68,6 +68,7 @@ import {
 } from './constants';
 import { groundHeight, supportHeight } from './field';
 import { has, type TickInput } from './input';
+import { decayAirOverspeed } from './momentum';
 import { cooldownTicks, playerHeight } from './playerStatus';
 import { secToTicks } from './time';
 import { Buttons, type BallMode, type FieldLayout, type MatchState, type PlayerState, type TeamId, type Vec3 } from './types';
@@ -327,6 +328,38 @@ export function predictBallLanding(field: FieldLayout, pos: Vec3, vel: Vec3): Ve
   return { x: px, y: groundHeight(field, px, pz), z: pz };
 }
 
+/** Point de réception prévu d'une passe : position et temps restant (s) avant d'y arriver. */
+export interface PassCatchPoint {
+  x: number;
+  y: number;
+  z: number;
+  t: number;
+}
+
+/**
+ * Point de réception d'une passe en vol (PURE, passe finale : lu par les bots receveurs) : premier instant où la
+ * trajectoire de `pos` à `vel` (gravité et traînée exactes, comme predictBallLanding) REDESCEND à PASS_TARGET_HEIGHT
+ * au-dessus de l'appui d'un joueur (supportHeight) — la hauteur des mains que vise planPass —, ou touche le relief
+ * avant. Une passe lancée par planPass y arrive au bout de sa durée de vol prévue. `t` = temps restant.
+ */
+export function predictPassCatch(field: FieldLayout, pos: Vec3, vel: Vec3): PassCatchPoint {
+  const k = BALL_AIR_DRAG;
+  const g = BALL_GRAVITY;
+  let last: PassCatchPoint = { x: pos.x, y: pos.y, z: pos.z, t: 0 };
+  for (let t = PREDICT_DT; t <= PREDICT_MAX_SEC; t += PREDICT_DT) {
+    const e = Math.exp(-k * t);
+    const f = k < 1e-9 ? t : (1 - e) / k;
+    const x = pos.x + vel.x * f;
+    const z = pos.z + vel.z * f;
+    const y = k < 1e-9 ? pos.y + vel.y * t - 0.5 * g * t * t : pos.y + (vel.y + g / k) * f - (g * t) / k;
+    const vy = k < 1e-9 ? vel.y - g * t : (vel.y + g / k) * e - g / k;
+    last = { x, y, z, t };
+    if (y - BALL_RADIUS <= groundHeight(field, x, z)) return last;
+    if (vy < 0 && y <= supportHeight(field, x, z, PLAYER_RADIUS) + PASS_TARGET_HEIGHT) return last;
+  }
+  return last;
+}
+
 // ---------------------------------------------------------------------------
 // Actions du porteur (étape 5 de step)
 // ---------------------------------------------------------------------------
@@ -435,9 +468,11 @@ export function tryStartDive(state: MatchState, p: PlayerState, wishDir: Vec3): 
  * (sinon le déplacement applique la course ce tick-là).
  *  - 'dive' : DIVE_SPEED selon moveDir pendant moveTicks ticks (aucun braquage), puis 'dive_recover'.
  *  - 'dive_recover' : au sol, freinage DIVE_RECOVER_DECEL pendant DIVE_RECOVER_SEC (on finit lent), puis
- *    retour en course ; en l'air (plongeon aérien), le minuteur attend l'atterrissage, sans contrôle.
+ *    retour en course ; en l'air (plongeon aérien), le minuteur attend l'atterrissage, sans contrôle : l'élan est
+ *    gardé, sauf l'excès au-delà du plafond de course qui s'éteint à AIR_OVERSPEED_DECEL (passe finale : avant, le
+ *    vol plané gardait les 17 m/s du dash jusqu'au sol, 14 m en 1 s contre 9,7 m au sol, une accélération gratuite).
  */
-export function updateDiveMovement(_state: MatchState, p: PlayerState): boolean {
+export function updateDiveMovement(state: MatchState, p: PlayerState): boolean {
   if (p.move === 'dive') {
     if (p.moveTicks > 0) {
       p.vel.x = p.moveDir.x * DIVE_SPEED;
@@ -449,7 +484,10 @@ export function updateDiveMovement(_state: MatchState, p: PlayerState): boolean 
     p.moveTicks = secToTicks(DIVE_RECOVER_SEC);
   }
   if (p.move !== 'dive_recover') return false;
-  if (!p.onGround) return true; // plongeon aérien : on garde l'élan jusqu'au sol
+  if (!p.onGround) {
+    decayAirOverspeed(state, p); // plongeon aérien : élan gardé jusqu'au sol, excès freiné
+    return true;
+  }
   if (p.moveTicks > 0) {
     const sp = Math.sqrt(p.vel.x * p.vel.x + p.vel.z * p.vel.z);
     const ns = Math.max(0, sp - DIVE_RECOVER_DECEL * TICK_DT);

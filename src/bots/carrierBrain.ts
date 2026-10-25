@@ -228,10 +228,13 @@ function nearestOpponentDist(state: Readonly<MatchState>, p: PlayerState): numbe
  * retenu : démarqué (openness ≥ `minOpenness`, BOT_PASS_MIN_OPENNESS par défaut), à au moins BOT_PASS_MIN_RANGE, MOINS
  * pressé que le porteur ; le meilleur produit démarquage × liberté. Le regard gardé pour lui : celui où l'alignement
  * (aim) est le plus net.
+ * Liberté du porteur = min(distance au plus proche adversaire / BOT_PRESSURE_RADIUS, stabilité restante) : la pression
+ * peut venir d'un tireur lointain (passe finale : avec la distance seule, un porteur sous le feu du dernier défenseur à
+ * 15–26 m valait 1 et aucun receveur n'était « plus libre » : il ne passait jamais, même presque plaqué).
  */
 export function choosePass(state: Readonly<MatchState>, me: PlayerState, minOpenness = BOT_PASS_MIN_OPENNESS): PassChoice | null {
   const base = attackYaw(me.team);
-  const myFreedom = Math.min(1, nearestOpponentDist(state, me) / BOT_PRESSURE_RADIUS);
+  const myFreedom = Math.min(1, nearestOpponentDist(state, me) / BOT_PRESSURE_RADIUS, me.stability / ROLES[me.role].stabilityMax);
   let best: PassChoice | null = null;
   let bestValue = -Infinity;
   let bestAim = -Infinity;

@@ -9,7 +9,7 @@ import { runBotMatch, type MatchRun } from './helpers';
 
 /** Résumé lisible d'un match (affiché en cas d'échec). */
 const summary = (r: MatchRun): string =>
-  `score ${r.state.score.join('-')} ticks ${r.ticks} ${JSON.stringify(r.events)} passes ${r.completedPasses} possession ${r.possessionChanges} ` +
+  `score ${r.state.score.join('-')} ticks ${r.ticks} ${JSON.stringify(r.events)} passes ${r.completedPasses} tombées ${r.droppedPasses} possession ${r.possessionChanges} ` +
   `bloqué ${r.maxBlockedTicks} libre ${r.maxLooseTicks} porté ${(r.carriedTicks / Math.max(1, r.playTicks)).toFixed(2)} ` +
   `au sol ${(r.playerDownTicks / Math.max(1, r.playerPlayTicks)).toFixed(2)} ${Math.round(r.elapsedMs)} ms`;
 
@@ -30,12 +30,14 @@ describe('bots : déterminisme d’un match complet', () => {
  * du rugby arcade, OBJECTIF ≈ 4 à 12 essais par match de 6 min. Historique : étape 6 ≈ 33 / 16,5 essais (3v3 / 5v5) ;
  * étape 7 avant réglage ≈ 28 / 17. Réglage de la correction de l'étape 7 (docs/ARCHITECTURE.md §15, 24 seeds) : 3v3
  * ≈ 13 essais (9 à 18), ballon porté ≈ 59 %, ≈ 14 % de joueurs au sol, ≈ 2 coups de pied ; 5v5 ≈ 10 essais (6 à 15),
- * porté ≈ 47 %, ≈ 16 % au sol, ≈ 1,5 coup de pied. Seeds 1 à 3 de ce test : 3v3 ≈ 14,7 essais, porté 59 %, 14 % au sol ;
- * 5v5 ≈ 9,7 essais, porté 47,5 %, 16 % au sol.
+ * porté ≈ 47 %, ≈ 16 % au sol, ≈ 1,5 coup de pied. Passe finale (receveurs qui ne laissent plus tomber les passes, porteur
+ * qui passe sous le feu lointain, élan aérien borné, esquive avant réduite ; docs/ARCHITECTURE.md §17, 24 seeds) : 3v3
+ * ≈ 11,5 essais (5 à 16), porté ≈ 67 %, ≈ 14,6 % au sol ; 5v5 ≈ 6,5 essais (3 à 12), porté ≈ 55 %, ≈ 17,4 % au sol.
+ * Seeds 1 à 3 de ce test : 3v3 ≈ 12,7 essais, porté 66 %, 14 % au sol ; 5v5 ≈ 6,3 essais, porté 53 %, 17,6 % au sol.
  */
 const PACE: Record<3 | 5, { minTries: number; maxTries: number; minCarried: number; maxDown: number; maxKicks: number }> = {
-  3: { minTries: 4, maxTries: 18, minCarried: 0.5, maxDown: 0.17, maxKicks: 10 },
-  5: { minTries: 4, maxTries: 14, minCarried: 0.4, maxDown: 0.19, maxKicks: 10 },
+  3: { minTries: 4, maxTries: 16, minCarried: 0.55, maxDown: 0.17, maxKicks: 10 },
+  5: { minTries: 4, maxTries: 12, minCarried: 0.45, maxDown: 0.19, maxKicks: 10 },
 };
 
 describe.each([
@@ -84,6 +86,24 @@ describe.each([
     expect(total((r) => r.carriedTicks) / total((r) => r.playTicks), info).toBeGreaterThanOrEqual(pace.minCarried);
     expect(total((r) => r.playerDownTicks) / total((r) => r.playerPlayTicks), info).toBeLessThanOrEqual(pace.maxDown);
     expect(total((r) => r.events.kick ?? 0) / n, info).toBeLessThanOrEqual(pace.maxKicks);
+  });
+
+  it('les receveurs bots ne laissent pas tomber les passes (au plus 5 % des passes au sol)', () => {
+    // Passe finale : le receveur « gardait sa ligne » et dépassait le ballon : ≈ 10 % (3v3) et 15 % (5v5) des passes au sol.
+    // Mesuré après correction (24 seeds) : ≈ 0,5 % et 1 %.
+    const info = runs.map(summary).join('\n');
+    const thrown = total((r) => r.events.pass ?? 0);
+    expect(thrown, info).toBeGreaterThan(0);
+    expect(total((r) => r.droppedPasses) / thrown, info).toBeLessThanOrEqual(0.05);
+  });
+
+  it('marquage stable : peu de changements de receveur marqué (hystérésis)', () => {
+    // Passe finale : sans hystérésis, ≈ 46 (3v3) et 58 (5v5) changements par minute de marquage (ping-pong A -> B -> A) ;
+    // avec, ≈ 17 et 32 (seeds 1 à 4).
+    const info = runs.map(summary).join('\n');
+    const minutes = total((r) => r.markTicks) / secToTicks(60);
+    if (minutes < 1) return; // 3v3 : presque jamais de marqueur (un repli + deux presseurs)
+    expect(total((r) => r.markSwitches) / minutes, info).toBeLessThanOrEqual(40);
   });
 
   it('aucun bot bloqué plus de quelques secondes ; aucun ballon abandonné', () => {

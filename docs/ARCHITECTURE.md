@@ -56,6 +56,8 @@ teamPlayers, activePlayers, ballCarrier, possessionTeam, isLive,
 ballLandingPoint, clockSeconds, phaseSeconds
 selectPassTarget(state, carrierId, yaw) -> PassTarget | null            // visée assistée (PURE : le rendu l'appelle à chaque frame)
 passAimDirection(team, yaw), planPass, kickLaunch, predictBallLanding,  // trajectoires du porteur (PURES : rendu, bots)
+predictPassCatch(field, pos, vel)                                       // point de réception d'une passe en vol (passe finale, bots)
+dodgeSpeed(dir, yaw), maxRunSpeed(state, p)                             // vitesse d'une esquive, plafond de course (passe finale)
 ballisticVelocity, ballSpeedMult, backwardZ, canShoot, canCarrierAct
 debugGiveBall(state, id), debugResetBall(state)                         // OUTILS DE TEST, entre deux step (?debug / entraînement) ; refusés en 'try' / 'ended' (reset : aussi en 'kickoff')
 fireOverridesSprint, fireIntervalTicks, spreadDirection, weaponImplemented // tir (étape 5, PURES : HUD, bots, tests)
@@ -80,6 +82,7 @@ scrumInOvertime, scrumTicksLeft, scrumLooseReady, countInZone, inScrumZone
 - Ids : joueurs `0..2*teamSize-1`. Équipe 0 = ids `0..teamSize-1`, équipe 1 = la suite. En solo, le client contrôle le joueur 0.
 - Une entrée manquante pour un joueur = entrée neutre qui conserve son yaw/pitch courant. Elle ne met pas à jour
   `lastButtons` : un bouton encore maintenu au tick suivant ne crée pas de faux front montant (pas de double saut).
+  Politique réseau conseillée (serveur) : répéter la DERNIÈRE entrée reçue plutôt que l'omettre (§17, préparation au online).
 - `state.config` est la configuration **normalisée** (`Required<MatchConfig>`) : tous les champs sont renseignés.
 - Les entrées sont **assainies** par la sim (valeurs non finies ignorées, déplacement borné à [-1, 1] puis normalisé
   si sa norme dépasse 1, bits inconnus retirés, `-0` ramené à `0`) : aucune entrée (client, bot, réseau) ne peut injecter de NaN
@@ -237,6 +240,7 @@ Voir l'en-tête de `src/sim/vec.ts`.
 | `shield.ts` | **Étape 7** : géométrie et règles du bouclier frontal du pilier (§13). |
 | `explosion.ts` | **Étape 7** : explosions des grenades (dégâts dégressifs, impact direct, ligne de vue, boucliers) et knockback (§13). |
 | `scrum.ts` | **Étape 7** : mêlée (déclenchement, décompte, résolution, lectures pures pour le rendu / HUD / bots, §14). |
+| `momentum.ts` | **Passe finale** : plafond de course (`maxRunSpeed`) et extinction de l'élan aérien au-delà (`AIR_OVERSPEED_DECEL`), partagés par player.ts et carrier.ts (§17). |
 
 Décisions prises à l'étape 2 :
 
@@ -258,8 +262,10 @@ Décisions prises à l'étape 2 :
   on retombe simplement du haut).
 - **Élan** : au sol, l'excès de vitesse dans la direction voulue (sortie d'esquive, glissade, grimpe, fin de sprint) ne
   diminue qu'à `GROUND_OVERSPEED_DECEL` (le braquage latéral reste à `GROUND_ACCEL`) ; le tick de sortie d'esquive garde
-  exactement `DODGE_SPEED × DODGE_EXIT_SPEED_KEEP`. En l'air, maintenir la direction ne freine jamais : au-delà de la vitesse
-  cible, l'entrée ne fait que réorienter la vitesse (norme conservée).
+  exactement `DODGE_SPEED × DODGE_EXIT_SPEED_KEEP`. En l'air, maintenir la direction ne freine pas : au-delà de la vitesse
+  cible, l'entrée ne fait que réorienter la vitesse (norme conservée) — **sauf** l'excès au-delà du plafond de course
+  (`maxRunSpeed`), qui s'éteint à `AIR_OVERSPEED_DECEL`, avec ou sans entrée (passe finale, §17 : sinon esquive + sauts à
+  répétition allaient plus vite que tout sprint).
 - **Cooldowns** fixés au déclenchement (glissade comprise : le cooldown court pendant la glissade).
   Esquive possible depuis la course ou la glissade, pas pendant une grimpe. Saut possible depuis la glissade (garde l'élan).
   Pendant une esquive au sol, un saut est possible après `DODGE_JUMP_CANCEL_SEC` (« dash-saut » : l'esquive s'arrête avec la
@@ -413,8 +419,8 @@ Décisions prises à l'étape 4 :
   passe qui avance de 4 m (il doit « revenir » chercher le ballon, sinon il le manque).
   Limite connue : l'anticipation suppose que le receveur garde sa course. S'il s'arrête net ou coupe à 90° au départ d'une
   passe courte (anticipation ~3 m), il la manque même avec le rayon élargi ; `PASS_LEAD` < 1 corrigerait ce cas mais ferait
-  manquer les passes longues aux receveurs qui courent droit (le cas courant). Les bots (étape 6) garderont leur ligne
-  quand `ball.passTargetId` les désigne. Vitesse initiale = solution EXACTE de dv/dt = −k·v − g (traînée `BALL_AIR_DRAG`, gravité `BALL_GRAVITY`) :
+  manquer les passes longues aux receveurs qui courent droit (le cas courant). Les bots receveurs vont au point de
+  réception réel (`predictPassCatch`, passe finale §17 ; « garder sa ligne » à l'étape 6 leur faisait dépasser le ballon). Vitesse initiale = solution EXACTE de dv/dt = −k·v − g (traînée `BALL_AIR_DRAG`, gravité `BALL_GRAVITY`) :
   l'intégrateur de ball.ts arrive à moins de 3 cm des mains d'un receveur qui court en ligne droite (tests 3v3 / 5v5).
   Passe et coup de pied sur **front montant**, interdits pendant `dive` / `dive_recover` (appui ignoré), permis en course,
   en l'air, en esquive, en glissade, en grimpe. PASS prioritaire : passe partie => KICK du même tick ignoré ; passe refusée
@@ -431,7 +437,8 @@ Décisions prises à l'étape 4 :
   (cos avec le regard ≥ `DIVE_INPUT_MIN_FORWARD_COS`), sinon le regard. Dash `DIVE_SPEED` pendant `secToTicks(DIVE_DURATION_SEC)`
   ticks sans braquage, invulnérable exactement `secToTicks(DIVE_INVULN_SEC)` ticks dès le tick du plongeon, hitbox basse,
   puis `dive_recover` : au sol, freinage `DIVE_RECOVER_DECEL` pendant `DIVE_RECOVER_SEC` (l'entrée est ignorée) ; en l'air, le
-  minuteur attend l'atterrissage, sans contrôle (élan gardé). Cooldown `DIVE_COOLDOWN_SEC` (× dernière minute). Ni saut, ni
+  minuteur attend l'atterrissage, sans contrôle (élan gardé, excès au-delà du plafond de course freiné à
+  `AIR_OVERSPEED_DECEL` depuis la passe finale, §17). Cooldown `DIVE_COOLDOWN_SEC` (× dernière minute). Ni saut, ni
   esquive, ni passe pendant le plongeon. Une grimpe de muret interrompt le dash (on franchit le muret) mais la
   récupération au sol suit quand même : `startClimb` mémorise `secToTicks(DIVE_RECOVER_SEC)` dans `moveTicks` (inutilisé
   pendant une grimpe) et la fin de grimpe enchaîne sur `dive_recover` (plonger contre un muret n'est pas un dash gratuit).
@@ -561,8 +568,9 @@ Décisions prises à l'étape 5 :
   secToTicks(duration), événement `ability`. Pendant exactement ces ticks : vitesse de course × `BOOST_SPEED_MULT` (cumulé avec
   sprint et porteur) et accélération au sol × `BOOST_ACCEL_MULT`. Au tick où la durée s'achève, `abilityCd = cooldownTicks(cooldown)`
   (décompté dès le tick suivant : réactivable exactement `cooldown` après la fin). Utilisable en portant le ballon. Pilier / demi :
-  ABILITY ignoré sans consommer de cooldown (TODO étape 7). Minuteries dans `tickAbilityTimers` (étape 4, même en phase figée).
-- **Points d'extension de l'étape 7** : `weaponImplemented` (le lance-grenades ne tire pas encore : ni munition consommée, ni
+  ABILITY ignoré sans consommer de cooldown (étape 5 ; leurs capacités sont arrivées à l'étape 7, §13). Minuteries dans `tickAbilityTimers` (étape 4, même en phase figée).
+- **Points d'extension de l'étape 7** (tous branchés à l'étape 7, §13 ; `weaponImplemented` / `abilityImplemented` restent
+  exportés et toujours vrais, pour de futures armes) : `weaponImplemented` (à l'étape 5, le lance-grenades ne tirait pas encore : ni munition consommée, ni
   sprint coupé), `onGrenadeImpact` (explosion, knockback), `shieldBlocks` (bouclier frontal), `canShoot` (bouclier levé),
   `abilitySpeedMultiplier` (bouclier, zone de ralentissement), `updateZones`.
 - **Tourelles d'entraînement** (`bots/turret.ts`) : contrat `InputProvider` ; immobile, se tourne (au plus `TURRET_TURN_RATE_DEG`)
@@ -730,8 +738,8 @@ Décisions :
   n'échangent plus pression et marquage à chaque décision ; chacun ne connaît que SON rôle précédent : au pire un rôle brièvement doublé).
   **Anticipation** (pression, soutien) avec une vitesse plafonnée à `runSpeed × BOT_LEAD_SPEED_CAP_MULT` (une esquive à 21 m/s faisait
   sauter le point visé de 8 m : demi-tours en série).
-  - Attaque : porteur (§ ci-dessous) ; receveur d'une passe en vol : garde sa ligne (même direction, même sprint ; la passe vise sa course
-    anticipée, §9) ; les `BOT_SUPPORTERS_3V3/5V5` (1 / 2 ; 2 / 3 depuis le §15) coéquipiers les plus en retrait : soutien à `BOT_SUPPORT_LATERAL` × échelle sur le
+  - Attaque : porteur (§ ci-dessous) ; receveur d'une passe en vol : gardait sa ligne (même direction, même sprint) — remplacé à la
+    passe finale par une course « juste à temps » vers le point de réception réel (§17) ; les `BOT_SUPPORTERS_3V3/5V5` (1 / 2 ; 2 / 3 depuis le §15) coéquipiers les plus en retrait : soutien à `BOT_SUPPORT_LATERAL` × échelle sur le
     côté et `BOT_SUPPORT_DEPTH` derrière le porteur anticipé (dans son cône de passe ; un soutien seul se met du côté le plus large) ; les
     autres : espace devant (`BOT_SPACE_AHEAD` / `BOT_SPACE_LATERAL` × échelle). Ils ne tirent que sur un défenseur à moins de
     `BOT_ESCORT_THREAT_DIST` du porteur (protection), sinon ils courent sans tirer.
@@ -745,8 +753,9 @@ Décisions :
     Les autres marquent les receveurs par danger décroissant (dans le cône de passe, démarqués, proches de notre en-but ; chacun au marqueur
     libre le plus proche), placés `BOT_MARK_GOALSIDE` entre le receveur et notre en-but ; un marqueur tire sur le porteur s'il est à moins de
     `BOT_MARK_SHOOT_CARRIER_DIST`, sur son receveur seulement si celui-ci est une menace directe (à moins de `BOT_ESCORT_THREAT_DIST` du
-    porteur), sinon il ne tire pas. Les bots **sans arme utilisable** (demi : grenades à l'étape 7) passent après les autres pour la pression
-    et le repli. Une passe adverse en vol est traitée comme si son receveur portait déjà le ballon.
+    porteur), sinon il ne tire pas. Les bots **sans arme utilisable** (demi : grenades à l'étape 7) passaient après les autres pour la
+    pression et le repli (pénalité sans effet depuis l'étape 7, supprimée à la passe finale). Marquage stabilisé par une hystérésis à la
+    passe finale (§17). Une passe adverse en vol est traitée comme si son receveur portait déjà le ballon.
   - Ballon libre / coup de pied : les `BOT_BALL_CHASERS_3V3/5V5` (2 / 2 ; 1 -> 2 en 3v3) plus proches en temps de course vont au point de
     chute prédit (`ballLandingPoint`), en le traversant (`BOT_CHASE_OVERSHOOT`), jusque contre les murs. **Pas de fusillade** : le chasseur
     sprinte en regardant sa course (tirer couperait le sprint : il courait à 1,02 × runSpeed au lieu de 1,22) et ne tire que si un
@@ -758,7 +767,8 @@ Décisions :
   `BOT_CARRIER_LOOKAHEAD_SEC`) − sortie du terrain + hystérésis ; évitement × `BOT_LINE_RUSH_AVOID_MULT` près de la ligne (il fonce). Sprint
   si le chemin est libre. **Pressé** (adversaire devant / à côté — jusqu'à `BOT_PRESSURE_BESIDE_TOLERANCE` derrière — à moins de
   `BOT_PRESSURE_RADIUS`, ou sous le feu avec une stabilité basse) : passe arrière vers le receveur démarqué (openness de la sim ≥
-  `BOT_PASS_MIN_OPENNESS`) et moins pressé que lui. Le receveur est cherché en essayant `BOT_PASS_YAW_SAMPLES` regards avec
+  `BOT_PASS_MIN_OPENNESS`) et moins pressé que lui (liberté du porteur = min(distance au plus proche adversaire /
+  `BOT_PRESSURE_RADIUS`, stabilité restante) depuis la passe finale, §17). Le receveur est cherché en essayant `BOT_PASS_YAW_SAMPLES` regards avec
   `selectPassTarget` (la visée assistée de la sim, hystérésis comprise) ; le bot tourne ensuite son regard (rotation limitée) et presse
   PASSE au tick où la visée assistée, évaluée avec le regard RÉELLEMENT envoyé, désigne ce receveur : la sim fait partir exactement la passe
   prévue. **Encerclé** (`BOT_ENCIRCLED_COUNT` / `_5V5` adversaires à moins de `BOT_ENCIRCLED_RADIUS`) ou presque plaqué, sans passe : dans
@@ -785,7 +795,7 @@ Décisions :
   à moins de `BOT_FIRE_CONE_DEG` de la direction voulue (le bot ne connaît pas son erreur) et la cible touchable ; rafales `BOT_BURST_SEC` /
   pauses (`BOT_BURST_PAUSE_SEC` + jitter) × `burstPauseMult` de la difficulté × `BOT_RESTRAINED_PAUSE_MULT` hors pression / repli ; AIM
   au-delà de `BOT_ADS_DISTANCE` ; RELOAD après `BOT_RELOAD_IDLE_SEC` sans cible si le chargeur est sous `BOT_RELOAD_AMMO_FRACTION`. Le demi
-  ne tire pas (grenades : étape 7). Le regard sans cible suit la direction de course (le sprint ne s'applique que vers l'avant du regard).
+  ne tirait pas à l'étape 6 (grenades : étape 7, §13). Le regard sans cible suit la direction de course (le sprint ne s'applique que vers l'avant du regard).
 - **Pilotage** (`steering.ts`) : direction monde convertie en entrée locale avec le yaw RÉELLEMENT envoyé (la sim l'applique avant le
   déplacement). Arrivée / ralentissement, répulsion des coéquipiers proches (sauf porteur et receveur ; sous `BOT_IDLE_PUSH_MIN`, un bot
   arrivé ne bouge pas). Murets : le bot fonce dessus (grimpe automatique de la sim). Blocage (veut avancer — inclinaison ≥
@@ -1259,3 +1269,116 @@ Décisions :
 - **Limites connues** : en 900×600 le menu défile (l'aperçu des contrôles passe sous les cartes) ; la zone « rôle » évitée par la flèche suppose
   la mise en page large (en petite fenêtre l'indicateur de rôle monte en haut à gauche) ; navigation spatiale : depuis le bout d'une rangée,
   « droite » peut atteindre la colonne de droite plus bas (Contrôles / Réglages) — voulu, il n'y a rien d'autre à droite.
+
+
+## 17. Passe finale : simulation et bots
+
+Audits indépendants (simulation, bots, architecture online, feeling du porteur), constats vérifiés, puis correction. Mesures au
+harnais (matchs bots contre bots de 6 min, composition du jeu, normal, seeds 1 à 24 ; tableaux dans docs/TESTING.md, « Passe finale »).
+
+Correctifs (simulation) :
+
+- **Pas de −0 dans l'état** (constat majeur) : `wishDirection` (reculer avec yaw = 0 : `(−1)·0 + 0·(−1) = −0`, recopié dans
+  `vel` et `moveDir`) et `slideVelocity` (glissade bloquée : direction négative × vitesse 0) ajoutent `+ 0`. Le hash ne changeait
+  pas (JSON écrit 0) mais l'invariant du §2 était violé. Les contrôles de valeurs des matchs scriptés (`determinism.test.ts`,
+  `rules.test.ts`) rejettent désormais les −0 ; tests dédiés (recul, glissade contre le mur invisible). Fuzz : aucun −0 à chaque
+  tick sur 6 matchs de bots et 8 matchs à entrées aléatoires.
+- **Élan aérien borné** (constat majeur, feeling du porteur) : un saut tamponné repart au tick de l'atterrissage et l'élan aérien était
+  gardé sans limite : une esquive suivie de sauts tenait 12,6 m/s pour TOUS les rôles, esquive + sauts ≈ 14 m/s (pilier porteur :
+  8,7 au sprint, + 62 % ; contre les bots, conversion des possessions de l'humain pilier 15 % -> 63 % en 3v3). Désormais, en l'air
+  (avec ou sans entrée, plongeon aérien compris), l'excès au-delà de `maxRunSpeed` (vitesse du rôle × sprint × porteur ×
+  capacités) s'éteint à `AIR_OVERSPEED_DECEL` (8 m/s²). Le dash-saut reste plus long qu'un saut (l'excès s'éteint en ≈ 0,25 s),
+  un knockback (≈ 10 m/s) perd moins de 0,1 m, le grenade jump est intact (vertical). Nouveau module `momentum.ts` (partagé par
+  player.ts et carrier.ts sans import circulaire).
+- **Esquive avant réduite** : vitesse du dash = `DODGE_SPEED × (1 − (1 − DODGE_FORWARD_SPEED_MULT)·c²)`, c = max(0, cos(direction,
+  regard)) au déclenchement, mémorisée dans le nouveau champ `PlayerState.moveSpeed` (lu par `dodgeVelocity` / `exitDodge`). Une
+  esquive latérale ou arrière garde 21 m/s ; droit devant 14,7 m/s (sortie 8,8 : sous le sprint). L'esquive est une feinte
+  latérale, le plongeon reste l'accélération vers l'avant. Esquive en boucle (porteur ailier) 12,9 -> 11,4 m/s, esquive + sauts
+  13,9 -> 11,2 (sprint 10,6) ; test « hacher sa course n'est pas plus rapide que le sprint » sur les trois rôles. Rejeté : réduire
+  `DODGE_EXIT_SPEED_KEEP` (affaiblit aussi l'esquive latérale, celle qui sert à éviter les tirs).
+- **Tampon d'esquive** (`DODGE_BUFFER_SEC` = 0,12 s, nouveau champ `dodgeBufferTicks`, sur le modèle du saut) : un appui 1 à 3 ticks
+  avant la fin du cooldown (ou pendant une grimpe / un plongeon) part dès que l'esquive est possible ; remis à 0 au plaquage et à
+  la remise en jeu (`resetPlayerAt`). Les bots n'appuient que quand l'esquive est prête : aucun effet sur eux.
+- **Plongeon aérien** : la récupération en l'air garde l'élan mais freine l'excès (même règle) : 14 m en 1 s -> ≈ 12 m ; saut +
+  plongeon en boucle 11,45 -> 11,1 m/s (ailier). « Essai en vol » conservé.
+- **Séparation et relief** (constat mineur) : après chaque poussée de `separatePlayers`, `settleAfterPush` ressort le joueur des
+  faces de murets / rampes (sinon, poussé dans l'empreinte d'un muret, il le grimpait au tick suivant sans aucune entrée) et recolle
+  au relief un joueur au sol (pieds jusqu'à 5–8 cm sous une butte pendant un tick ; poussé au bord d'un relief, il tombe).
+- **Nits** : fin du match — un joueur en l'air (saut, grimpe, knockback) est posé au sol (il restait suspendu derrière l'écran de
+  fin translucide) ; ballon mort (`killBall`) ramené dans l'arène (5 cm au-delà du mur invisible après un essai le long de la
+  touche ; le ballon PORTÉ, lui, peut toujours dépasser de 5 cm — purement visuel, `carryPosition` partagé avec le rendu) ; test
+  d'architecture : `WeakRef`, `FinalizationRegistry` (dépendent du ramasse-miettes), `SharedArrayBuffer`, `Atomics` interdits.
+- **Constantes** : mention « ↑ = … » ajoutée aux leviers qui ne l'avaient pas (esquive, saut, glissade, ballon, terrain, corps…) ;
+  restent sans flèche les valeurs sans « sens » (tick, booléens, compositions, tables, disposition du terrain).
+
+Correctifs (bots) :
+
+- **Receveur** (constat majeur, deux audits) : il « gardait sa ligne » (direction de sa DERNIÈRE ENTRÉE, pleine vitesse, sprint
+  précédent) alors que `planPass` vise sa position anticipée d'après sa VITESSE ; un soutien qui ralentissait pour arriver à son
+  poste repartait à fond et dépassait le ballon (≈ 10 % des passes au sol en 3v3, 15 % en 5v5, celles de l'humain vers un bot
+  comprises). Désormais `decideReceive` vise le point de réception réel et `steerReceive` (steering.ts) le recalcule à chaque tick
+  (`predictPassCatch`, fonction PURE de la sim : premier point où la trajectoire exacte gravité + traînée redescend à
+  `PASS_TARGET_HEIGHT` au-dessus de l'appui, c'est-à-dire le point visé par `planPass`) et règle l'allure pour y arriver
+  `BOT_RECEIVE_TIME_MARGIN_SEC` avant le ballon (sprint seulement s'il le faut ; arrêt à `BOT_RECEIVE_ARRIVE_RADIUS`). Pas de
+  réflexe d'esquive pendant la réception. Passes au sol : 10,5 -> 0,9 (3v3) et 15,7 -> 1,8 (5v5) par match. Variante écartée :
+  garder la ligne en conservant l'allure (le relecteur : 14,3 passes au sol en 5v5, ne règle rien).
+- **Passe sous le feu lointain** (constat majeur) : `choosePass` comparait la liberté des receveurs à celle du porteur, calculée
+  sur la seule distance au plus proche adversaire ; sous le feu du dernier défenseur (15–26 m, personne à moins de
+  `BOT_PRESSURE_RADIUS`), le porteur valait 1 et ne passait JAMAIS (branche « sous le feu, stabilité basse » morte). Liberté du
+  porteur = min(distance / `BOT_PRESSURE_RADIUS`, stabilité restante). Passes tentées 102 -> 171 (3v3), porteurs plaqués 56,5 -> 49.
+- **Marquage stable** (constat mineur) : `BOT_MARK_HYSTERESIS_M` (le marqueur qui suivait déjà ce receveur s'en compte plus
+  proche) et `BOT_MARK_DANGER_STICKY` (bonus de danger du receveur déjà marqué), comme `roleBonus` pour les autres rôles. Changements
+  de receveur 46 -> 17 (3v3) et 58 -> 32 (5v5) par minute de marquage, ping-pong 11 -> 1,5 et 13 -> 5 ; essais inchangés (dans le
+  bruit, 24 seeds).
+- **Nits** : `BOT_SCRUM_SUPPORTERS` (le `2` en dur de scrumBrain.ts, valeur inchangée) ; code mort de l'étape 6 supprimé
+  (`unarmedPenalty`, `UNARMED_RANK_PENALTY`, branche « arme non implémentée » de `engageRange`) ; `weaponImplemented` /
+  `abilityImplemented` restent exportés (toujours vrais, points d'extension pour de futures armes).
+
+**Rythme** (normal, 24 seeds) : 3v3 12,8 -> **11,5** essais (5–16), 5v5 10,0 -> **6,5** (3–12) — dans la cible ≈ 4 à 12 sans toucher
+aux constantes de rythme du §15 ; ballon porté 60 -> 67 % / 48 -> 55 %, joueurs au sol 13,9 -> 14,6 % / 16,0 -> 17,4 %, mêlées
+2,2 -> 1,4 / 1,4 -> 1,1 par match (moins de ballons libres : les seeds du test de mêlée en match complet ont été rechoisies). Facile
+/ difficile (seeds 1–8) : 3v3 21,0 / 9,6, 5v5 13,0 / 5,3 — le 3v3 facile reste rapide (accepté : c'est le niveau où l'humain doit
+gagner ; à revoir avec de vrais joueurs). Bornes des tests (seeds 1–3) : essais 4–16 (3v3) / 4–12 (5v5), ballon porté ≥ 55 % / 45 %,
+au sol ≤ 17 % / 19 %, au plus 5 % de passes au sol, au plus 40 changements de receveur marqué par minute de marquage.
+
+| Constante | Avant | Après | Pourquoi |
+|---|---|---|---|
+| `AIR_OVERSPEED_DECEL` (nouvelle) | — (0) | 8 m/s² | Élan aérien borné au plafond de course |
+| `DODGE_FORWARD_SPEED_MULT` (nouvelle) | — (1) | 0,7 | Esquive = feinte latérale, pas une locomotion |
+| `DODGE_BUFFER_SEC` (nouvelle) | — (0) | 0,12 s | Appui d'esquive un peu trop tôt honoré |
+| `BOT_RECEIVE_KEEP_LINE_MIN_MAG` | 0,3 | supprimée | Le receveur ne garde plus sa ligne |
+| `BOT_RECEIVE_TIME_MARGIN_SEC` / `BOT_RECEIVE_ARRIVE_RADIUS` (nouvelles) | — | 0,15 s / 0,4 m | Course « juste à temps » au point de réception |
+| `BOT_MARK_HYSTERESIS_M` / `BOT_MARK_DANGER_STICKY` (nouvelles) | — (0) | 3 m / 0,3 | Marquage sans ping-pong |
+| `BOT_SCRUM_SUPPORTERS` (nouvelle) | 2 en dur | 2 | Valeur de réglage sortie du code |
+
+Constats écartés ou reportés :
+
+- **Tampon de passe / coup de pied pendant le plongeon** (proposé avec le tampon d'esquive) : reporté. Il faudrait mémoriser QUEL
+  geste (deux champs d'état) et une passe partirait jusqu'à 0,15 s après l'appui, vers une cible qui a pu changer ; le HUD masque
+  déjà les indicateurs de passe pendant le plongeon et la récupération (`canCarrierAct`), l'appui perdu y est donc signalé.
+- **`DeepReadonly<MatchState>`** pour les bots (Readonly est superficiel) : reporté. Toutes les lectures de la sim appelées par les
+  bots et le rendu (`selectPassTarget`, `planPass`, `kickLaunch`, `queries.ts`…) devraient changer de signature ; la garantie reste
+  le test à l'exécution (JSON identique avant / après chaque appel de bot) et la vérification de l'audit (4 matchs complets).
+- **Caméra, risque de passe, sprint automatique, latence de l'esquive au clavier** (audit du feeling du porteur) : côté client
+  (src/render, src/input), hors de cette correction.
+
+Préparation au online (constats de l'audit d'architecture, rien à coder dans le prototype) :
+
+- **Événements** : `state.events` ne contient que le DERNIER tick. Un serveur qui n'envoie pas chaque snapshot doit tenir un journal
+  `{ tick, events[] }` et transmettre au client tous les événements depuis le dernier tick acquitté, hors snapshot. Côté client, les
+  transitions critiques gagneraient à être déclenchées par l'état (`prev.phase !== 'kickoff' && state.phase === 'kickoff'` pour la
+  caméra, `state.phase === 'ended'` pour relâcher le pointer lock) plutôt que par les seuls événements.
+- **Entrées manquantes** : la sim accepte l'omission (entrée neutre, §2) et la répétition. Mesuré : omettre une entrée freine un
+  porteur qui sprinte (10,64 -> 8,64 m/s pendant un tick ; trois de suite ≈ 0,2 s de freinage visible) ; répéter la dernière entrée
+  reçue ne freine pas et ne crée aucun faux front montant (`lastButtons` contient déjà les bits répétés). Politique conseillée :
+  répéter la dernière entrée, réserver l'omission à la déconnexion ; enveloppe réseau `{ tick, input }` avec les 2–3 dernières
+  entrées répétées dans chaque paquet (un appui bref — esquive, passe — n'est pas perdu).
+- **Taille du snapshot** : 6,6 KB (3v3) à 9,8 KB (5v5) de JSON par tick en moyenne (gzip ≈ 1,9 / 2,5 KB), dont ≈ 1,2 KB de données
+  statiques (`field`, `config`). Format réseau prévu sans toucher la sim : `field` et `config` envoyés une fois (le client refait
+  `createField(config.teamSize)`), pas de `rng` pour les clients (sinon ils prédisent les tirages : rebonds, dispersion, tirage
+  d'une mêlée), deltas par rapport au dernier snapshot acquitté. Coût CPU mesuré : 0,08 / 0,12 ms par tick pour `step` et 0,21 /
+  0,46 ms pour les bots (3v3 / 5v5).
+- **Contrôle par hash** (`hashState`) : fiable entre moteurs V8 (navigateurs Chromium, Node, workerd) ; les fonctions
+  transcendantes (`Math.sin`, `Math.exp`…) ne sont pas garanties identiques au bit près entre moteurs.
+- **Identifiants** : prêts (`humanId` paramétrable, `externalIds` des bots, `botInput` et `BotMemory` sérialisables et exportés).
+

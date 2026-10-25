@@ -10,7 +10,6 @@ import {
   BOT_WALL_MARGIN,
   PLAYER_RADIUS,
   ROLES,
-  weaponImplemented,
   type BotDifficulty,
   type MatchState,
   type PlayerState,
@@ -47,13 +46,12 @@ export function clampToField(state: Readonly<MatchState>, x: number, z: number, 
 export const CHASE_WALL_MARGIN = PLAYER_RADIUS;
 
 /**
- * Portée d'engagement du bot (m), 0 si son arme n'est pas implémentée : balles = portée de l'arme × engageRangeMult ;
+ * Portée d'engagement du bot (m) : balles = portée de l'arme × engageRangeMult ;
  * plombs (pilier) = plafonnée à BOT_SHOTGUN_ENGAGE_DIST (au-delà le fusil ne fait presque rien : il se rapproche) ;
  * grenades (demi) = BOT_GRENADE_ENGAGE_DIST × engageRangeMult (au plus la portée de l'arme ; tir balistique).
  */
 export function engageRange(p: PlayerState, difficulty: BotDifficulty): number {
   const w = ROLES[p.role].weapon;
-  if (!weaponImplemented(w)) return 0;
   const mult = BOT_DIFFICULTY[difficulty].engageRangeMult;
   if (w.projectile === 'grenade') return Math.min(w.range, BOT_GRENADE_ENGAGE_DIST * mult);
   if (w.projectile === 'pellet') return Math.min(w.range * mult, BOT_SHOTGUN_ENGAGE_DIST);

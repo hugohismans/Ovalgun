@@ -755,8 +755,9 @@ describe('stabilité : régénération et plaquage', () => {
       if (c.carrier) debugGiveBall(s, 0);
       for (let k = 0; k < 30; k++) step(s, { 0: makeInput({ moveY: 1, buttons: Buttons.SPRINT }) });
       step(s, { 0: makeInput({ moveY: 1, buttons: Buttons.SPRINT | c.buttons }) });
-      // Esquive (21 m/s) / plongeon (17 m/s) en cours, ou sprint du porteur : plus vite que le plafond de glissade.
-      expect(hSpeed(p.vel), c.name).toBeGreaterThan(c.buttons === 0 ? TACKLE_SLIDE_MAX_SPEED : 15);
+      // Esquive vers l'avant (21 × DODGE_FORWARD_SPEED_MULT = 14,7 m/s) / plongeon (17 m/s) en cours, ou sprint du porteur :
+      // plus vite que le plafond de glissade.
+      expect(hSpeed(p.vel), c.name).toBeGreaterThan(c.buttons === 0 ? TACKLE_SLIDE_MAX_SPEED : 14);
       p.stability = -1; // jauge vidée : plaquage au prochain tick (étape 8)
       step(s, { 0: makeInput({ moveY: 1, buttons: Buttons.SPRINT }) });
       expect(p.status, c.name).toBe('down');

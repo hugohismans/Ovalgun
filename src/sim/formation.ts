@@ -49,9 +49,11 @@ export function resetPlayerAt(field: FieldLayout, p: PlayerState, x: number, z: 
   p.airTicks = 0;
   p.airJumpsUsed = 0;
   p.jumpBufferTicks = 0;
+  p.dodgeBufferTicks = 0;
   p.move = 'run';
   p.moveTicks = 0;
   p.moveDir = forward(yaw);
+  p.moveSpeed = 0;
   p.climbTargetY = 0;
   p.lastMoveX = 0;
   p.lastMoveY = 0;

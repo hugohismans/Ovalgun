@@ -47,7 +47,7 @@ export const sameSituation = (a: Situation, b: Situation): boolean =>
  *  - carrier : porteur (avancer, esquiver, passer, taper, plonger) ;
  *  - support : soutien derrière le porteur, dans son cône de passe ;
  *  - space   : cherche l'espace devant le porteur (ouvre la défense, tire sur les défenseurs) ;
- *  - receive : receveur d'une passe en vol (garde sa ligne) ;
+ *  - receive : receveur d'une passe en vol (court au point de réception, juste à temps) ;
  *  - press   : défenseur qui converge vers le porteur et lui tire dessus ;
  *  - mark    : défenseur qui marque le receveur le plus dangereux (entre lui et son en-but) ;
  *  - cover   : repli entre le porteur et son en-but quand personne ne le couvre ;
@@ -67,7 +67,7 @@ export interface Decision {
   /** Point visé au sol (déplacement). */
   goalX: number;
   goalZ: number;
-  /** Direction de course imposée (porteur, receveur qui garde sa ligne) ; (0, 0) = aller vers le point visé. */
+  /** Direction de course imposée (porteur) ; (0, 0) = aller vers le point visé. */
   dirX: number;
   dirZ: number;
   /** Veut sprinter (la sim coupe le sprint s'il tire). */
@@ -160,7 +160,7 @@ export interface BotMemory {
   maxBlockedTicks: number;
   detourTicks: number;
   detourSign: number;
-  /** Direction monde (unitaire) et boutons de l'entrée précédente : le receveur d'une passe garde sa ligne. */
+  /** Direction monde (unitaire), inclinaison et boutons de l'entrée précédente (fronts des boutons, suivi du bot). */
   lastDirX: number;
   lastDirZ: number;
   lastMoveMag: number;

@@ -9,6 +9,7 @@ import {
   Buttons,
   CARRIER_DAMAGE_MULT,
   CARRIER_SPEED_MULT,
+  AIR_OVERSPEED_DECEL,
   KNOCKBACK_MAX_HORIZONTAL_SPEED,
   PLAYER_GRAVITY,
   PLAYER_RADIUS,
@@ -21,6 +22,7 @@ import {
   SLOW_ZONE_RADIUS,
   SLOW_ZONE_SPEED_MULT,
   STRAFE_SPEED_MULT,
+  SPRINT_SPEED_MULT,
   TICK_DT,
   aimDir,
   aimOrigin,
@@ -575,13 +577,17 @@ describe('demi : lance-grenades', () => {
     expect(charger.vel.z).toBeCloseTo(push, 6);
     expect(charger.vel.x).toBeCloseTo(0, 9);
     expect(charger.vel.y).toBeCloseTo(still.vel.y, 6);
-    // Fuyard plus rapide que le souffle, dans son sens : vitesse horizontale inchangée (avant : accéléré).
+    // En l'air dès ce tick, l'excès au-delà du plafond de course de l'ailier s'éteint à AIR_OVERSPEED_DECEL (passe
+    // finale) : vitesse horizontale attendue après le déplacement du tick.
+    const ceiling = ROLES.ailier.runSpeed * SPRINT_SPEED_MULT;
+    const kept = (v: number): number => (v > ceiling ? Math.max(ceiling, v - AIR_OVERSPEED_DECEL * TICK_DT) : v);
+    // Fuyard plus rapide que le souffle, dans son sens : vitesse horizontale inchangée par le souffle (avant : accéléré).
     const runner = blastOn(0, push + 3);
-    expect(runner.vel.z).toBeCloseTo(push + 3, 6);
+    expect(runner.vel.z).toBeCloseTo(kept(push + 3), 6);
     expect(runner.vel.y).toBeCloseTo(still.vel.y, 6);
     // Coureur en travers : composante latérale gardée, souffle complété, vitesse plafonnée.
     const cross = blastOn(14, 0);
-    expect(hSpeed(cross.vel)).toBeCloseTo(KNOCKBACK_MAX_HORIZONTAL_SPEED, 6);
+    expect(hSpeed(cross.vel)).toBeCloseTo(kept(KNOCKBACK_MAX_HORIZONTAL_SPEED), 6);
     expect(cross.vel.z).toBeGreaterThan(0);
   });
 

@@ -126,6 +126,7 @@ function tackle(state: MatchState, p: PlayerState): void {
   p.moveTicks = 0;
   p.invulnTicks = 0;
   p.jumpBufferTicks = 0;
+  p.dodgeBufferTicks = 0;
   endAbility(state, p);
   const by = state.players[byId];
   if (by !== undefined && by.team !== p.team) by.stats.tackles++;

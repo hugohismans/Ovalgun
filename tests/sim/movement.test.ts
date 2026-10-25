@@ -4,14 +4,17 @@
 import { describe, expect, it } from 'vitest';
 import {
   AIM_SPEED_MULT,
+  AIR_OVERSPEED_DECEL,
   BACKPEDAL_SPEED_MULT,
   Buttons,
   CARRIER_DODGE_COOLDOWN_SEC,
   CARRIER_SPEED_MULT,
   CLIMB_HORIZONTAL_KEEP,
+  DODGE_BUFFER_SEC,
   DODGE_COOLDOWN_SEC,
   DODGE_DURATION_SEC,
   DODGE_EXIT_SPEED_KEEP,
+  DODGE_FORWARD_SPEED_MULT,
   DODGE_JUMP_CANCEL_SEC,
   DODGE_SPEED,
   GROUND_OVERSPEED_DECEL,
@@ -34,7 +37,12 @@ import {
   SPRINT_SPEED_MULT,
   STRAFE_SPEED_MULT,
   TICK_DT,
+  debugGiveBall,
+  dodgeSpeed,
+  faceContact,
+  makeInput,
   playerHeight,
+  supportHeight,
   secToTicks,
   step,
   type MatchState,
@@ -42,7 +50,7 @@ import {
   type Role,
   type TerrainFeature,
 } from '../../src/sim';
-import { hSpeed, only0, run, soloMatch } from './helpers';
+import { findBadValues, hSpeed, only0, run, soloMatch } from './helpers';
 
 /** Vitesse horizontale du joueur 0 après `ticks` ticks d'une entrée constante. */
 function steadySpeed(role: Role, inp: Partial<PlayerInput>, ticks = 30, setup?: (s: MatchState) => void): number {
@@ -252,25 +260,34 @@ describe('saut', () => {
 });
 
 describe('esquive', () => {
-  it('distance ≈ DODGE_SPEED × durée, dans la direction de l’entrée (ou devant)', () => {
+  it('distance ≈ vitesse du dash × durée, dans la direction de l’entrée (ou devant) ; esquive avant réduite', () => {
     const n = secToTicks(DODGE_DURATION_SEC);
     const expected = DODGE_SPEED * n * TICK_DT;
+    // Latérale (moveX = 1 => right(0) = −X) : DODGE_SPEED.
     const s = soloMatch('pilier');
     run(s, n, (t) => only0({ moveX: 1, buttons: t === 0 ? Buttons.DODGE : 0 }));
     expect(s.players[0].pos.x).toBeCloseTo(-expected, 6);
+    // Sans entrée : droit devant, × DODGE_FORWARD_SPEED_MULT (l'esquive est une feinte latérale, passe finale).
     const f = soloMatch('pilier');
     run(f, n, (t) => only0({ buttons: t === 0 ? Buttons.DODGE : 0 }));
-    expect(f.players[0].pos.z).toBeCloseTo(expected, 6);
+    expect(f.players[0].pos.z).toBeCloseTo(expected * DODGE_FORWARD_SPEED_MULT, 6);
     expect(f.players[0].move).toBe('dodge');
     step(f, only0({}));
     expect(f.players[0].move).toBe('run');
     expect(hSpeed(f.players[0].vel)).toBeLessThan(DODGE_SPEED);
+    // Arrière : DODGE_SPEED ; diagonale avant à 45° : 1 − (1 − mult)·½.
+    const b = soloMatch('pilier');
+    run(b, n, (t) => only0({ moveY: -1, buttons: t === 0 ? Buttons.DODGE : 0 }));
+    expect(b.players[0].pos.z).toBeCloseTo(-expected, 6);
+    expect(dodgeSpeed({ x: Math.SQRT1_2, y: 0, z: Math.SQRT1_2 }, 0)).toBeCloseTo(DODGE_SPEED * (1 - (1 - DODGE_FORWARD_SPEED_MULT) / 2), 9);
+    expect(dodgeSpeed({ x: 1, y: 0, z: 0 }, 0)).toBeCloseTo(DODGE_SPEED, 9);
   });
 
   it('sortie d’esquive : l’élan porte (DODGE_EXIT_SPEED_KEEP) puis décroît en douceur', () => {
+    // Esquive LATÉRALE (pleine vitesse) puis on continue dans ce sens : l'excès décroît à GROUND_OVERSPEED_DECEL.
     const s = soloMatch('ailier');
     const speeds: number[] = [];
-    run(s, 50, (t) => only0({ moveY: 1, buttons: t === 30 ? Buttons.DODGE : 0 }), (st, t) => {
+    run(s, 50, (t) => only0(t < 30 ? { moveY: 1 } : { moveX: 1, buttons: t === 30 ? Buttons.DODGE : 0 }), (st, t) => {
       if (t >= 30) speeds.push(hSpeed(st.players[0].vel));
     });
     const n = secToTicks(DODGE_DURATION_SEC);
@@ -280,7 +297,7 @@ describe('esquive', () => {
     expect(speeds[n + 1]).toBeCloseTo(exit - GROUND_OVERSPEED_DECEL * TICK_DT, 9);
     expect(speeds[n + 3]).toBeGreaterThan(ROLES.ailier.runSpeed + 1);
     for (let k = n + 1; k < speeds.length; k++) expect(speeds[k]).toBeLessThanOrEqual(speeds[k - 1] + 1e-9);
-    expect(speeds[speeds.length - 1]).toBeCloseTo(ROLES.ailier.runSpeed, 9);
+    expect(speeds[speeds.length - 1]).toBeCloseTo(ROLES.ailier.runSpeed * STRAFE_SPEED_MULT, 9); // pas chassé
   });
 
   it('dash-saut : un saut pressé pendant l’esquive part après DODGE_JUMP_CANCEL_SEC, élan conservé', () => {
@@ -292,7 +309,7 @@ describe('esquive', () => {
       run(
         s,
         50,
-        (t) => only0({ moveY: 1, buttons: (t === 30 ? Buttons.DODGE : 0) | (t === 30 + jt ? Buttons.JUMP : 0) }),
+        (t) => only0({ moveX: 1, buttons: (t === 30 ? Buttons.DODGE : 0) | (t === 30 + jt ? Buttons.JUMP : 0) }),
         (st, t) => {
           if (st.events.some((e) => e.type === 'jump')) {
             jumps.push(t - 30);
@@ -301,16 +318,104 @@ describe('esquive', () => {
         },
       );
       expect(jumps, `saut pressé à +${jt}`).toEqual([Math.max(jt, cancel)]);
-      expect(speedAtJump).toBeCloseTo(DODGE_SPEED * DODGE_EXIT_SPEED_KEEP, 9);
+      // Vitesse de sortie, déjà en l'air au tick du saut : l'excès au-delà du plafond de course s'éteint dès ce tick.
+      expect(speedAtJump).toBeCloseTo(DODGE_SPEED * DODGE_EXIT_SPEED_KEEP - AIR_OVERSPEED_DECEL * TICK_DT, 9);
     }
   });
 
-  it('en l’air, maintenir la direction ne freine pas l’élan d’une esquive aérienne', () => {
-    const s = soloMatch('ailier');
-    run(s, 30, () => only0({ moveY: 1 }));
-    run(s, 12, (t) => only0({ moveY: 1, buttons: t === 0 ? Buttons.JUMP : t === 2 ? Buttons.DODGE : 0 }));
-    expect(s.players[0].onGround).toBe(false);
-    expect(hSpeed(s.players[0].vel)).toBeCloseTo(DODGE_SPEED * DODGE_EXIT_SPEED_KEEP, 9);
+  it('en l’air, l’élan d’une esquive aérienne est gardé puis l’excès s’éteint à AIR_OVERSPEED_DECEL (sans entrée aussi)', () => {
+    for (const hold of [true, false]) {
+      const s = soloMatch('ailier');
+      const p = s.players[0];
+      run(s, 30, () => only0({ moveX: 1 }));
+      const speeds: number[] = [];
+      // Saut, esquive latérale au 3e tick (pleine vitesse), puis on maintient la direction (ou on lâche tout).
+      run(s, 12, (t) => only0({ moveX: hold || t <= 2 ? 1 : 0, buttons: t === 0 ? Buttons.JUMP : t === 2 ? Buttons.DODGE : 0 }), (st) => {
+        if (st.players[0].move === 'run') speeds.push(hSpeed(st.players[0].vel));
+      });
+      expect(p.onGround).toBe(false);
+      const exit = DODGE_SPEED * DODGE_EXIT_SPEED_KEEP;
+      const k = speeds.findIndex((v) => Math.abs(v - exit) < 1e-9); // tick de sortie : vitesse de sortie intacte
+      expect(k, hold ? 'maintenu' : 'relâché').toBeGreaterThanOrEqual(0);
+      const ceiling = ROLES.ailier.runSpeed * SPRINT_SPEED_MULT;
+      for (let i = k + 1; i < speeds.length; i++) {
+        expect(speeds[i]).toBeCloseTo(Math.max(ceiling, speeds[i - 1] - AIR_OVERSPEED_DECEL * TICK_DT), 9);
+      }
+      expect(speeds.length - k).toBeGreaterThan(2);
+    }
+  });
+
+  /**
+   * Vitesse moyenne (m/s) sur 5 s d'un porteur lancé à pleine course sur terrain plat, Maj + avant maintenus :
+   * `dodge` = esquive à chaque fin de cooldown, `hop` = saut à chaque tick possible (le tampon fait repartir au tick de
+   * l'atterrissage), `once` = une esquive puis des sauts.
+   */
+  function carrierAverageSpeed(role: Role, dodge: boolean, hop: boolean, once = false): number {
+    const s = soloMatch(role, [], 0, -44, 0);
+    debugGiveBall(s, 0);
+    const p = s.players[0];
+    run(s, 30, () => only0({ moveY: 1, buttons: Buttons.SPRINT }));
+    const z0 = p.pos.z;
+    let prev = 0;
+    run(s, 150, (t) => {
+      let b = Buttons.SPRINT;
+      if (dodge && p.dodgeCd === 0 && (prev & Buttons.DODGE) === 0) b |= Buttons.DODGE;
+      if (once && t === 0) b |= Buttons.DODGE;
+      if (hop && t % 2 === 0) b |= Buttons.JUMP;
+      prev = b;
+      return only0({ moveY: 1, buttons: b });
+    });
+    expect(s.ball.carrierId).toBe(0);
+    return (p.pos.z - z0) / 5;
+  }
+
+  it('hacher sa course n’est pas plus rapide que le sprint (porteur, trois rôles)', () => {
+    // Avant la passe finale : esquive + sauts ≈ 14 m/s pour TOUS les rôles (pilier porteur : 8,7 au sprint), esquive en
+    // boucle vers l'avant + 21 %, une esquive puis des sauts tenait 12,6 m/s indéfiniment.
+    for (const role of ['ailier', 'pilier', 'demi'] as Role[]) {
+      const sprint = carrierAverageSpeed(role, false, false);
+      expect(sprint, role).toBeCloseTo(ROLES[role].runSpeed * SPRINT_SPEED_MULT * CARRIER_SPEED_MULT, 1);
+      expect(carrierAverageSpeed(role, false, true), `${role} sauts`).toBeLessThanOrEqual(sprint * 1.02);
+      expect(carrierAverageSpeed(role, false, true, true), `${role} esquive puis sauts`).toBeLessThanOrEqual(sprint * 1.02);
+      expect(carrierAverageSpeed(role, true, false), `${role} esquive en boucle`).toBeLessThanOrEqual(sprint * 1.15);
+      expect(carrierAverageSpeed(role, true, true), `${role} esquive + sauts`).toBeLessThanOrEqual(sprint * 1.15);
+    }
+  });
+
+  it('tampon d’esquive : un appui juste avant la fin du cooldown part dès qu’elle est prête ; trop tôt, il est perdu', () => {
+    const buffer = secToTicks(DODGE_BUFFER_SEC);
+    expect(buffer).toBeGreaterThan(0);
+    // `early` = valeur du cooldown lue AVANT le tick de l'appui (il est décompté à l'étape 4, avant le déplacement) :
+    // 1 = l'esquive est prête ce tick-là (sans tampon) ; 2..buffer = appui trop tôt de 1..buffer−1 ticks.
+    for (const early of [2, buffer, buffer + 1]) {
+      const s = soloMatch('ailier');
+      const p = s.players[0];
+      run(s, 1, () => only0({ moveX: 1, buttons: Buttons.DODGE }));
+      expect(p.move).toBe('dodge');
+      // Appui (un seul tick) `early` ticks avant la fin du cooldown, puis plus rien.
+      let pressAt = -1;
+      const dodges: number[] = [];
+      run(s, 80, (t) => {
+        if (pressAt < 0 && p.dodgeCd === early) pressAt = t;
+        return only0({ moveX: 1, buttons: t === pressAt ? Buttons.DODGE : 0 });
+      }, (st, t) => {
+        if (st.events.some((e) => e.type === 'dodge')) dodges.push(t);
+      });
+      if (early <= buffer) expect(dodges, `appui ${early} ticks avant`).toEqual([pressAt + early - 1]);
+      else expect(dodges, `appui ${early} ticks avant`).toEqual([]);
+    }
+  });
+
+  it('jamais de −0 dans l’état : reculer avec yaw = 0, glissade bloquée contre le mur invisible', () => {
+    const s = soloMatch('pilier', [], 0, 0, 0);
+    expect(Object.is(s.players[0].yaw, 0)).toBe(true);
+    run(s, 10, () => only0({ moveY: -1, yaw: 0 }), (st) => expect(findBadValues(st, 'state', [], true)).toEqual([]));
+    // Glissade vers −X (yaw = −π/2) jusque contre le mur invisible : vitesse nulle, direction négative.
+    const half = s.field.width / 2;
+    const w = soloMatch('ailier', [], -(half - 4.5), 0, -Math.PI / 2);
+    run(w, 40, (t) => only0({ moveY: 1, yaw: -Math.PI / 2, buttons: Buttons.SPRINT | (t === 12 ? Buttons.SLIDE : 0) }), (st) =>
+      expect(findBadValues(st, 'state', [], true)).toEqual([]),
+    );
   });
 
   function dodgeInterval(carrier: boolean): number {
@@ -523,6 +628,32 @@ describe('arène et contacts', () => {
     const b = s.players[1].pos;
     expect(Math.hypot(a.x - b.x, a.z - b.z)).toBeGreaterThanOrEqual(PLAYER_SEPARATION - 1e-3);
     expect(a.x + b.x).toBeCloseTo(0, 9);
+  });
+
+  it('séparation et relief : un joueur immobile poussé contre un muret n’y entre pas et ne le grimpe pas', () => {
+    // Muret transverse (axe X) de 0,8 m : face sud à z = −29,7 ; A (sans entrée) collé dessus, B lui fonce dessus.
+    const wall: TerrainFeature = { kind: 'wall', x: 0, z: -30, length: 12, thickness: 0.6, height: 0.8, rotation: Math.PI / 2 };
+    const s = soloMatch('demi', [wall], 0, -29.249, 0);
+    const a = s.players[0];
+    s.players[1].pos = { x: 0, y: 0, z: -27.6 };
+    let climbs = 0;
+    run(s, 60, () => ({ 1: makeInput({ moveY: 1, yaw: Math.PI }) }), (st) => {
+      if (st.events.some((e) => e.type === 'climb' && e.playerId === 0)) climbs++;
+      expect(a.pos.y).toBe(0);
+      expect(faceContact(st.field, a.pos.x, a.pos.y, a.pos.z, PLAYER_RADIUS, MAX_STEP_HEIGHT)).toBeNull();
+    });
+    expect(climbs).toBe(0); // avant la passe finale : grimpe au 4e tick, debout sur le muret sans aucune entrée
+  });
+
+  it('séparation et relief : poussé sur une butte, un joueur au sol reste collé au relief', () => {
+    const mound: TerrainFeature = { kind: 'mound', x: 0, z: 0, radius: 6, height: 1.2 };
+    const s = soloMatch('demi', [mound], -3, 0, 0);
+    const a = s.players[0];
+    s.players[1].pos = { x: -4.2, y: supportHeight(s.field, -4.2, 0, PLAYER_RADIUS), z: 0 };
+    run(s, 60, () => ({ 1: makeInput({ moveY: 1, yaw: Math.PI / 2 }) }), (st) => {
+      if (a.onGround) expect(Math.abs(a.pos.y - supportHeight(st.field, a.pos.x, a.pos.z, PLAYER_RADIUS))).toBeLessThan(1e-9);
+    });
+    expect(a.pos.x).toBeGreaterThan(-2.5); // il a bien été poussé vers le haut de la butte
   });
 
   it('les joueurs plaqués (down / getting_up) ne bougent pas', () => {

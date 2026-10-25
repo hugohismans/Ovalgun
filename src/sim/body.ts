@@ -203,9 +203,31 @@ export function integrateBody(state: MatchState, p: PlayerState): void {
 }
 
 /**
+ * Après une poussée de séparation (passe finale) : le joueur est ressorti des faces de murets / rampes qu'il
+ * chevaucherait (sinon, poussé dans l'empreinte d'un muret, il le grimpait au tick suivant sans aucune entrée :
+ * approachesFace grimpe toujours depuis une empreinte) puis, s'il est au sol, recollé au relief (une poussée sur une
+ * butte déplaçait en horizontal sans recaler la hauteur : pieds jusqu'à 5–8 cm sous le sol pendant un tick). Un
+ * joueur en grimpe n'est pas touché (sa verticale est gérée par la grimpe).
+ */
+function settleAfterPush(field: FieldLayout, p: PlayerState): void {
+  if (p.move === 'climb') return;
+  const c = faceContact(field, p.pos.x, p.pos.y, p.pos.z, PLAYER_RADIUS, MAX_STEP_HEIGHT);
+  if (c !== null) {
+    p.pos.x += c.nx * (c.depth + FACE_PUSH_EPS);
+    p.pos.z += c.nz * (c.depth + FACE_PUSH_EPS);
+    clampToField(field, p);
+  }
+  if (!p.onGround) return;
+  const sup = supportHeight(field, p.pos.x, p.pos.z, PLAYER_RADIUS);
+  if (Math.abs(sup - p.pos.y) <= MAX_STEP_HEIGHT) p.pos.y = sup;
+  else if (sup < p.pos.y) p.onGround = false; // poussé au bord d'un muret / d'une rampe : il tombe
+}
+
+/**
  * Séparation douce entre joueurs actifs qui se chevauchent (ordre déterministe : paires i < j
  * dans l'ordre des ids). Chacun corrige PLAYER_PUSH_STRENGTH/2 du chevauchement par tick.
  * Deux joueurs exactement superposés sont écartés selon X (le plus petit id vers −X).
+ * La poussée respecte le relief (settleAfterPush) : jamais dans un muret, toujours collé au sol.
  */
 export function separatePlayers(state: MatchState): void {
   const ps = state.players;
@@ -235,6 +257,8 @@ export function separatePlayers(state: MatchState): void {
       b.pos.z += nz * push;
       clampToField(state.field, a);
       clampToField(state.field, b);
+      settleAfterPush(state.field, a);
+      settleAfterPush(state.field, b);
     }
   }
 }

@@ -146,6 +146,25 @@ describe('bots : porteur', () => {
     expect(pass).toEqual({ type: 'pass', fromId: 0, toId: 1 });
   });
 
+  it('sous le feu d’un tireur LOINTAIN (personne à moins de BOT_PRESSURE_RADIUS), stabilité basse => passe arrière', () => {
+    // Passe finale : la liberté du porteur ne comptait que la distance au plus proche adversaire (ici 22 m => 1) ; aucun
+    // receveur n'était « plus libre » et le porteur ne passait jamais sous le feu du dernier défenseur.
+    const s = scene();
+    place(s, 0, 0, -10);
+    place(s, 1, 9, -16); // coéquipier démarqué, derrière à droite
+    place(s, 5, 0, 12); // tireur loin devant
+    debugGiveBall(s, 0);
+    const r = simulate(s, [0], 30, {
+      before: (t) => {
+        const p = s.players[0];
+        p.stability = 55 - t * 0.2; // un tir reçu à chaque tick, sous BOT_PASS_STABILITY_FRACTION
+        p.lastHitBy = 5;
+      },
+      until: (st) => st.ball.mode === 'pass',
+    });
+    expect(r.events.find((e) => e.type === 'pass')).toEqual({ type: 'pass', fromId: 0, toId: 1 });
+  });
+
   it('pas pressé => il avance (et sprinte) vers l’en-but adverse, sans passer', () => {
     const s = scene();
     place(s, 0, 0, -10);

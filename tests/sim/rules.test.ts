@@ -7,6 +7,7 @@ import {
   activePlayers,
   attackDir,
   attackYaw,
+  BALL_RADIUS,
   ballCarrier,
   ballLandingPoint,
   Buttons,
@@ -575,6 +576,35 @@ describe('chrono et dernière minute', () => {
     expect(findBadValues(s)).toEqual([]);
   });
 
+  it('fin du match : un joueur en l’air est posé au sol (pas de joueur suspendu derrière l’écran de fin)', () => {
+    const s = liveMatch(5);
+    s.clockTicks = 8;
+    place(s, 0, 0, -10);
+    step(s, { 0: makeInput({ buttons: Buttons.JUMP }) });
+    for (let i = 0; i < 6; i++) step(s, {});
+    expect(s.players[0].onGround).toBe(false); // encore en l'air à la fin
+    step(s, {});
+    expect(s.phase).toBe('ended');
+    for (let i = 0; i < 30; i++) step(s, {});
+    const p = s.players[0];
+    expect(p.onGround).toBe(true);
+    expect(p.pos.y).toBe(supportHeight(s.field, p.pos.x, p.pos.z, PLAYER_RADIUS));
+  });
+
+  it('ballon mort (essai le long de la touche) : posé dans l’arène, jamais derrière le mur invisible', () => {
+    const s = liveMatch(3);
+    const p = s.players[4];
+    const hw = s.field.width / 2;
+    // Équipe 1, regard vers −Z : ses mains (côté droit, right(π) = +X) sont au-delà de son axe, contre la touche +X.
+    place(s, 4, hw - PLAYER_RADIUS, opponentTryLineZ(s, p.team) - attackDir(p.team) * 0.1);
+    expect(debugGiveBall(s, 4)).toBe(true);
+    p.vel = { x: 0, y: 0, z: -8 };
+    step(s, runForward(s, 4));
+    expect(s.events.some((e) => e.type === 'try')).toBe(true);
+    expect(s.ball.mode).toBe('dead');
+    expect(Math.abs(s.ball.pos.x)).toBeLessThanOrEqual(hw - BALL_RADIUS + 1e-9);
+  });
+
   it("essai au tick même où le chrono atteint 0 : il compte (essai puis fin, score final compris)", () => {
     const s = liveMatch(3);
     carrierBeforeLine(s, 4, 0.1);
@@ -643,7 +673,7 @@ function simulateFullMatch(teamSize: TeamSize, seed: number, roundTripEvery = 0)
     step(s, frames[t]);
     for (const e of s.events) counts[e.type] = (counts[e.type] ?? 0) + 1;
     if (t % 50 === 0) hashes.push(hashState(s));
-    if (t % 25 === 0 && bad.length === 0) bad = findBadValues(s).map((b) => `tick ${s.tick}: ${b}`);
+    if (t % 25 === 0 && bad.length === 0) bad = findBadValues(s, 'state', [], true).map((b) => `tick ${s.tick}: ${b}`);
     if (endedAt < 0 && s.phase === 'ended') endedAt = t;
   }
   return { s, counts, hashes, bad };

@@ -18,8 +18,10 @@ import {
   CARRIER_DODGE_COOLDOWN_SEC,
   CARRIER_SPEED_MULT,
   COYOTE_TIME_SEC,
+  DODGE_BUFFER_SEC,
   DODGE_COOLDOWN_SEC,
   DODGE_DURATION_SEC,
+  DODGE_FORWARD_SPEED_MULT,
   DODGE_EXIT_SPEED_KEEP,
   DODGE_IN_AIR,
   DODGE_INVULN_SEC,
@@ -48,6 +50,7 @@ import {
 } from './constants';
 import { integrateBody } from './body';
 import { has, type TickInput } from './input';
+import { airKeptSpeed, decayAirOverspeed, maxRunSpeed } from './momentum';
 import { aimOrigin, cooldownTicks, isCarrier, playerHeight } from './playerStatus';
 import { secToTicks } from './time';
 import { Buttons, type MatchState, type PlayerState, type Vec3 } from './types';
@@ -66,7 +69,8 @@ export function wishDirection(yaw: number, moveX: number, moveY: number): Vec3 {
   const x = r.x * moveX + f.x * moveY;
   const z = r.z * moveX + f.z * moveY;
   const l = Math.sqrt(x * x + z * z);
-  return l > MOVE_EPS ? { x: x / l, y: 0, z: z / l } : { x: 0, y: 0, z: 0 };
+  // `+ 0` : reculer avec yaw = 0 donne x = (−1)·0 + 0·(−1) = −0 ; jamais de −0 dans l'état (vitesse, moveDir).
+  return l > MOVE_EPS ? { x: x / l + 0, y: 0, z: z / l + 0 } : { x: 0, y: 0, z: 0 };
 }
 
 /**
@@ -121,13 +125,30 @@ function approachHorizontal(v: Vec3, tx: number, tz: number, maxDelta: number): 
 // Mouvements spéciaux
 // ---------------------------------------------------------------------------
 
+/**
+ * Vitesse du dash d'une esquive dans la direction unitaire `dir` pour le regard `yaw` : DODGE_SPEED, réduite vers
+ * l'avant (× (1 − (1 − DODGE_FORWARD_SPEED_MULT)·c²), c = max(0, cos(dir, regard))). PURE.
+ */
+export function dodgeSpeed(dir: Vec3, yaw: number): number {
+  const f = forward(yaw);
+  const c = Math.max(0, dir.x * f.x + dir.z * f.z);
+  return DODGE_SPEED * (1 - (1 - DODGE_FORWARD_SPEED_MULT) * c * c);
+}
+
+/**
+ * Esquive, si elle est disponible (cooldown écoulé, ni grimpe ni plongeon, au sol ou DODGE_IN_AIR). Appelée tant que
+ * le tampon d'esquive (dodgeBufferTicks, DODGE_BUFFER_SEC) n'est pas écoulé : un appui un peu trop tôt part dès que
+ * possible ; le tampon est consommé au déclenchement.
+ */
 function tryStartDodge(state: MatchState, p: PlayerState, wish: Vec3): void {
   if (p.dodgeCd > 0 || p.move === 'climb' || p.move === 'dive' || p.move === 'dive_recover') return;
   if (!p.onGround && !DODGE_IN_AIR) return;
   const dir = wish.x !== 0 || wish.z !== 0 ? wish : forward(p.yaw);
+  p.dodgeBufferTicks = 0;
   p.move = 'dodge';
   p.moveTicks = secToTicks(DODGE_DURATION_SEC);
   p.moveDir = { x: dir.x, y: 0, z: dir.z };
+  p.moveSpeed = dodgeSpeed(p.moveDir, p.yaw);
   p.dodgeCd = cooldownTicks(state, isCarrier(state, p) ? CARRIER_DODGE_COOLDOWN_SEC : DODGE_COOLDOWN_SEC);
   p.invulnTicks = Math.max(p.invulnTicks, secToTicks(DODGE_INVULN_SEC));
   state.events.push({ type: 'dodge', playerId: p.id });
@@ -199,12 +220,15 @@ function tryJump(state: MatchState, p: PlayerState, freshPress: boolean): void {
  *    GROUND_OVERSPEED_DECEL : l'élan porte au lieu de s'arrêter net.
  *  - En l'air sans entrée : on garde l'élan. Avec entrée : AIR_ACCEL ; si l'on va déjà plus
  *    vite que la cible dans le sens de l'entrée, la norme est conservée (on réoriente sans freiner).
+ *  - En l'air, dans les deux cas (passe finale) : l'excès au-delà du plafond de course (maxRunSpeed) s'éteint à
+ *    AIR_OVERSPEED_DECEL — sinon esquive + sauts à répétition allaient plus vite que tout sprint.
  */
 function runVelocity(state: MatchState, p: PlayerState, inp: TickInput, wish: Vec3): void {
   const speed = targetRunSpeed(state, p, inp);
   const v = p.vel;
   if (inp.moveMag <= MOVE_EPS) {
     if (p.onGround) approachHorizontal(v, 0, 0, GROUND_DECEL * TICK_DT);
+    else decayAirOverspeed(state, p);
     return;
   }
   if (p.onGround) {
@@ -236,19 +260,21 @@ function runVelocity(state: MatchState, p: PlayerState, inp: TickInput, wish: Ve
   approachHorizontal(v, wish.x * speed, wish.z * speed, AIR_ACCEL * TICK_DT);
   if (keepMomentum) {
     const s1 = Math.sqrt(v.x * v.x + v.z * v.z);
-    if (s1 > 1e-9 && s1 < s0) {
-      v.x *= s0 / s1;
-      v.z *= s0 / s1;
+    const keep = airKeptSpeed(s0, maxRunSpeed(state, p));
+    if (s1 > 1e-9 && s1 < keep) {
+      v.x *= keep / s1;
+      v.z *= keep / s1;
     }
   }
 }
 
 /** Fin d'esquive : retour en course avec DODGE_EXIT_SPEED_KEEP de la vitesse du dash. */
 function exitDodge(p: PlayerState): void {
-  p.vel.x = p.moveDir.x * DODGE_SPEED * DODGE_EXIT_SPEED_KEEP;
-  p.vel.z = p.moveDir.z * DODGE_SPEED * DODGE_EXIT_SPEED_KEEP;
+  p.vel.x = p.moveDir.x * p.moveSpeed * DODGE_EXIT_SPEED_KEEP;
+  p.vel.z = p.moveDir.z * p.moveSpeed * DODGE_EXIT_SPEED_KEEP;
   p.move = 'run';
   p.moveTicks = 0;
+  p.moveSpeed = 0;
 }
 
 /** Vitesse pendant l'esquive. Le tick de sortie fixe la vitesse de sortie telle quelle (pas de course ce tick-là). */
@@ -257,8 +283,8 @@ function dodgeVelocity(p: PlayerState): void {
     exitDodge(p);
     return;
   }
-  p.vel.x = p.moveDir.x * DODGE_SPEED;
-  p.vel.z = p.moveDir.z * DODGE_SPEED;
+  p.vel.x = p.moveDir.x * p.moveSpeed;
+  p.vel.z = p.moveDir.z * p.moveSpeed;
   p.moveTicks--;
 }
 
@@ -289,8 +315,9 @@ function slideVelocity(p: PlayerState, wish: Vec3): boolean {
     }
   }
   const speed = Math.max(0, Math.sqrt(p.vel.x * p.vel.x + p.vel.z * p.vel.z) - SLIDE_DECEL * TICK_DT);
-  p.vel.x = d.x * speed;
-  p.vel.z = d.z * speed;
+  // `+ 0` : glissade bloquée (vitesse 0) avec une composante de direction négative => −0 (MatchState sans −0).
+  p.vel.x = d.x * speed + 0;
+  p.vel.z = d.z * speed + 0;
   p.moveTicks--;
   return true;
 }
@@ -326,7 +353,8 @@ export function updatePlayerMovement(state: MatchState, p: PlayerState, inp: Tic
   p.lastMoveY = inp.moveY;
   const wish = wishDirection(p.yaw, inp.moveX, inp.moveY);
 
-  if (has(inp.pressed, Buttons.DODGE)) tryStartDodge(state, p, wish);
+  if (has(inp.pressed, Buttons.DODGE)) p.dodgeBufferTicks = secToTicks(DODGE_BUFFER_SEC);
+  if (p.dodgeBufferTicks > 0) tryStartDodge(state, p, wish);
   if (has(inp.pressed, Buttons.SLIDE)) {
     // Pour le porteur, SLIDE = plongeon (étape 4) ; pour les autres, glissade.
     if (isCarrier(state, p)) tryStartDive(state, p, wish);
@@ -366,6 +394,7 @@ export function tickPlayerTimers(p: PlayerState): void {
   if (p.slideCd > 0) p.slideCd--;
   if (p.diveCd > 0) p.diveCd--;
   if (p.jumpBufferTicks > 0) p.jumpBufferTicks--;
+  if (p.dodgeBufferTicks > 0) p.dodgeBufferTicks--;
   if (p.pickupBlockTicks > 0) p.pickupBlockTicks--;
   if (p.fireCd > 0) p.fireCd--;
 }

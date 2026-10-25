@@ -39,7 +39,7 @@ function simulate(
     for (const e of s.events) eventCounts[e.type] = (eventCounts[e.type] ?? 0) + 1;
     if (t % 100 === 0) hashes.push(hashState(s));
     if (t % 10 === 0) ballTrace.push(JSON.stringify(s.ball));
-    if (opts.checkValues && t % 5 === 0 && bad.length === 0) bad.push(...findBadValues(s).map((b) => `tick ${s.tick}: ${b}`));
+    if (opts.checkValues && t % 5 === 0 && bad.length === 0) bad.push(...findBadValues(s, 'state', [], true).map((b) => `tick ${s.tick}: ${b}`));
     if (s.zones.length > 0) zoneTicks++;
     if (s.players.some((p) => p.role === 'pilier' && p.abilityTicks > 0)) shieldTicks++;
   }
@@ -146,7 +146,7 @@ function simulateCombat(teamSize: TeamSize, seed: number, roundTripEvery = 0) {
     step(s, frame as InputFrame);
     for (const e of s.events) counts[e.type] = (counts[e.type] ?? 0) + 1;
     if (t % 100 === 0) hashes.push(hashState(s));
-    if (t % 7 === 0 && bad.length === 0) bad.push(...findBadValues(s).map((b) => `tick ${s.tick}: ${b}`));
+    if (t % 7 === 0 && bad.length === 0) bad.push(...findBadValues(s, 'state', [], true).map((b) => `tick ${s.tick}: ${b}`));
   }
   return { state: s, counts, hashes, bad };
 }

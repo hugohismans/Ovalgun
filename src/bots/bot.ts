@@ -163,7 +163,7 @@ export function botInput(mem: BotMemory, state: Readonly<MatchState>, playerId: 
     const lookYaw = mag > 0 ? Math.atan2(dirX, dirZ) : ballYaw;
     if (move.sprint) buttons |= Buttons.SPRINT;
     if (role === 'receive') {
-      // Le receveur garde sa ligne : il regarde où il court (sprint conservé), sans tirer.
+      // Le receveur court au point de réception : il regarde où il court (le ballon s'il attend), sans tirer.
       yaw = turnYaw(lookYaw);
       pitch = turnPitch(0);
     } else {
@@ -182,8 +182,9 @@ export function botInput(mem: BotMemory, state: Readonly<MatchState>, playerId: 
       }
       if (a.reload) buttons |= pulse(me, Buttons.RELOAD);
     }
-    // Réflexe d'esquive sous le feu (après le temps de réaction), latéral au tireur.
-    if (dodgeReflexArmed(mem) && me.dodgeCd === 0 && me.move === 'run' && rand(mem) < diff.dodgeReflex * TICK_DT) {
+    // Réflexe d'esquive sous le feu (après le temps de réaction), latéral au tireur — pas pour le receveur d'une passe en
+    // vol (passe finale : l'esquive l'écartait du point de réception, 0,3 à 3 passes perdues par match).
+    if (role !== 'receive' && dodgeReflexArmed(mem) && me.dodgeCd === 0 && me.move === 'run' && rand(mem) < diff.dodgeReflex * TICK_DT) {
       const shooter = mem.lastShooterId >= 0 ? (state.players[mem.lastShooterId] ?? null) : null;
       const fx = mag > 0 ? dirX : Math.sin(yaw);
       const fz = mag > 0 ? dirZ : Math.cos(yaw);

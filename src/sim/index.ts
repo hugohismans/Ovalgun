@@ -60,7 +60,8 @@ export {
 // Entrées.
 export { NEUTRAL_INPUT, makeInput, ALL_BUTTONS, PITCH_MIN, PITCH_MAX, type TickInput } from './input';
 // Joueurs (lectures utiles au rendu / HUD / bots).
-export { aimOrigin, cooldownTicks, isCarrier, playerHeight, targetRunSpeed, wishDirection } from './player';
+export { aimOrigin, cooldownTicks, dodgeSpeed, isCarrier, playerHeight, targetRunSpeed, wishDirection } from './player';
+export { maxRunSpeed } from './momentum';
 // Ballon (position du ballon porté, partagée avec le rendu).
 export { carryPosition } from './ball';
 // Porteur (étape 4) : visée assistée et trajectoires (pures, lues par le rendu / les bots), outils de test.
@@ -75,7 +76,9 @@ export {
   passAimDirection,
   planPass,
   predictBallLanding,
+  predictPassCatch,
   selectPassTarget,
+  type PassCatchPoint,
   type PassPlan,
   type PassTarget,
 } from './carrier';

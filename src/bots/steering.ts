@@ -14,10 +14,15 @@
  *    à la zone, du côté du point visé (contournement) — sauf si le point visé est lui-même dans la zone (ballon,
  *    porteur à presser : on y va) ou si l'on est déjà dedans (on sort vers le point visé). Le porteur, lui, pénalise
  *    les directions qui traversent une zone (carrierBrain.ts).
+ *  - Passe finale : RECEVEUR d'une passe en vol (steerReceive) : à chaque tick, vers le point de réception réel
+ *    (predictPassCatch), à l'allure qui l'y amène BOT_RECEIVE_TIME_MARGIN_SEC avant le ballon (sprint seulement s'il le
+ *    faut) ; arrêté à moins de BOT_RECEIVE_ARRIVE_RADIUS, il attend le ballon.
  */
 
 import {
   BOT_ARRIVE_RADIUS,
+  BOT_RECEIVE_ARRIVE_RADIUS,
+  BOT_RECEIVE_TIME_MARGIN_SEC,
   BOT_ZONE_AVOID_LOOKAHEAD,
   BOT_ZONE_AVOID_MARGIN,
   BOT_DETOUR_ANGLE_DEG,
@@ -31,8 +36,12 @@ import {
   BOT_STUCK_SPEED,
   BOT_TEAMMATE_REPULSION,
   BOT_TEAMMATE_SPACING,
+  MOVE_INPUT_FULL_SPEED,
+  predictPassCatch,
   rand,
+  ROLES,
   secToTicks,
+  TICK_DT,
   type MatchState,
   type PlayerState,
 } from '../sim';
@@ -94,10 +103,31 @@ export function avoidZones(state: Readonly<MatchState>, me: PlayerState, dx: num
   return out;
 }
 
+/**
+ * Receveur d'une passe en vol (PURE vis-à-vis de l'état) : point de réception réel recalculé à chaque tick, allure
+ * « juste à temps » : vitesse voulue = distance / (temps restant − BOT_RECEIVE_TIME_MARGIN_SEC), convertie en
+ * inclinaison (vitesse de course du rôle à MOVE_INPUT_FULL_SPEED), sprint au-delà de la vitesse de course ; arrêt à
+ * moins de BOT_RECEIVE_ARRIVE_RADIUS. Ballon qui n'est plus en passe (reçu, intercepté, au sol) : point visé de la
+ * décision, jusqu'à la prochaine décision.
+ */
+function steerReceive(mem: BotMemory, state: Readonly<MatchState>, me: PlayerState): MoveCommand {
+  const b = state.ball;
+  const c = b.mode === 'pass' ? predictPassCatch(state.field, b.pos, b.vel) : { x: mem.decision.goalX, z: mem.decision.goalZ, t: 0 };
+  const vx = c.x - me.pos.x;
+  const vz = c.z - me.pos.z;
+  const dist = Math.sqrt(vx * vx + vz * vz);
+  if (dist <= BOT_RECEIVE_ARRIVE_RADIUS) return { dirX: 0, dirZ: 0, mag: 0, sprint: false, jump: false };
+  const run = ROLES[me.role].runSpeed;
+  const want = dist / Math.max(TICK_DT, c.t - BOT_RECEIVE_TIME_MARGIN_SEC);
+  const mag = Math.min(1, (want / run) * MOVE_INPUT_FULL_SPEED);
+  return { dirX: vx / dist, dirZ: vz / dist, mag, sprint: want > run && mag >= 0.99, jump: false };
+}
+
 /** Direction et inclinaison voulues d'après la décision courante (sans le suivi de blocage). PURE vis-à-vis de l'état. */
 export function steer(mem: BotMemory, state: Readonly<MatchState>, me: PlayerState): MoveCommand {
   const d = mem.decision;
   if (d.role === 'idle') return { dirX: 0, dirZ: 0, mag: 0, sprint: false, jump: false };
+  if (d.role === 'receive') return steerReceive(mem, state, me);
   let dx = 0;
   let dz = 0;
   let mag = 0;
@@ -122,8 +152,8 @@ export function steer(mem: BotMemory, state: Readonly<MatchState>, me: PlayerSta
       }
     }
   }
-  // Écartement des coéquipiers (pas d'agglutinement), sauf porteur et receveur qui gardent leur course.
-  if (d.role !== 'carrier' && d.role !== 'receive') {
+  // Écartement des coéquipiers (pas d'agglutinement), sauf le porteur qui garde sa course (receveur : steerReceive).
+  if (d.role !== 'carrier') {
     let rx = 0;
     let rz = 0;
     for (const m of state.players) {

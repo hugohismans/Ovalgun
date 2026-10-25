@@ -11,6 +11,7 @@ import {
   BALL_PICKUP_RADIUS,
   BALL_REACH_BELOW,
   Buttons,
+  AIR_OVERSPEED_DECEL,
   CARRIER_SPEED_MULT,
   DIVE_COOLDOWN_SEC,
   DIVE_DURATION_SEC,
@@ -40,6 +41,7 @@ import {
   PLAYER_LOW_HEIGHT,
   PLAYER_RADIUS,
   ROLES,
+  SPRINT_SPEED_MULT,
   TICK_DT,
   canCarrierAct,
   canShoot,
@@ -49,6 +51,7 @@ import {
   makeInput,
   passAimDirection,
   planPass,
+  predictPassCatch,
   predictBallLanding,
   secToTicks,
   selectPassTarget,
@@ -601,6 +604,21 @@ describe('passe', () => {
     expect(h / plan.flightSec).toBeCloseTo(17, 6); // PASS_SPEED : vitesse horizontale moyenne
   });
 
+  it('predictPassCatch : point où la passe redescend à hauteur des mains = point visé, au bout de la durée de vol', () => {
+    const s = arena();
+    place(s, 0, 0, 0, 0);
+    for (const [x, z] of [[0, -2], [5, -9], [-8, -14], [3, -23]]) {
+      place(s, 1, x, z);
+      s.players[1].vel = { x: 4, y: 0, z: -2 }; // receveur qui court : point visé anticipé
+      const plan = planPass(s, 0, 1);
+      if (plan === null) throw new Error('plan');
+      const c = predictPassCatch(s.field, plan.from, plan.vel);
+      expect(Math.abs(c.t - plan.flightSec)).toBeLessThanOrEqual(1 / 60);
+      expect(Math.hypot(c.x - plan.to.x, c.z - plan.to.z)).toBeLessThan(0.15);
+      expect(c.y).toBeLessThanOrEqual(plan.to.y + 1e-9);
+    }
+  });
+
   it('interception : un adversaire placé sur la trajectoire attrape la passe', () => {
     const s = arena();
     place(s, 0, 0, 0, 0);
@@ -1053,12 +1071,22 @@ describe('plongeon (porteur + SLIDE)', () => {
     step(s, { 0: makeInput({ yaw: 0, moveY: 1, buttons: Buttons.SLIDE }) });
     expect(s.players[0].move).toBe(DIVE_IN_AIR ? 'dive' : 'run');
     if (!DIVE_IN_AIR) return;
-    for (let i = 0; i < 60 && s.players[0].move !== 'run'; i++) {
+    // En l'air : sans contrôle, direction gardée ; l'excès au-delà du plafond de course du porteur s'éteint à
+    // AIR_OVERSPEED_DECEL (passe finale : avant, les 17 m/s du dash étaient gardés jusqu'au sol).
+    const p = s.players[0];
+    const ceiling = ROLES[p.role].runSpeed * SPRINT_SPEED_MULT * CARRIER_SPEED_MULT;
+    let prev = hSpeed(p.vel);
+    let airborneRecover = 0;
+    for (let i = 0; i < 60 && p.move !== 'run'; i++) {
       step(s, { 0: makeInput({ yaw: 0, moveY: 1 }) });
-      if (s.players[0].move === 'dive_recover' && !s.players[0].onGround) {
-        expect(hSpeed(s.players[0].vel)).toBeCloseTo(DIVE_SPEED, 6); // en l'air : élan gardé, sans contrôle
+      if (p.move === 'dive_recover' && !p.onGround) {
+        airborneRecover++;
+        expect(hSpeed(p.vel)).toBeCloseTo(Math.max(ceiling, prev - AIR_OVERSPEED_DECEL * TICK_DT), 6);
+        expect(p.vel.x).toBeCloseTo(0, 9);
       }
+      prev = hSpeed(p.vel);
     }
+    expect(airborneRecover).toBeGreaterThan(0);
     expect(s.players[0].onGround).toBe(true);
     expect(s.players[0].move).toBe('run');
   });

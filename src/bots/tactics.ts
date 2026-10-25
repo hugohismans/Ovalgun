@@ -10,7 +10,7 @@
  * pas ces règles, aucun rôle ne compte sur eux.
  *
  *  - ATTAQUE (son équipe a le ballon, ou une passe de son équipe est en vol) :
- *      porteur -> carrierBrain ; receveur d'une passe en vol -> garde sa ligne ;
+ *      porteur -> carrierBrain ; receveur d'une passe en vol -> va au point de réception (predictPassCatch), juste à temps ;
  *      les BOT_SUPPORTERS_* plus en retrait -> soutien derrière le porteur, couloirs latéraux décalés, dans son cône de
  *      passe ; les autres -> espace devant (ouvrent la défense, tirent sur les défenseurs qui menacent le porteur).
  *  - DÉFENSE : un dernier défenseur (cover) reste entre le porteur et notre en-but (dès BOT_COVER_MIN_DEFENDERS bots ;
@@ -46,14 +46,15 @@ import {
   BOT_GRENADE_STANDOFF,
   BOT_LEAD_SPEED_CAP_MULT,
   BOT_MARK_CARRIER_SHIFT,
+  BOT_MARK_DANGER_STICKY,
   BOT_MARK_GOALSIDE,
+  BOT_MARK_HYSTERESIS_M,
   BOT_MARK_SHOOT_CARRIER_DIST,
   BOT_OWN_THIRD_FRACTION,
   BOT_PRESS_LEAD_SEC,
   BOT_PRESSERS_3V3,
   BOT_PRESSERS_5V5,
   BOT_PRESSERS_OWN_THIRD,
-  BOT_RECEIVE_KEEP_LINE_MIN_MAG,
   BOT_ROLE_HYSTERESIS_M,
   BOT_SHAPE_DEPTH,
   BOT_SHAPE_OWN_KICK_DEPTH_FRACTION,
@@ -67,9 +68,9 @@ import {
   BOT_SUPPORT_TOUCH_MARGIN,
   BOT_SUPPORTERS_3V3,
   BOT_SUPPORTERS_5V5,
-  Buttons,
   distanceToTryLine,
   opponentTeam,
+  predictPassCatch,
   ROLES,
   type MatchState,
   type PlayerState,
@@ -119,14 +120,6 @@ function setRole(d: Decision, role: TacticalRole, goal: Point, sprint: boolean, 
  */
 const roleBonus = (mem: BotMemory, p: PlayerState, role: TacticalRole): number =>
   p.id === mem.playerId && mem.decision.role === role ? BOT_ROLE_HYSTERESIS_M : 0;
-
-/**
- * Pénalité de classement (m) des bots sans arme utilisable (demi : grenades à l'étape 7) pour les rôles qui tirent
- * (pression, repli) : les bots armés les prennent d'abord. Pas une valeur de réglage : un simple « après les autres ».
- */
-const unarmedPenalty = (p: PlayerState, mem: BotMemory): number => (engageRange(p, mem.difficulty) > 0 ? 0 : UNARMED_RANK_PENALTY);
-/** Assez grand pour classer tout bot armé avant tout bot désarmé (distances du terrain < 200 m). */
-const UNARMED_RANK_PENALTY = 1000;
 
 /** Position anticipée de `f` dans `sec` s, vitesse plafonnée (BOT_LEAD_SPEED_CAP_MULT × runSpeed : pas d'esquive suivie). */
 function leadPoint(f: PlayerState, sec: number): Point {
@@ -216,18 +209,16 @@ function standoff(state: Readonly<MatchState>, me: PlayerState, lp: Point): Poin
 const playerDistTo = (p: PlayerState, g: Point): number => Math.sqrt(dist2(p.pos.x, p.pos.z, g.x, g.z));
 
 /**
- * Receveur d'une passe en vol : il garde sa ligne (même direction, même allure, même sprint qu'à l'entrée
- * précédente : la passe a été visée sur sa course anticipée). Arrêté (inclinaison sous BOT_RECEIVE_KEEP_LINE_MIN_MAG),
- * il va vers le point de chute.
+ * Receveur d'une passe en vol : il va au point de réception RÉEL (predictPassCatch : là où le ballon redescend à
+ * hauteur des mains), que le pilotage rejoint juste à temps à chaque tick (steering.ts, steerReceive). Passe finale :
+ * avant, il « gardait sa ligne » (direction de sa dernière entrée, à pleine vitesse) alors que la passe vise sa course
+ * anticipée d'après sa VITESSE ; un soutien qui ralentissait pour arriver à son poste repartait à fond et dépassait le
+ * ballon (10 à 15 % des passes au sol, celles de l'humain vers un bot comprises).
  */
 function decideReceive(mem: BotMemory, state: Readonly<MatchState>): void {
-  const d = mem.decision;
-  const land = ballLandingPoint(state);
-  setRole(d, 'receive', clampToField(state, land.x, land.z), (mem.lastButtons & Buttons.SPRINT) !== 0, -1);
-  if (mem.lastMoveMag > BOT_RECEIVE_KEEP_LINE_MIN_MAG && (mem.lastDirX !== 0 || mem.lastDirZ !== 0)) {
-    d.dirX = mem.lastDirX;
-    d.dirZ = mem.lastDirZ;
-  }
+  const b = state.ball;
+  const c = b.mode === 'pass' ? predictPassCatch(state.field, b.pos, b.vel) : ballLandingPoint(state);
+  setRole(mem.decision, 'receive', clampToField(state, c.x, c.z), false, -1);
 }
 
 // ---------------------------------------------------------------------------
@@ -265,7 +256,7 @@ function decideDefense(mem: BotMemory, state: Readonly<MatchState>, me: PlayerSt
   const coverPt = clampToField(state, f.pos.x * BOT_COVER_X_FRACTION, f.pos.z + fDir * coverDepth);
   const goalSideOf = (p: PlayerState): boolean => (p.pos.z - f.pos.z) * fDir > 0;
   const coverKey = (p: PlayerState): number =>
-    Math.sqrt(dist2(p.pos.x, p.pos.z, coverPt.x, coverPt.z)) - roleBonus(mem, p, 'cover') + unarmedPenalty(p, mem);
+    Math.sqrt(dist2(p.pos.x, p.pos.z, coverPt.x, coverPt.z)) - roleBonus(mem, p, 'cover');
   /** Le mieux placé pour le repli parmi `cands` : le plus proche du point de repli, de préférence déjà devant le porteur. */
   const pickCover = (cands: readonly PlayerState[]): number => {
     let best = -1;
@@ -285,8 +276,8 @@ function decideDefense(mem: BotMemory, state: Readonly<MatchState>, me: PlayerSt
   // Personne devant le porteur : le repli passe avant la pression (courir derrière un porteur qui sprinte ne sert à rien).
   const nobodyAhead = !defenders.some(goalSideOf);
   let coverId = defenders.length >= BOT_COVER_MIN_DEFENDERS || (nobodyAhead && defenders.length > 0) ? pickCover(defenders) : -1;
-  // Pressers : les plus proches du porteur (égalité : id ; hystérésis pour celui qui pressait déjà ; les bots armés d'abord).
-  const pressKey = (p: PlayerState): number => playerDist(p, f) - roleBonus(mem, p, 'press') + unarmedPenalty(p, mem);
+  // Pressers : les plus proches du porteur (égalité : id ; hystérésis pour celui qui pressait déjà).
+  const pressKey = (p: PlayerState): number => playerDist(p, f) - roleBonus(mem, p, 'press');
   const byDist = defenders.filter((p) => p.id !== coverId).sort((a, b) => pressKey(a) - pressKey(b) || a.id - b.id);
   const nPress = Math.min(ownThird ? BOT_PRESSERS_OWN_THIRD : pressersFor(state), byDist.length);
   const pressers = byDist.slice(0, nPress);
@@ -300,16 +291,21 @@ function decideDefense(mem: BotMemory, state: Readonly<MatchState>, me: PlayerSt
     setRole(d, 'cover', coverPt, true, f.id);
     return;
   }
-  // Marquage : receveurs par danger décroissant, chacun au marqueur libre le plus proche.
+  // Marquage : receveurs par danger décroissant, chacun au marqueur libre le plus proche. Hystérésis (passe finale) :
+  // le receveur que CE bot marquait déjà garde un bonus de danger (BOT_MARK_DANGER_STICKY) et ce bot s'en compte plus
+  // proche (BOT_MARK_HYSTERESIS_M) — sans elle, s'approcher de A faisait baisser son danger, B passait devant et le
+  // marqueur de A partait sur B (ping-pong).
+  const markedByMe = (r: PlayerState): boolean => mem.decision.role === 'mark' && mem.decision.markId === r.id;
   const markers = others.filter((p) => p.id !== coverId);
   const receivers = activeOf(state, f.team, f.id)
-    .map((r) => ({ r, danger: receiverDanger(state, f, r, me.team) }))
+    .map((r) => ({ r, danger: receiverDanger(state, f, r, me.team) + (markedByMe(r) ? BOT_MARK_DANGER_STICKY : 0) }))
     .sort((a, b) => b.danger - a.danger || a.r.id - b.r.id);
   const free = markers.slice();
   for (const { r } of receivers) {
     if (free.length === 0) break;
+    const markKey = (m: PlayerState): number => playerDist(m, r) - (m.id === mem.playerId && markedByMe(r) ? BOT_MARK_HYSTERESIS_M : 0);
     let bi = 0;
-    for (let i = 1; i < free.length; i++) if (playerDist(free[i], r) < playerDist(free[bi], r) - 1e-9) bi = i;
+    for (let i = 1; i < free.length; i++) if (markKey(free[i]) < markKey(free[bi]) - 1e-9) bi = i;
     const m = free[bi];
     free.splice(bi, 1);
     if (m !== me) continue;

@@ -40,6 +40,11 @@ export interface MatchRun {
   events: Record<string, number>;
   /** Passes réussies (stats.passes de tous les joueurs). */
   completedPasses: number;
+  /** Passes tombées au sol : ballon passé de 'pass' à 'loose' sans réception ni interception (passe finale). */
+  droppedPasses: number;
+  /** Marquage : bot-ticks en rôle 'mark', et changements de receveur marqué d'un tick au suivant (rôle 'mark' gardé). */
+  markTicks: number;
+  markSwitches: number;
   /** Changements d'équipe en possession (porteur d'une équipe puis de l'autre). */
   possessionChanges: number;
   /** Plus long blocage d'un bot (ticks où il veut avancer sans y parvenir). */
@@ -100,6 +105,11 @@ export function runBotMatch(
   let carriedTicks = 0;
   let playerPlayTicks = 0;
   let playerDownTicks = 0;
+  let droppedPasses = 0;
+  let prevBallMode = s.ball.mode;
+  let markTicks = 0;
+  let markSwitches = 0;
+  const prevMark = memories.map(() => -1);
   const maxTicks = Math.ceil((s.clockTicks + 2000) * 1.5);
   const t0 = performance.now();
   let ticks = 0;
@@ -110,6 +120,14 @@ export function runBotMatch(
     for (const e of s.events) {
       events[e.type] = (events[e.type] ?? 0) + 1;
     }
+    if (prevBallMode === 'pass' && s.ball.mode === 'loose' && !s.events.some((e) => e.type === 'catch')) droppedPasses++;
+    prevBallMode = s.ball.mode;
+    memories.forEach((m, k) => {
+      const marking = m.decision.role === 'mark';
+      if (marking) markTicks++;
+      if (marking && prevMark[k] >= 0 && prevMark[k] !== m.decision.markId) markSwitches++;
+      prevMark[k] = marking ? m.decision.markId : -1;
+    });
     if (s.ball.mode === 'carried') {
       const team = s.players[s.ball.carrierId].team;
       if (lastPossession !== -1 && team !== lastPossession) possessionChanges++;
@@ -138,6 +156,9 @@ export function runBotMatch(
     ticks,
     events,
     completedPasses,
+    droppedPasses,
+    markTicks,
+    markSwitches,
     possessionChanges,
     maxBlockedTicks: Math.max(...memories.map((m) => m.maxBlockedTicks)),
     maxLooseTicks,

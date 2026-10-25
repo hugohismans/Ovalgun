@@ -33,7 +33,9 @@ donc surtout par les tests automatiques, et un peu à la main depuis la console 
      console.log(v.join(' '), s.ball.pos, sim.hashState(s));
      ```
    - Ce script fait courir l'ailier (joueur 0), puis esquiver au tick 30. On lit sa vitesse tick par tick :
-     8,8 m/s en course, 21 pendant le dash, puis 12,6 qui redescend doucement vers 8,8.
+     8,8 m/s en course, 14,7 pendant le dash (esquive droit devant : × `DODGE_FORWARD_SPEED_MULT` depuis la passe
+     finale ; 21 sur le côté ou en arrière), puis 8,8. Avec `moveX: 1` au lieu de `moveY: 1` (esquive latérale) : 21,
+     puis 12,6 qui redescend doucement vers la vitesse de pas chassé.
    - Rejouer le même script donne le même `hashState` : c'est le déterminisme.
    - Pour simuler une manette, utiliser une entrée analogique : `makeInput({ moveX: 0.94, moveY: 0.34, buttons: sim.Buttons.SPRINT })`
      correspond à un stick poussé à fond à 70°. On doit obtenir environ 8,3 m/s : en pas chassé, le sprint ne s'applique pas.
@@ -45,9 +47,12 @@ donc surtout par les tests automatiques, et un peu à la main depuis la console 
 - **Manette** : un stick peu incliné fait marcher lentement. La pleine vitesse arrive à 90 % d'inclinaison.
   Pour sprinter, il faut pousser le stick franchement (au moins 70 %) et vers l'avant (cône d'environ ±50°).
   Un appui « esquive puis saut » rapide (B puis A) n'est jamais perdu : le saut part pendant le dash (dash-saut).
-- **Esquive** : dash d’environ 3,5 m en 0,16 s. En sortie, l'élan porte : 12,6 m/s qui redescend à la vitesse de course
-  en un quart de seconde environ, sans arrêt sec. Cooldown 1,4 s, ramené à 0,8 s pour le porteur. Elle marche aussi en l'air,
-  et l'élan est conservé jusqu'à l'atterrissage même en maintenant la direction.
+- **Esquive** : dash d’environ 3,5 m en 0,16 s sur le côté ou en arrière (≈ 2,5 m droit devant : c'est une feinte
+  latérale, passe finale). En sortie, l'élan porte : 12,6 m/s qui redescend à la vitesse de course en un quart de seconde
+  environ, sans arrêt sec. Cooldown 1,4 s, ramené à 0,8 s pour le porteur ; un appui jusqu'à 0,12 s trop tôt part dès que
+  l'esquive est prête (tampon, passe finale). Elle marche aussi en l'air : l'élan est gardé, mais ce qui dépasse la vitesse
+  de sprint s'éteint en ≈ 0,25 s (`AIR_OVERSPEED_DECEL`) — hacher sa course en esquives et en sauts ne va plus plus vite
+  que le sprint.
 - **Glissade** : uniquement en courant au-dessus de 5,5 m/s, et pas pour le porteur (C = plongeon, étape 4).
   Elle donne un boost (×1,35) avec une hitbox basse, puis décélère. Elle va plus loin que la course sur sa durée.
   On peut sauter depuis une glissade en gardant l'élan.
@@ -69,6 +74,7 @@ donc surtout par les tests automatiques, et un peu à la main depuis la console 
 | `GROUND_DECEL` | Freinage au sol quand on lâche la direction (m/s²) | 60 | Monter pour des arrêts plus secs |
 | `GROUND_OVERSPEED_DECEL` | Vitesse à laquelle l'élan en trop (esquive, glissade, grimpe, fin de sprint) disparaît (m/s²) | 15 | Descendre (10) pour un élan plus long et glissant, monter (25) pour revenir vite à la vitesse de course |
 | `AIR_ACCEL` | Contrôle en l'air (m/s²) | 20 | Monter pour corriger sa trajectoire plus facilement en l'air |
+| `AIR_OVERSPEED_DECEL` (passe finale) | Extinction en l'air de la vitesse au-delà du sprint (esquive, glissade, plongeon aérien) (m/s²) | 8 | 0 = élan aérien sans limite (esquive + sauts ≈ 14 m/s pour tous) ; 15 pour un dash-saut à peine plus long qu'un saut |
 | `SPRINT_SPEED_MULT` | Bonus de vitesse du sprint | 1,12 (1,22 jusqu'à l'étape 7) | Entre 1,1 et 1,2 ; au-delà, le porteur devient difficile à rattraper (beaucoup plus d'essais) |
 | `SPRINT_MIN_FORWARD_COS` | Largeur du cône avant dans lequel le sprint s'applique (cos de l'angle) | 0,64 (≈ 50°) | Descendre vers 0,5 (60°) pour sprinter plus en biais ; ne pas passer au-dessus de 0,7, sinon la diagonale clavier ne sprinte plus |
 | `SPRINT_MIN_TILT` | Inclinaison du stick nécessaire pour sprinter | 0,7 | Monter vers 0,85 si la manette sprinte par erreur |
@@ -76,6 +82,8 @@ donc surtout par les tests automatiques, et un peu à la main depuis la console 
 | `CARRIER_SPEED_MULT` | Bonus de vitesse du porteur | 1,08 | Priorité du feeling porteur : essayer 1,1 à 1,12 |
 | `DODGE_SPEED` / `DODGE_DURATION_SEC` | Vitesse et durée du dash (distance ≈ produit) | 21 m/s / 0,16 s | Garder la distance vers 3 à 4 m ; un dash plus court et plus rapide paraît plus sec |
 | `DODGE_EXIT_SPEED_KEEP` | Part de la vitesse du dash gardée à la sortie | 0,6 (12,6 m/s) | Baisser vers 0,5 si l'esquive donne trop de vitesse, monter vers 0,7 pour enchaîner plus fluidement |
+| `DODGE_FORWARD_SPEED_MULT` (passe finale) | Vitesse d'une esquive droit devant (× `DODGE_SPEED`, diagonale : moitié de l'effet) | 0,7 | 1 = esquive avant aussi rapide que latérale (esquive en boucle + 21 % sur le sprint) ; 0,8 si l'esquive avant paraît molle |
+| `DODGE_BUFFER_SEC` (passe finale) | Tampon d'esquive : appui trop tôt honoré dès que possible | 0,12 s | 0 pour revenir à « appui perdu » ; 0,2 si des esquives manquent encore à la manette |
 | `DODGE_COOLDOWN_SEC` / `CARRIER_DODGE_COOLDOWN_SEC` | Cooldown de l'esquive (sans ballon / porteur) | 1,4 / 0,8 s | Le porteur doit garder le cooldown le plus court |
 | `DODGE_JUMP_CANCEL_SEC` | Délai avant de pouvoir sauter pendant un dash (dash-saut) | 0,07 s | 0 = saut immédiat, ce qui annule presque le dash ; ne pas dépasser `DODGE_DURATION_SEC` |
 | `JUMP_VELOCITY` / `PLAYER_GRAVITY` | Hauteur (v²/2g) et nervosité du saut | 8,2 m/s / 26 m/s² | Monter les deux ensemble pour un saut aussi haut mais plus court |
@@ -241,7 +249,8 @@ immobiles : ce sont des plots, coéquipiers orange et adversaires bleus).
   joueur s'aplatit et une coque blanche clignote : il est intouchable pendant 0,3 s. Ensuite, il glisse au sol en freinant
   pendant 0,35 s et repart en course à ~4 m/s. Sur une seconde, ça couvre à peu près la distance d'un sprint : c'est un
   outil pour aplatir ou passer un défenseur, pas une accélération gratuite. Cooldown 2 s. On peut plonger depuis un saut
-  (« essai en vol ») : l'élan est gardé jusqu'au sol. Plonger contre un muret le fait franchir, puis on reste au sol quand
+  (« essai en vol ») : l'élan est gardé jusqu'au sol, freiné au-delà de la vitesse de sprint (`AIR_OVERSPEED_DECEL`, passe
+  finale : avant, 14 m en 1 s contre 9,7 au sol). Plonger contre un muret le fait franchir, puis on reste au sol quand
   même. On garde le ballon. L'essai dans l'en-but arrive à l'étape 6.
 - **Recevoir en glissant** : la glissade continue avec le ballon, et on peut enchaîner directement un plongeon.
 - **Effets** : anneaux flat pour le ramassage (jaune), la réception (blanc), l'interception (rouge), le coup de pied
@@ -546,7 +555,8 @@ voir les mesures plus bas et docs/ARCHITECTURE.md §15).
    - une explosion derrière une butte ne touche pas ; une grenade sur un bouclier levé de face ne fait rien au pilier (il est juste un peu
      repoussé). Manette : vibration moyenne quand une explosion éclate près de toi.
 6. **Mêlée** : `?debug`, puis **B** / croix ↓ (ballon au centre) quand les deux équipes sont autour du centre, et ne touche pas le ballon : il
-   faut qu'il reste libre 3 s. Ou observe `?debug&autopilot` (≈ 2,5 mêlées par match en 3v3, ≈ 1,2 en 5v5 avec `&size=5`). Pendant la
+   faut qu'il reste libre 3 s. Ou observe `?debug&autopilot` (≈ 1,4 mêlée par match en 3v3, ≈ 1,1 en 5v5 avec `&size=5` depuis la
+   passe finale ; ≈ 2,5 / 1,2 avant, quand les receveurs laissaient tomber les passes). Pendant la
    mêlée : entre dans la zone (le HUD affiche « tu comptes »), tire sur les adversaires qui y sont (un plaqué sort du décompte), ou reste
    dehors pour te placer pour la suite.
 7. **Observer les bots** : `?debug&autopilot&role=pilier` (ou `&role=demi`, `&size=5`, `&difficulty=…`).
@@ -755,3 +765,69 @@ détails d'ergonomie (voir docs/ARCHITECTURE.md §16, « Correction de l'étape 
 | `ARROW_REACH_REM` / `EDGE_REM` (ui/hud/BallArrow.svelte) | Rayon de la mini-flèche (marge des zones évitées) / marge aux bords de l'écran | 2,4 rem / 2,6 rem | Garder `EDGE_REM` ≥ `ARROW_REACH_REM` |
 | `CONFIRM_MS` (ui/PauseMenu.svelte) | Fenêtre de confirmation de « Recommencer » / « Quitter » | 2 500 ms | 4 000 ms si la confirmation expire avant le second appui |
 | `HUD_RATE` (ui/state/hud.svelte.ts) | Fréquence de publication du gros instantané du HUD (la flèche et le réticule suivent chaque frame) | 30 Hz | 20 Hz sur machine lente |
+
+## Passe finale — simulation et bots
+
+Correctifs de la passe finale de qualité côté simulation et bots (détails et décisions : docs/ARCHITECTURE.md §17).
+
+### Comment tester
+
+1. **Tests automatiques** : `npm test`. Nouveaux tests :
+   - `tests/sim/movement.test.ts` : esquive avant réduite (latérale / arrière intactes), élan aérien qui s'éteint au-delà
+     du sprint (maintenu ou relâché), « hacher sa course n'est pas plus rapide que le sprint » (porteur, trois rôles :
+     sauts répétés ≤ sprint + 2 %, esquive en boucle et esquive + sauts ≤ sprint + 15 %), tampon d'esquive, jamais de −0
+     (reculer avec yaw = 0, glissade bloquée contre le mur invisible), séparation et relief (pas de grimpe sans entrée
+     contre un muret, pieds collés au sol sur une butte) ;
+   - `tests/sim/carrier.test.ts` : `predictPassCatch` (point de réception = point visé par `planPass`, au bout de la durée
+     de vol), plongeon aérien freiné ;
+   - `tests/sim/rules.test.ts` : fin du match (joueur en l'air posé au sol), ballon mort dans l'arène ;
+   - `tests/sim/determinism.test.ts`, `rules.test.ts` : les contrôles de valeurs pendant les matchs scriptés rejettent
+     aussi les −0 ;
+   - `tests/bots/behaviors.test.ts` : porteur sous le feu d'un tireur lointain, stabilité basse => passe ;
+   - `tests/bots/match.test.ts` : au plus 5 % des passes au sol, marquage stable (≤ 40 changements de receveur par
+     minute de marquage), bornes de rythme resserrées ;
+   - `tests/architecture.test.ts` : WeakRef, FinalizationRegistry, SharedArrayBuffer et Atomics interdits dans sim / bots.
+2. **En jeu** (`npm run dev`, `?debug&training`) :
+   - porteur, Maj + Z maintenus : enchaîner esquives et sauts ne doit plus aller plus vite que le sprint (HUD de debug :
+     vitesse) ; une esquive sur le côté reste un vrai dash (21 m/s), droit devant elle est plus courte (14,7 m/s) ;
+   - appuyer sur esquive un poil avant la fin du cooldown : l'esquive part dès qu'il est fini ;
+   - passer à un coéquipier bot qui courait ailleurs : il va chercher le ballon et le reçoit (avant : il dépassait la
+     trajectoire dans ≈ 1 passe sur 8) ;
+   - `?debug&autopilot` : les porteurs bots passent aussi sous le feu du dernier défenseur, les marqueurs ne zigzaguent
+     plus entre deux attaquants.
+
+### Mesures (bots contre bots, 6 min, composition du jeu, difficulté normale, seeds 1 à 24 ; avant : seeds 1 à 12)
+
+| Mesure | 3v3 avant | 3v3 après | 5v5 avant | 5v5 après |
+|---|---|---|---|---|
+| Essais par match (min–max) | 12,8 (9–16) | **11,5** (5–16) | 10,0 (7–14) | **6,5** (3–12) |
+| Passes tentées / reçues / interceptées | 102 / 91 / 1,0 | 171 / 169 / 1,5 | 109 / 91 / 2,2 | 175 / 171 / 2,3 |
+| Passes au sol (ni reçues ni interceptées) | 10,5 (10 %) | **0,9** (0,5 %) | 15,7 (14 %) | **1,8** (1 %) |
+| Ballon porté (part du jeu) | 60 % | 67 % | 48 % | 55 % |
+| Joueurs au sol (temps-joueur) | 13,9 % | 14,6 % | 16,0 % | 17,4 % |
+| Porteurs plaqués (ballon lâché) | 56,5 | 49 | 73,7 | 73,3 |
+| Mêlées par match | 2,2 | 1,4 | 1,4 | 1,1 |
+| Coups de pied par match | 1,8 | 0,6 | 1,3 | 0,9 |
+
+Facile / difficile (seeds 1 à 8) : 3v3 21,0 / 9,6 essais (avant 19,4 / 12,9), 5v5 13,0 / 5,3 (avant 13,8 / 8,9).
+Changements de receveur marqué par minute de marquage (seeds 1 à 4) : 46 -> 17 (3v3), 58 -> 32 (5v5) ; ping-pong
+A -> B -> A en moins de 2 s : 11 -> 1,5 et 13 -> 5.
+
+Porteur sur terrain plat, Maj + avant, vitesse moyenne sur 5 s (m/s) :
+
+| Rôle | Sprint | Esquive en boucle (avant -> après) | Esquive + sauts (avant -> après) | Une esquive puis sauts (avant -> après) | Saut + plongeon en boucle (avant -> après) |
+|---|---|---|---|---|---|
+| Ailier | 10,64 | 12,91 -> 11,38 | 13,89 -> 11,16 | 12,71 -> 10,69 | 11,45 -> 11,13 |
+| Pilier | 8,71 | 11,85 -> 9,91 | 14,00 -> 9,71 | 12,71 -> 8,79 | 11,30 -> 10,86 |
+| Demi | 9,68 | 12,34 -> 10,65 | 14,00 -> 10,48 | 12,71 -> 9,74 | 11,67 -> 11,23 |
+
+### Constantes utiles pour ajuster le feeling
+
+| Constante | Effet | Valeur actuelle | Piste de réglage |
+|---|---|---|---|
+| `AIR_OVERSPEED_DECEL` | Extinction en l'air de la vitesse au-delà du sprint (m/s²) | 8 | 0 = élan aérien sans limite ; 15 = dash-saut à peine plus long qu'un saut |
+| `DODGE_FORWARD_SPEED_MULT` | Vitesse d'une esquive droit devant (× `DODGE_SPEED`) | 0,7 | 1 = esquive avant comme latérale ; 0,8 si l'esquive avant paraît molle |
+| `DODGE_BUFFER_SEC` | Tampon d'esquive | 0,12 s | 0 = appui trop tôt perdu |
+| `BOT_RECEIVE_TIME_MARGIN_SEC` / `BOT_RECEIVE_ARRIVE_RADIUS` | Avance du receveur bot sur le ballon / rayon où il l'attend arrêté | 0,15 s / 0,4 m | 0,3 s si des passes tombent encore (il attend plus souvent arrêté) |
+| `BOT_MARK_HYSTERESIS_M` / `BOT_MARK_DANGER_STICKY` | Stabilité du marquage | 3 m / 0,3 | 0 / 0 = ancien marquage (zigzag) ; 5 m pour un marquage « collant » |
+| `BOT_SCRUM_SUPPORTERS` | Soutiens derrière la zone de mêlée quand l'équipe mène | 2 | 3 en 5v5 pour plus de passes à la sortie de mêlée |

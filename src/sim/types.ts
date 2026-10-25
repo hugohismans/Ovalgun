@@ -190,12 +190,20 @@ export interface PlayerState {
   airJumpsUsed: number;
   /** Tampon de saut : ticks restants pendant lesquels un appui saut récent sera honoré à l'atterrissage. */
   jumpBufferTicks: number;
+  /** Tampon d'esquive (passe finale) : ticks restants pendant lesquels un appui d'esquive récent sera honoré dès que possible. */
+  dodgeBufferTicks: number;
 
   move: MoveMode;
   /** Ticks restants du mouvement spécial courant (0 en `run`). */
   moveTicks: number;
   /** Direction horizontale unitaire du mouvement spécial (dash, plongeon, glissade). */
   moveDir: Vec3;
+  /**
+   * Vitesse du dash d'esquive (m/s), fixée au déclenchement (DODGE_SPEED, réduite vers l'avant par
+   * DODGE_FORWARD_SPEED_MULT) ; lue seulement pendant 'dodge' (passe finale). Remise à 0 à la sortie normale de
+   * l'esquive et à la remise en jeu ; sans effet hors esquive (une esquive interrompue peut la laisser telle quelle).
+   */
+  moveSpeed: number;
   /** Hauteur cible pendant une grimpe de muret. */
   climbTargetY: number;
 

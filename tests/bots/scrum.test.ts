@@ -242,10 +242,11 @@ describe('bots : mêlée construite', () => {
 
 /**
  * Seeds des matchs complets (2 par taille, au lieu de 4 : le test jouait 8 matchs, la moitié de la durée de la suite),
- * choisies parmi celles qui produisent des mêlées avec la composition du jeu (mesuré : 3v3 3 et 3 mêlées, 5v5 3 et 2 ;
- * ≈ 2,5 et 1,2 mêlées par match en moyenne sur 24 seeds, voir docs/TESTING.md, étape 7) ; on en exige sur chacune.
+ * choisies parmi celles qui produisent des mêlées avec la composition du jeu (mesuré à la passe finale : 3v3 4 et 2
+ * mêlées, 5v5 2 et 2 ; ≈ 1,4 et 1,1 mêlées par match en moyenne sur 24 seeds depuis que les receveurs ne laissent plus
+ * tomber les passes — ≈ 2,5 et 1,3 avant, voir docs/TESTING.md) ; on en exige sur chacune.
  */
-const SCRUM_SEEDS: Record<TeamSize, readonly number[]> = { 3: [1, 4], 5: [6, 8] };
+const SCRUM_SEEDS: Record<TeamSize, readonly number[]> = { 3: [3, 4], 5: [3, 5] };
 
 describe('bots : mêlées en match complet', () => {
   it('bots contre bots : des mêlées sur plusieurs seeds (3v3 et 5v5), toutes résolues, avec des bots dans la zone', { timeout: 120000 }, () => {

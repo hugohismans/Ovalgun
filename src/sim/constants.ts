@@ -25,9 +25,9 @@ export const TICK_RATE = 30;
 /** Pas de temps fixe d'un tick (s). */
 export const TICK_DT = 1 / TICK_RATE;
 
-/** Durée d'un match (s). Cahier des charges : 6 minutes. */
+/** Durée d'un match (s). Cahier des charges : 6 minutes. ↑ = match plus long (plus d'essais au total). */
 export const MATCH_DURATION_SEC = 360;
-/** Durée de la « dernière minute » (cooldowns raccourcis, ballon plus rapide). */
+/** Durée de la « dernière minute » (cooldowns raccourcis, ballon plus rapide). ↑ = fin de match frénétique plus longue. */
 export const LAST_MINUTE_SEC = 60;
 /**
  * Multiplicateur des cooldowns (esquive, glissade, plongeon, capacité, rechargement) pendant la dernière minute.
@@ -35,7 +35,7 @@ export const LAST_MINUTE_SEC = 60;
  * une arme ne tire pas plus vite. ↓ = plus frénétique.
  */
 export const LAST_MINUTE_COOLDOWN_MULT = 0.7;
-/** Multiplicateur de vitesse du ballon (passes, coups de pied) pendant la dernière minute. */
+/** Multiplicateur de vitesse du ballon (passes, coups de pied) pendant la dernière minute. ↑ = ballon plus rapide en fin de match. */
 export const LAST_MINUTE_BALL_SPEED_MULT = 1.12;
 
 /**
@@ -56,18 +56,18 @@ export const KICKOFF_FREEZE_SEC = 2.0;
 export const TRY_PAUSE_SEC = 2.0;
 /** Équipe qui reçoit le ballon au premier coup d'envoi (0 = équipe du joueur humain en solo). */
 export const FIRST_KICKOFF_TEAM: TeamId = 0;
-/** Points pour un essai (le porteur franchit la ligne d'essai adverse, plongeon compris). */
+/** Points pour un essai (le porteur franchit la ligne d'essai adverse, plongeon compris). ↑ = chaque essai pèse plus au score. */
 export const TRY_POINTS = 5;
 
 // ============================================================================
 //  TERRAIN
 // ============================================================================
 
-/** Largeur du terrain 5v5 (X, m). */
+/** Largeur du terrain 5v5 (X, m). ↑ = plus d'espace sur les côtés (plus dur à défendre). */
 export const FIELD_WIDTH_5V5 = 52;
-/** Longueur totale du terrain 5v5, ballon-mort à ballon-mort (Z, m). */
+/** Longueur totale du terrain 5v5, ballon-mort à ballon-mort (Z, m). ↑ = plus de course avant l'essai (moins d'essais). */
 export const FIELD_LENGTH_5V5 = 96;
-/** Profondeur de chaque en-but en 5v5 (m). */
+/** Profondeur de chaque en-but en 5v5 (m). ↑ = en-buts plus profonds (plus de place derrière la ligne). */
 export const IN_GOAL_DEPTH_5V5 = 8;
 /**
  * Échelle linéaire du terrain 3v3 par rapport au 5v5 (cahier des charges : « environ 70 % de la taille »). S'applique
@@ -78,9 +78,9 @@ export const IN_GOAL_DEPTH_5V5 = 8;
  */
 export const FIELD_SCALE_3V3 = 0.84;
 
-/** Hauteur franchie sans ralentir (marche/pente). */
+/** Hauteur franchie sans ralentir (marche/pente). ↑ = plus de reliefs montés sans grimper. */
 export const MAX_STEP_HEIGHT = 0.35;
-/** Hauteur maximale grimpée automatiquement (murets). Au-delà : obstacle bloquant (aucun relief ne dépasse en pratique). */
+/** Hauteur maximale grimpée automatiquement (murets). Au-delà : obstacle bloquant (aucun relief ne dépasse en pratique). ↑ = grimpe plus haut. */
 export const MAX_CLIMB_HEIGHT = 1.3;
 /** Vitesse verticale pendant la grimpe d'un muret (m/s). ↑ = vault plus sec. */
 export const CLIMB_UP_SPEED = 7.5;
@@ -142,13 +142,13 @@ export const PLAYER_MAX_SUBSTEPS = 16;
 //  CORPS DES JOUEURS
 // ============================================================================
 
-/** Rayon de la capsule joueur (m). */
+/** Rayon de la capsule joueur (m). ↑ = joueurs plus larges (plus faciles à toucher, plus de contacts). */
 export const PLAYER_RADIUS = 0.45;
-/** Hauteur de la capsule debout (m). */
+/** Hauteur de la capsule debout (m). ↑ = cible plus haute. */
 export const PLAYER_HEIGHT = 1.8;
-/** Hauteur de la capsule en glissade / plongeon / au sol (m) : on passe sous les tirs hauts. */
+/** Hauteur de la capsule en glissade / plongeon / au sol (m) : on passe sous les tirs hauts. ↑ = posture basse moins protectrice. */
 export const PLAYER_LOW_HEIGHT = 0.9;
-/** Hauteur de l'origine de visée au-dessus des pieds (m). */
+/** Hauteur de l'origine de visée au-dessus des pieds (m). ↑ = tir (et caméra) plus haut, on tire plus facilement par-dessus les murets. */
 export const AIM_ORIGIN_HEIGHT = 1.6;
 /**
  * Décalage latéral (vers la droite) de l'origine de visée (m). La caméra épaule
@@ -161,7 +161,7 @@ export const AIM_ORIGIN_HEIGHT = 1.6;
 export const SHOULDER_OFFSET = 0.75;
 /** Distance minimale de séparation entre deux joueurs debout (collisions douces). */
 export const PLAYER_SEPARATION = PLAYER_RADIUS * 2;
-/** Fraction du chevauchement corrigée par tick entre deux joueurs (0..1). */
+/** Fraction du chevauchement corrigée par tick entre deux joueurs (0..1). ↑ = joueurs qui se chevauchent écartés plus vite. */
 export const PLAYER_PUSH_STRENGTH = 0.6;
 /** Bornes du pitch de visée (degrés). */
 export const PITCH_MIN_DEG = -75;
@@ -177,7 +177,7 @@ export const FORMATION_WIDTH_FRACTION = 0.8;
 //  DÉPLACEMENT (tous les joueurs)
 // ============================================================================
 
-/** Gravité appliquée aux joueurs (m/s²). Plus forte que la réalité = sauts nerveux. */
+/** Gravité appliquée aux joueurs (m/s²). Plus forte que la réalité = sauts nerveux. ↑ = sauts plus courts et plus secs. */
 export const PLAYER_GRAVITY = 26;
 /** Accélération au sol (m/s²). ↑ = démarrages et changements de direction plus secs. */
 export const GROUND_ACCEL = 75;
@@ -195,11 +195,22 @@ export const GROUND_DECEL = 60;
  * pas : l'entrée ne fait que réorienter la vitesse.
  */
 export const AIR_ACCEL = 20;
-/** Multiplicateur de vitesse en marche arrière (relatif au regard). */
+/**
+ * Freinage en l'air de l'EXCÈS de vitesse horizontale au-delà du plafond de course du joueur (m/s²) — plafond = vitesse
+ * de course du rôle × SPRINT_SPEED_MULT × CARRIER_SPEED_MULT (porteur) × capacités. Passe finale : avant, l'élan aérien
+ * était conservé indéfiniment, et comme un saut tamponné repart au tick même de l'atterrissage, une esquive suivie de
+ * sauts à répétition tenait 12,6 m/s (21 × 0,6) pour TOUS les rôles, plus vite que tout sprint (pilier porteur :
+ * 14 m/s en esquive + sauts contre 8,7 au sprint). Le dash-saut reste plus long qu'un saut (l'excès s'éteint en
+ * ≈ 0,25 s), mais l'avance ne se cumule plus ; un knockback (≈ 10 m/s) perd moins de 0,1 m. S'applique aussi au
+ * plongeon aérien (récupération en l'air). ↑ = l'élan d'une esquive, d'une glissade ou d'un plongeon s'éteint plus
+ * vite en l'air (0 = élan aérien conservé sans limite, comportement d'avant).
+ */
+export const AIR_OVERSPEED_DECEL = 8;
+/** Multiplicateur de vitesse en marche arrière (relatif au regard). ↑ = on recule plus vite. */
 export const BACKPEDAL_SPEED_MULT = 0.8;
-/** Multiplicateur de vitesse en pas chassé. */
+/** Multiplicateur de vitesse en pas chassé. ↑ = pas chassé plus rapide. */
 export const STRAFE_SPEED_MULT = 0.92;
-/** Multiplicateur de vitesse en visée (clic droit). */
+/** Multiplicateur de vitesse en visée (clic droit ; ignoré pour le porteur). ↑ = on se déplace plus vite en visant. */
 export const AIM_SPEED_MULT = 0.72;
 /**
  * Multiplicateur de vitesse en sprint (Shift maintenu). Tirer coupe le sprint. Correction de l'étape 7 : 1,22 -> 1,12 —
@@ -226,26 +237,42 @@ export const SPRINT_MIN_TILT = 0.7;
  */
 export const MOVE_INPUT_FULL_SPEED = 0.9;
 
-/** Vitesse verticale du saut (m/s). Hauteur ≈ v² / (2·gravité) ≈ 1,3 m. */
+/** Vitesse verticale du saut (m/s). Hauteur ≈ v² / (2·gravité) ≈ 1,3 m. ↑ = saut plus haut (et plus long). */
 export const JUMP_VELOCITY = 8.2;
-/** Vitesse verticale du double saut (ailier). */
+/** Vitesse verticale du double saut (ailier). ↑ = double saut plus haut. */
 export const AIR_JUMP_VELOCITY = 7.6;
 /** Tolérance après avoir quitté le sol pendant laquelle on peut encore sauter (s). ↑ = plus permissif. */
 export const COYOTE_TIME_SEC = 0.1;
 /** Un appui saut juste avant l'atterrissage est mémorisé pendant cette durée (s). ↑ = plus permissif. */
 export const JUMP_BUFFER_SEC = 0.12;
 
-/** Esquive : vitesse du dash (m/s). Distance ≈ vitesse × durée. */
+/** Esquive : vitesse du dash (m/s). Distance ≈ vitesse × durée. ↑ = esquive plus longue et plus brusque. */
 export const DODGE_SPEED = 21;
-/** Esquive : durée du dash (s). */
+/**
+ * Esquive VERS L'AVANT (dans le sens du regard) : multiplicateur de DODGE_SPEED (et donc de la vitesse de sortie) pour un
+ * dash pile devant. Vitesse du dash = DODGE_SPEED × (1 − (1 − ce multiplicateur) × c²), c = max(0, cos(direction, regard))
+ * au déclenchement : une esquive latérale ou arrière garde DODGE_SPEED, une esquive en diagonale avant perd un peu.
+ * Passe finale : l'esquive est une FEINTE latérale, pas un moyen de locomotion — enchaîner les esquives vers l'avant
+ * allait 21 % plus vite que le sprint (ailier porteur 12,9 m/s contre 10,6 ; pilier 11,9 contre 8,7) ; le plongeon reste
+ * l'accélération vers l'avant. ↑ (jusqu'à 1) = esquive avant aussi rapide qu'une esquive latérale.
+ */
+export const DODGE_FORWARD_SPEED_MULT = 0.7;
+/** Esquive : durée du dash (s). ↑ = esquive plus longue. */
 export const DODGE_DURATION_SEC = 0.16;
-/** Esquive : cooldown (s) pour un joueur sans ballon. */
+/** Esquive : cooldown (s) pour un joueur sans ballon. ↑ = esquives plus rares. */
 export const DODGE_COOLDOWN_SEC = 1.4;
-/** Esquive : cooldown (s) pour le porteur (cahier des charges : plus court). */
+/** Esquive : cooldown (s) pour le porteur (cahier des charges : plus court). ↑ = esquives du porteur plus rares. */
 export const CARRIER_DODGE_COOLDOWN_SEC = 0.8;
+/**
+ * Tampon d'esquive (s) : un appui d'esquive pendant que l'esquive n'est pas encore disponible (fin du cooldown, grimpe,
+ * plongeon) est honoré dès qu'elle le devient, s'il date de moins que cette durée (passe finale, sur le modèle du saut :
+ * un appui 1 à 3 ticks trop tôt était perdu sans effet). ↑ = plus permissif (mais une esquive peut partir un peu après
+ * l'appui) ; 0 = pas de tampon.
+ */
+export const DODGE_BUFFER_SEC = 0.12;
 /** Fraction de la vitesse du dash conservée en sortie (élan). ↑ = enchaînement plus fluide. */
 export const DODGE_EXIT_SPEED_KEEP = 0.6;
-/** Invulnérabilité pendant l'esquive (s). 0 = l'esquive ne protège que par le déplacement (le plongeon reste le seul « intouchable »). */
+/** Invulnérabilité pendant l'esquive (s). 0 = l'esquive ne protège que par le déplacement (le plongeon reste le seul « intouchable »). ↑ = esquive qui traverse les tirs. */
 export const DODGE_INVULN_SEC = 0;
 /** L'esquive est-elle possible en l'air ? */
 export const DODGE_IN_AIR = true;
@@ -256,19 +283,19 @@ export const DODGE_IN_AIR = true;
  */
 export const DODGE_JUMP_CANCEL_SEC = 0.07;
 
-/** Glissade : vitesse horizontale minimale pour pouvoir glisser (m/s). */
+/** Glissade : vitesse horizontale minimale pour pouvoir glisser (m/s). ↑ = il faut courir plus vite pour glisser. */
 export const SLIDE_MIN_SPEED = 5.5;
-/** Glissade : boost de vitesse à l'entrée (multiplicateur de la vitesse courante). */
+/** Glissade : boost de vitesse à l'entrée (multiplicateur de la vitesse courante). ↑ = glissade plus explosive. */
 export const SLIDE_BOOST = 1.35;
-/** Glissade : vitesse max atteinte grâce au boost (m/s). */
+/** Glissade : vitesse max atteinte grâce au boost (m/s). ↑ = plafond du boost plus haut. */
 export const SLIDE_MAX_SPEED = 14;
 /** Glissade : durée (s). ↑ = glissade plus longue (hitbox basse plus longtemps, mais fin plus lente). */
 export const SLIDE_DURATION_SEC = 0.6;
 /** Glissade : décélération pendant la glissade (m/s²). ↓ = glisse plus loin. */
 export const SLIDE_DECEL = 6;
-/** Glissade : capacité de braquage pendant la glissade (rad/s). */
+/** Glissade : capacité de braquage pendant la glissade (rad/s). ↑ = glissade plus dirigeable. */
 export const SLIDE_STEER_RATE = 1.5;
-/** Glissade : cooldown (s). */
+/** Glissade : cooldown (s). ↑ = glissades plus rares. */
 export const SLIDE_COOLDOWN_SEC = 1.0;
 
 // ============================================================================
@@ -313,7 +340,7 @@ export const TACKLE_DROP_MAX_CARRY = 4;
 /**
  * Durée pendant laquelle le joueur plaqué ne peut pas reprendre le ballon qu'il vient de lâcher (s).
  * Sécurité : sans effet tant que DOWN_DURATION_SEC + GETUP_DURATION_SEC est plus long (un joueur au sol ou qui se
- * relève ne ramasse jamais). Ne compte que si l'on raccourcit beaucoup la durée au sol.
+ * relève ne ramasse jamais). Ne compte que si l'on raccourcit beaucoup la durée au sol. ↑ = blocage plus long.
  */
 export const TACKLE_PICKUP_BLOCK_SEC = 0.5;
 /**
@@ -336,19 +363,19 @@ export const TACKLE_DROP_TUMBLE_RATE = 9;
 /** Dimensions visuelles et de collision du ballon ovale (m). */
 export const BALL_LENGTH = 0.3;
 export const BALL_WIDTH = 0.19;
-/** Rayon de collision du ballon (approximation sphérique, m). */
+/** Rayon de collision du ballon (approximation sphérique, m). ↑ = ballon qui touche le relief plus tôt. */
 export const BALL_RADIUS = 0.12;
-/** Gravité appliquée au ballon (m/s²). */
+/** Gravité appliquée au ballon (m/s²). ↑ = trajectoires plus tendues, rebonds plus courts. */
 export const BALL_GRAVITY = 16;
-/** Traînée de l'air (fraction de vitesse perdue par seconde). */
+/** Traînée de l'air (fraction de vitesse perdue par seconde). ↑ = passes et coups de pied freinés plus vite. */
 export const BALL_AIR_DRAG = 0.05;
-/** Coefficient de rebond vertical de base. */
+/** Coefficient de rebond vertical de base. ↑ = rebonds plus hauts. */
 export const BALL_RESTITUTION = 0.5;
-/** Variation aléatoire (±) du coefficient de rebond : rebonds plats ou hauts. */
+/** Variation aléatoire (±) du coefficient de rebond : rebonds plats ou hauts. ↑ = hauteur des rebonds plus imprévisible. */
 export const BALL_RESTITUTION_JITTER = 0.3;
 /** Déviation horizontale aléatoire maximale à chaque rebond (degrés). ↑ = rebonds plus imprévisibles. */
 export const BALL_BOUNCE_DEVIATION_DEG = 40;
-/** Fraction de vitesse horizontale conservée à chaque rebond. */
+/** Fraction de vitesse horizontale conservée à chaque rebond. ↑ = le ballon file plus loin après un rebond. */
 export const BALL_BOUNCE_FRICTION = 0.8;
 /**
  * Décélération quand le ballon roule au sol (m/s²). ↑ = il s'arrête plus vite.
@@ -356,9 +383,9 @@ export const BALL_BOUNCE_FRICTION = 0.8;
  * est inférieure, un ballon arrêté y reste (rampes) ; au-delà, il dévale (flancs des buttes).
  */
 export const BALL_GROUND_FRICTION = 4;
-/** Vitesse verticale d'impact sous laquelle le ballon arrête de rebondir et roule. */
+/** Vitesse verticale d'impact sous laquelle le ballon arrête de rebondir et roule. ↑ = il se met à rouler plus tôt. */
 export const BALL_MIN_BOUNCE_SPEED = 1.2;
-/** Coefficient de rebond sur les murs invisibles et les faces de murets. */
+/** Coefficient de rebond sur les murs invisibles et les faces de murets. ↑ = le ballon repart plus vite des murs. */
 export const BALL_WALL_RESTITUTION = 0.6;
 /** Vitesse (m/s) sous laquelle un ballon qui roule s'immobilise. ↑ = il s'arrête plus tôt. */
 export const BALL_REST_SPEED = 0.08;
@@ -458,7 +485,8 @@ export const PASS_INTERCEPT_RADIUS = 0.8;
 export const PASS_TARGET_HEIGHT = 1.2;
 /**
  * Passe : demi-angle du cône arrière (degrés). 90 = cône de 180° (cahier des charges).
- * Le cône est relatif au TERRAIN (règle du rugby : vers son propre en-but), pas au regard.
+ * Le cône est relatif au TERRAIN (règle du rugby : vers son propre en-but), pas au regard. ↑ = cône plus large
+ * (au-delà de 90 : passes en avant).
  */
 export const PASS_CONE_HALF_ANGLE_DEG = 90;
 /**
@@ -1241,8 +1269,16 @@ export const BOT_SUPPORT_LEAD_SEC = 0.5;
 export const BOT_SPACE_AHEAD = 10;
 /** Espace : décalage latéral (m, ×échelle) du joueur qui ouvre la défense. ↑ = plus près de la touche. */
 export const BOT_SPACE_LATERAL = 9;
-/** Receveur d'une passe : il garde sa ligne si son entrée précédente dépassait cette inclinaison (0..1), sinon il va au point de chute. ↑ = va plus souvent au ballon. */
-export const BOT_RECEIVE_KEEP_LINE_MIN_MAG = 0.3;
+/**
+ * Receveur d'une passe en vol (passe finale) : il court au point de réception réel (predictPassCatch : là où le ballon
+ * redescend à hauteur des mains) à l'allure qui l'y amène juste à temps, avec cette avance (s) sur l'arrivée du ballon
+ * (le temps d'accélérer / de tourner). Avant, il « gardait sa ligne » à pleine vitesse (direction de sa dernière entrée,
+ * pas de sa vitesse) et dépassait le ballon : 10 à 15 % des passes au sol, celles de l'humain comprises.
+ * ↑ = arrive plus tôt (plus sûr, mais il attend, plus lent au moment de la réception).
+ */
+export const BOT_RECEIVE_TIME_MARGIN_SEC = 0.15;
+/** Receveur : à moins de cette distance (m) du point de réception, il s'arrête et attend le ballon. ↑ = s'arrête plus tôt. */
+export const BOT_RECEIVE_ARRIVE_RADIUS = 0.4;
 
 // --- Défense ------------------------------------------------------------------
 
@@ -1274,6 +1310,18 @@ export const BOT_LEAD_SPEED_CAP_MULT = 1.2;
 export const BOT_ROLE_HYSTERESIS_M = 1.5;
 /** Marquage : placement (m) entre le receveur et son propre en-but. ↑ = marquage plus lâche (moins d'interceptions, moins de percées). */
 export const BOT_MARK_GOALSIDE = 3;
+/**
+ * Hystérésis du marquage (passe finale) : le marqueur qui suivait déjà ce receveur se compte plus proche de lui de cette
+ * distance (m). Avant, le marquage était réaffecté à chaque décision (≈ 46–52 changements de receveur par minute de
+ * marquage, ping-pong A -> B -> A) : un marqueur qui approche de A fait baisser le danger de A, B passe devant, etc.
+ * ↑ = marquage plus stable (réaffectations plus tardives).
+ */
+export const BOT_MARK_HYSTERESIS_M = 3;
+/**
+ * Hystérésis du marquage : bonus de danger (même échelle que BOT_DANGER_*) du receveur que ce bot marquait déjà, pour
+ * l'ordre de traitement des receveurs. ↑ = le receveur déjà marqué reste prioritaire plus longtemps.
+ */
+export const BOT_MARK_DANGER_STICKY = 0.3;
 /**
  * Marquage : un marqueur tire sur le PORTEUR plutôt que sur son receveur quand le porteur est à moins de cette
  * distance (m) de lui (menace immédiate). ↑ = défense plus concentrée sur le porteur (receveurs plus libres).
@@ -1446,6 +1494,12 @@ export const BOT_SCRUM_JOIN_DIST = 28;
  * centre de la zone et notre en-but (prêts à presser le futur porteur adverse). ↑ = défense plus reculée.
  */
 export const BOT_SCRUM_COVER_DEPTH = 10;
+/**
+ * Bots en surplus pendant la mêlée, équipe qui mène : les BOT_SCRUM_SUPPORTERS premiers (rangés par x) se placent en
+ * soutien derrière la zone (cône de passe du futur porteur), les autres dans l'espace devant (passe finale : valeur
+ * sortie de scrumBrain.ts, inchangée). ↑ = plus de soutiens, moins de coureurs devant.
+ */
+export const BOT_SCRUM_SUPPORTERS = 2;
 
 /*
  * Cible d'entraînement « tourelle » (src/bots/turret.ts, étape 5) : un adversaire immobile qui se tourne vers l'ennemi
