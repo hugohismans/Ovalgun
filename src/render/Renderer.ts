@@ -13,6 +13,9 @@
  * Étape 8 : caméra « spectateur » (`ViewInput.spectator` : fond du menu, match bots contre bots, SpectatorCamera) et
  * lectures pour le HUD : position affichée du ballon (`ballDisplayPos`), passage en repère caméra (`toCameraSpace`),
  * champ de vision (`tanHalfFovY`) — la mini-flèche vers le ballon hors champ (src/game/ballArrow.ts).
+ * Passe finale : joueurs estompés près de la caméra et entre la caméra et le joueur local, joueur local estompé quand la
+ * caméra vient contre lui (`updateFades`, fadeMath.ts) ; risque de la passe assistée (`passRisk`, couleur des indicateurs) ;
+ * rapport de pixels réappliqué à chaque `resize()` (zoom, écran HiDPI) ; préférence « animations réduites ».
  */
 
 import * as THREE from 'three';
@@ -29,6 +32,9 @@ import {
   predictBallLanding,
   predictGrenadeImpact,
   ROLES,
+  BOT_PASS_MIN_OPENNESS,
+  BOT_PASS_MIN_OPENNESS_OWN_THIRD,
+  PLAYER_RADIUS,
   selectPassTarget,
   slowZonePlacement,
   type MatchEvent,
@@ -38,6 +44,7 @@ import {
 import { BallView } from './BallView';
 import { CombatFxView } from './CombatFxView';
 import { FieldView } from './FieldView';
+import { localFade, occluderFade, pointSegmentDistance, segmentSegmentDistance, type Point3 } from './fadeMath';
 import { FxView } from './FxView';
 import { lerpPos, lerpYaw } from './interpolate';
 import { PALETTE, STYLE } from './palette';
@@ -61,6 +68,16 @@ export interface ViewInput {
    * indicateurs du joueur local (passe, aperçus du demi) sont masqués.
    */
   spectator?: boolean;
+}
+
+/**
+ * Risque de la passe assistée (passe finale), d'après le démarquage du receveur (`openness`) et les seuils des bots :
+ * 0 = démarqué (≥ BOT_PASS_MIN_OPENNESS), 1 = risqué, 2 = marqué (< BOT_PASS_MIN_OPENNESS_OWN_THIRD, passe que les bots
+ * ne tentent jamais : interceptée plus d'une fois sur deux sous 0,15).
+ */
+export type PassRisk = 0 | 1 | 2;
+export function passRiskOf(openness: number): PassRisk {
+  return openness >= BOT_PASS_MIN_OPENNESS ? 0 : openness >= BOT_PASS_MIN_OPENNESS_OWN_THIRD ? 1 : 2;
 }
 
 /** Ciel : sphère à dégradé vertical (haut / horizon / bas), sans brouillard. */
@@ -173,6 +190,14 @@ export class Renderer {
   private readonly sky = createSky();
   /** Cible de la passe assistée affichée à la dernière frame (-1 : aucune, ou le joueur local ne porte pas). */
   passTargetId = -1;
+  /** Risque de cette passe (passRiskOf ; 0 sans cible). */
+  passRisk: PassRisk = 0;
+  /** Joueur humain du match (éclat de plaquage réduit) ; -1 en fond de menu. */
+  private humanId = -1;
+  // Objets de travail de l'estompage.
+  private readonly fadeBase: Point3 = { x: 0, y: 0, z: 0 };
+  private readonly fadeTop: Point3 = { x: 0, y: 0, z: 0 };
+  private readonly lineEnd: Point3 = { x: 0, y: 0, z: 0 };
   /** Pieds interpolés de chaque joueur pour la frame courante (indicateurs). */
   private interpFeet: Vec3[] = [];
   private readonly kickLandingShifted: Vec3 = { x: 0, y: 0, z: 0 };
@@ -185,6 +210,7 @@ export class Renderer {
     targetFeet: null,
     targetHeight: 0,
     kickLanding: null,
+    risk: 0,
   };
   // Objets de travail réutilisés à chaque frame.
   private readonly feet: Vec3 = { x: 0, y: 0, z: 0 };
@@ -194,7 +220,6 @@ export class Renderer {
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.shoulder = new ShoulderCamera(1);
 
@@ -212,6 +237,8 @@ export class Renderer {
   /** (Re)construit le terrain et les joueurs pour un match. */
   setMatch(state: MatchState, humanId: number): void {
     this.clearMatch();
+    this.humanId = humanId;
+    this.ball.reset();
     this.field = new FieldView(state.field);
     this.scene.add(this.field.group);
     this.backdrop = createBackdrop(state.field.width, state.field.length);
@@ -272,10 +299,20 @@ export class Renderer {
     this.players = [];
   }
 
-  /** Adapte la taille du rendu à celle du canvas (CSS). */
+  /** Préférence système « animations réduites » : halo d'invulnérabilité sans pulsation. */
+  setReducedMotion(reduced: boolean): void {
+    this.assets.reducedMotion = reduced;
+  }
+
+  /**
+   * Adapte la taille du rendu à celle du canvas (CSS) et au rapport de pixels courant (zoom du navigateur, fenêtre passée
+   * sur un écran HiDPI : la session rappelle resize() quand `devicePixelRatio` change, même sans redimensionnement).
+   */
   resize(): void {
     const w = Math.max(1, this.canvas.clientWidth);
     const h = Math.max(1, this.canvas.clientHeight);
+    const ratio = Math.min(window.devicePixelRatio || 1, STYLE.maxPixelRatio);
+    if (this.renderer.getPixelRatio() !== ratio) this.renderer.setPixelRatio(ratio);
     this.renderer.setSize(w, h, false);
     this.shoulder.setAspect(w / h);
   }
@@ -356,10 +393,40 @@ export class Renderer {
     this.updateAimPreview(curr, view);
     this.zones.update(curr, this.aimPreview, timeSec);
     this.scrum.update(curr.scrum, a, timeSec);
+    this.updateFades(view);
     for (const v of this.players) v.faceCamera(this.shoulder.camera.quaternion);
 
     this.sky.position.copy(this.shoulder.camera.position);
     this.renderer.render(this.scene, this.shoulder.camera);
+  }
+
+  /**
+   * Estompage (passe finale, fadeMath.ts) : chaque joueur selon la distance de la caméra à la surface de sa capsule
+   * affichée ; les autres aussi selon leur distance au segment caméra -> dos du joueur local (pivot de la caméra moins
+   * STYLE.lineFadeBehind le long du regard). Rien en caméra spectateur.
+   */
+  private updateFades(view: ViewInput): void {
+    const pose = this.shoulder.lastPose;
+    if (view.spectator === true || pose === null) {
+      for (const v of this.players) v.setFade(1);
+      return;
+    }
+    const cam = this.shoulder.camera.position;
+    const behind = Math.min(STYLE.lineFadeBehind, pose.distance);
+    const hasLine = pose.distance - behind > 1e-3;
+    this.lineEnd.x = pose.origin.x - pose.dir.x * behind;
+    this.lineEnd.y = pose.origin.y + pose.raise - pose.dir.y * behind;
+    this.lineEnd.z = pose.origin.z - pose.dir.z * behind;
+    for (const v of this.players) {
+      v.bodyAxis(this.fadeBase, this.fadeTop);
+      const bodyDist = pointSegmentDistance(cam, this.fadeBase, this.fadeTop) - PLAYER_RADIUS;
+      if (v.id === view.localId) {
+        v.setFade(localFade(bodyDist));
+        continue;
+      }
+      const lineDist = hasLine ? segmentSegmentDistance(cam, this.lineEnd, this.fadeBase, this.fadeTop) - PLAYER_RADIUS : Infinity;
+      v.setFade(occluderFade(bodyDist, lineDist));
+    }
   }
 
   /**
@@ -373,9 +440,12 @@ export class Renderer {
     const me = curr.players[view.localId];
     f.visible = me !== undefined && me.id === carrierId && canCarrierAct(me) && view.spectator !== true;
     this.passTargetId = -1;
+    this.passRisk = 0;
     if (me !== undefined && f.visible) {
       const target = selectPassTarget(curr, me.id, view.yaw);
       this.passTargetId = target?.targetId ?? -1;
+      this.passRisk = target === null ? 0 : passRiskOf(target.openness);
+      f.risk = this.passRisk;
       const tp = target === null ? undefined : curr.players[target.targetId];
       f.team = me.team;
       f.carrierFeet = this.localFeet;
@@ -437,7 +507,7 @@ export class Renderer {
       if (e.type === 'blocked') this.players[e.targetId]?.shieldFlash(timeSec);
       this.scrum.handleEvent(e);
     }
-    this.combatFx.handleEvents(events, state, prev, timeSec);
+    this.combatFx.handleEvents(events, state, prev, timeSec, this.humanId);
   }
 
   dispose(): void {

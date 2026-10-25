@@ -17,7 +17,7 @@ describe('rumbleCueFor', () => {
     // Interceptions (étape 4) : réussie par le joueur local, ou subie (sa passe / son coup de pied).
     expect(rumbleCueFor({ type: 'catch', playerId: 0, fromId: 4, intercepted: true }, 0, 0)).toBe('interceptionMade');
     expect(rumbleCueFor({ type: 'catch', playerId: 4, fromId: 0, intercepted: true }, 0, 0)).toBe('interceptionSuffered');
-    expect(rumbleCueFor({ type: 'catch', playerId: 1, fromId: 0, intercepted: false }, 0, 0)).toBeNull(); // passe réussie
+    expect(rumbleCueFor({ type: 'catch', playerId: 1, fromId: 0, intercepted: false }, 0, 0)).toBeNull(); // passe réussie, équipe inconnue
     expect(rumbleCueFor({ type: 'catch', playerId: 4, fromId: 2, intercepted: true }, 0, 0)).toBeNull(); // pas sa passe
     expect(rumbleCueFor({ type: 'try', team: 0, scorerId: 1 }, 0, 0)).toBe('try');
     expect(rumbleCueFor({ type: 'try', team: 1, scorerId: 4 }, 0, 0)).toBe('tryConceded');
@@ -82,5 +82,35 @@ describe('Haptics', () => {
     expect(h.play('tackled', 2, null)).toBe(false);
     h.enabled = false;
     expect(h.play('try', 3, pad)).toBe(false);
+  });
+});
+
+describe('rumbleCueFor : gestes du porteur et passe réussie (passe finale)', () => {
+  it('esquive, plongeon, passe lancée, coup de pied du joueur local ; rien pour les autres', () => {
+    expect(rumbleCueFor({ type: 'dodge', playerId: 0 }, 0, 0)).toBe('dodge');
+    expect(rumbleCueFor({ type: 'dodge', playerId: 3 }, 0, 0)).toBeNull();
+    expect(rumbleCueFor({ type: 'dive', playerId: 0 }, 0, 0)).toBe('dive');
+    expect(rumbleCueFor({ type: 'pass', fromId: 0, toId: 1 }, 0, 0)).toBe('passThrown');
+    expect(rumbleCueFor({ type: 'pass', fromId: 2, toId: 0 }, 0, 0)).toBeNull();
+    expect(rumbleCueFor({ type: 'kick', playerId: 0 }, 0, 0)).toBe('kick');
+    for (const cue of ['dodge', 'dive', 'passThrown', 'passCompleted', 'kick'] as const) {
+      const fx = GAMEPAD_RUMBLE_EFFECTS[cue];
+      expect(fx.strong + fx.weak).toBeGreaterThan(0);
+      expect(fx.priority).toBeLessThan(GAMEPAD_RUMBLE_EFFECTS.tackled.priority); // jamais au-dessus d'un plaquage
+    }
+  });
+
+  it('sa passe attrapée par un coéquipier vibre (passCompleted) ; son coup de pied repris par l’adversaire, non', () => {
+    expect(rumbleCueFor({ type: 'catch', playerId: 1, fromId: 0, intercepted: false }, 0, 0, null, 0)).toBe('passCompleted');
+    expect(rumbleCueFor({ type: 'catch', playerId: 4, fromId: 0, intercepted: false }, 0, 0, null, 1)).toBeNull();
+    expect(rumbleCueFor({ type: 'catch', playerId: 4, fromId: 0, intercepted: true }, 0, 0, null, 1)).toBe('interceptionSuffered');
+    // Par Haptics.handleEvents : l'équipe du receveur vient de `teamOf`.
+    const played: string[] = [];
+    const pad = { vibrationActuator: { playEffect: () => (played.push('x'), Promise.resolve()) } };
+    const h = new Haptics();
+    h.handleEvents([{ type: 'catch', playerId: 1, fromId: 0, intercepted: false }], 0, 0, 0, pad, null, (id) => (id < 3 ? 0 : 1));
+    expect(played).toHaveLength(1);
+    h.handleEvents([{ type: 'catch', playerId: 4, fromId: 0, intercepted: false }], 0, 0, 5, pad, null, (id) => (id < 3 ? 0 : 1));
+    expect(played).toHaveLength(1);
   });
 });

@@ -103,6 +103,7 @@ export class BallView {
       transparent: true,
       depthWrite: false,
       side: THREE.DoubleSide,
+      forceSinglePass: true, // une passe (sinon : deux dessins et un programme recalculé à chaque image)
     });
     this.trail = new THREE.Mesh(this.trailGeo, trailMat);
     this.trail.frustumCulled = false;
@@ -149,6 +150,16 @@ export class BallView {
       this.ringMat.opacity = STYLE.pickupRingOpacity + STYLE.pickupRingPulse * Math.sin(timeSec * STYLE.pickupRingPulseRate);
     }
 
+    // Téléportation (remise en jeu : saut entre les deux ticks, même seuil que l'interpolation ; outil « ballon au
+    // centre », appliqué entre deux ticks : saut depuis le dernier point de la traînée, à une vitesse qu'aucun ballon
+    // n'atteint) : la traînée repart de zéro au lieu de tirer un trait à travers le terrain.
+    const jump = Math.hypot(b.pos.x - prevB.pos.x, b.pos.y - prevB.pos.y, b.pos.z - prevB.pos.z);
+    if (jump > STYLE.teleportDist) this.trailCount = 0;
+    else if (this.trailCount > 0) {
+      const tail = this.pt(this.trailCount - 1);
+      const d = Math.hypot(pos.x - tail.x, pos.y - tail.y, pos.z - tail.z);
+      if (d > STYLE.teleportDist && d > STYLE.trailTeleportSpeed * Math.max(1e-3, timeSec - tail.t)) this.trailCount = 0;
+    }
     this.updateTrail(pos, carrierYaw === null && b.mode !== 'dead', camPos, timeSec);
   }
 
@@ -219,6 +230,13 @@ export class BallView {
     (this.trailGeo.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
     (this.trailGeo.getAttribute('color') as THREE.BufferAttribute).needsUpdate = true;
     this.trailGeo.setDrawRange(0, (n - 1) * 6);
+  }
+
+  /** Efface la traînée (nouveau match). */
+  reset(): void {
+    this.trailCount = 0;
+    this.trailStart = 0;
+    this.trailGeo.setDrawRange(0, 0);
   }
 
   dispose(): void {

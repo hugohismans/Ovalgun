@@ -57,7 +57,7 @@
       </section>
     {/each}
   </div>
-  <p class="note">Maj : appui bref = esquive, maintien = sprint. Manette : L3 bascule le sprint. Le remapping des touches arrivera plus tard.</p>
+  <p class="note">Maj : appui bref = esquive, maintien = sprint. Manette : L3 bascule le sprint. Porteur du ballon : sprint automatique en avançant, Maj / B esquivent dès l’appui. Le remapping des touches arrivera plus tard.</p>
 </Panel>
 
 <style>

@@ -9,6 +9,7 @@
 
 import * as THREE from 'three';
 import { ROLES, SLOW_ZONE_RADIUS, TICK_RATE, type MatchState, type Vec3 } from '../sim';
+import { TEAM_LIGHT, TEAM_MAIN } from './colors';
 import { PALETTE, STYLE } from './palette';
 
 /** Anneau de tirets (géométrie plate, plan XZ) : `n` arcs de rayon intérieur r0 et extérieur r1. */
@@ -77,6 +78,7 @@ export class ZoneView {
         opacity,
         depthWrite: false,
         side: THREE.DoubleSide,
+        forceSinglePass: true,
         polygonOffset: true,
         polygonOffsetFactor: -4,
         polygonOffsetUnits: -8,
@@ -131,9 +133,9 @@ export class ZoneView {
       slot.group.position.set(z.pos.x, z.pos.y + 0.03, z.pos.z);
       const s = (z.radius / SLOW_ZONE_RADIUS) * (0.6 + 0.4 * appear);
       slot.group.scale.set(s, 1, s);
-      slot.discMat.color.set(PALETTE.teams[team].main);
-      slot.rimMat.color.set(PALETTE.teams[team].light);
-      slot.wallMat.color.set(PALETTE.teams[team].light);
+      slot.discMat.color.copy(TEAM_MAIN[team]);
+      slot.rimMat.color.copy(TEAM_LIGHT[team]);
+      slot.wallMat.color.copy(TEAM_LIGHT[team]);
       slot.discMat.opacity = STYLE.zoneDiscOpacity * k * pulse;
       slot.rimMat.opacity = STYLE.zoneRimOpacity * k;
       slot.wallMat.opacity = STYLE.zoneWallOpacity * k * pulse;
@@ -145,7 +147,7 @@ export class ZoneView {
     if (preview.zone !== null) {
       this.previewZone.position.set(preview.zone.x, preview.zone.y + 0.04, preview.zone.z);
       this.previewZone.rotation.y = -timeSec * STYLE.zoneSpinRate;
-      this.previewZoneMat.color.set(PALETTE.teams[preview.team].light);
+      this.previewZoneMat.color.copy(TEAM_LIGHT[preview.team]);
     }
     this.previewGrenade.visible = preview.grenade !== null;
     if (preview.grenade !== null) this.previewGrenade.position.set(preview.grenade.x, preview.grenade.y + 0.05, preview.grenade.z);

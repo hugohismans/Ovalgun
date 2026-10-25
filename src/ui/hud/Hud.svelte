@@ -20,10 +20,13 @@
   import StabilityGauge from './StabilityGauge.svelte';
   import TrainingTools from './TrainingTools.svelte';
 
+  /** Masqué (pause, attente du pointer lock) sans être démonté : les animations ne repartent pas à la reprise. */
+  let { hidden = false }: { hidden?: boolean } = $props();
+
   const s = $derived(hud.snap);
 </script>
 
-<div class="hud" aria-hidden="false">
+<div class="hud" class:hidden aria-hidden={hidden}>
   <div class="layer">
     <Crosshair />
     <BallArrow />
@@ -54,6 +57,10 @@
     inset: 0;
     pointer-events: none;
     overflow: hidden;
+  }
+  /* visibility (et non display: none, qui relancerait les animations CSS au retour). */
+  .hud.hidden {
+    visibility: hidden;
   }
   .layer {
     position: absolute;

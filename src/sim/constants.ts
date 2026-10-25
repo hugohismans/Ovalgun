@@ -686,7 +686,8 @@ export interface RoleStats {
   /** Nombre de sauts aériens (1 = double saut). */
   airJumps: number;
   weapon: WeaponStats;
-  ability: AbilityStats & { label: string };
+  /** Capacité : nom complet (menu, contrôles) et, au besoin, nom court du HUD (pastille étroite, passe finale). */
+  ability: AbilityStats & { label: string; hudLabel?: string };
 }
 
 const NO_BLAST = {
@@ -790,7 +791,7 @@ export const ROLES: Record<Role, RoleStats> = {
       selfKnockbackMult: 0.75,
     },
     // Zone de ralentissement (étape 7) : capacité INSTANTANÉE (le cooldown part à la pose), la zone vit `duration`.
-    ability: { label: 'Zone de ralentissement', duration: 5.0, cooldown: 12 },
+    ability: { label: 'Zone de ralentissement', hudLabel: 'Zone lente', duration: 5.0, cooldown: 12 },
   },
 };
 
@@ -1547,8 +1548,13 @@ export const CAMERA_DISTANCE_AIM = 2.8;
 export const CAMERA_FOV = 72;
 export const CAMERA_FOV_CARRY = 78;
 export const CAMERA_FOV_AIM = 58;
-/** Bonus de FOV proportionnel à la vitesse au-delà de la vitesse de course (degrés par m/s). ↑ = sensation de vitesse plus forte. */
-export const CAMERA_FOV_SPEED_GAIN = 1.2;
+/**
+ * Bonus de FOV proportionnel à la vitesse au-delà de la vitesse de course du rôle (degrés par m/s). Passe finale : 1,2 -> 3 :
+ * le champ « s'ouvre » au sprint (ailier porteur +5,5°, pilier porteur +4,5°) et reste presque stable pendant une esquive
+ * (plafond atteint : +0,5° seulement au-dessus du sprint) ; avant, +2° au sprint et un coup de zoom 3 fois plus fort à
+ * chaque esquive. ↑ = sensation de vitesse plus forte.
+ */
+export const CAMERA_FOV_SPEED_GAIN = 3;
 /**
  * Plafond du bonus de FOV lié à la vitesse (degrés) : évite une « pulsation » de +14° à chaque esquive
  * (21 m/s). ↑ = effet « warp » plus fort au sprint / à l'esquive.
@@ -1563,6 +1569,20 @@ export const CAMERA_BLEND_RATE = 10;
 export const CAMERA_GROUND_MARGIN = 0.3;
 /** Distance minimale (m) caméra–épaule quand une collision la rapproche. ↓ = la caméra peut venir plus près de la tête. */
 export const CAMERA_MIN_DISTANCE = 0.9;
+/**
+ * Porteur local (passe finale) : la caméra MONTE de cette hauteur (m) sans changer de direction, lissée comme la distance
+ * (CAMERA_BLEND_RATE). Sans elle, le corps du porteur (caméra à 1,6 m, regard horizontal) masquait toute la bande sous
+ * l'horizon droit devant lui, là où se tient le défenseur qui lui barre la route ; avec 1 m, sa tête passe à ≈ 9,5° sous
+ * l'horizon. Le porteur ne tire pas : le réticule n'a pas à rester sur la droite de tir (§3 ; il la rejoint en ≈ 0,3 s
+ * après une passe). ↑ = le porteur descend à l'écran et dégage la vue devant lui (vue plus plongeante).
+ */
+export const CAMERA_CARRY_RAISE = 1.0;
+/**
+ * Inclinaison du regard du joueur local à chaque coup d'envoi / remise en jeu (degrés, négatif = vers le bas). La caméra
+ * étant sur la droite de tir, un regard horizontal plaçait l'horizon au milieu de l'écran (moitié ciel et tribunes).
+ * ↓ (plus négatif) = plus de terrain et de coéquipiers à l'écran au départ, moins de profondeur.
+ */
+export const KICKOFF_PITCH_DEG = -8;
 /** Sensibilité souris (radians par pixel) et multiplicateur en visée. ↑ = caméra plus rapide pour un même geste. */
 export const MOUSE_SENSITIVITY = 0.0022;
 export const MOUSE_AIM_SENSITIVITY_MULT = 0.6;
@@ -1580,6 +1600,14 @@ export const SPRINT_HOLD_DELAY_SEC = 0.15;
  * - false : à l'ENFONCEMENT (latence nulle), mais chaque sprint commence par une esquive (cooldown consommé).
  */
 export const KEYBOARD_DODGE_ON_RELEASE = true;
+/**
+ * Porteur local (passe finale) : il ne vise ni ne tire, donc maintenir Maj / basculer L3 ne lui servait qu'à sprinter.
+ * Vrai : le client émet SPRINT en permanence quand le joueur local porte le ballon (la sim n'applique le sprint que dans
+ * le cône avant et stick assez incliné : SPRINT_MIN_FORWARD_COS, SPRINT_MIN_TILT), et Maj esquive à l'ENFONCEMENT
+ * (latence ≤ 1 tick au lieu de 77 à 157 ms, plus d'esquive perdue sur un appui de 150 ms, plus de « trou » de sprint).
+ * Faux : comportement de KEYBOARD_DODGE_ON_RELEASE et de L3, comme les autres joueurs.
+ */
+export const CARRIER_AUTO_SPRINT = true;
 
 // ============================================================================
 //  MANETTE (lu uniquement par src/input — Gamepad API, disposition « standard »)
@@ -1668,7 +1696,12 @@ export type RumbleCue =
   | 'explosionNear'
   | 'scrumStart'
   | 'scrumWon'
-  | 'scrumLost';
+  | 'scrumLost'
+  | 'dodge'
+  | 'dive'
+  | 'passThrown'
+  | 'passCompleted'
+  | 'kick';
 
 export interface RumbleEffect {
   /** Durée (s). ↑ = vibration plus longue. */
@@ -1713,6 +1746,16 @@ export const GAMEPAD_RUMBLE_EFFECTS: Readonly<Record<RumbleCue, Readonly<RumbleE
   scrumWon: { durationSec: 0.25, strong: 0.55, weak: 0.7, priority: 3 },
   /** Étape 7 : mêlée perdue : sourd et bref. */
   scrumLost: { durationSec: 0.2, strong: 0.4, weak: 0.0, priority: 3 },
+  /** Passe finale (gestes du joueur local) : esquive — un grésillement très bref. */
+  dodge: { durationSec: 0.05, strong: 0.0, weak: 0.3, priority: 1 },
+  /** Plongeon : petit choc. */
+  dive: { durationSec: 0.12, strong: 0.45, weak: 0.3, priority: 2 },
+  /** Passe lancée : à peine perceptible (le retour fort vient à la réception). */
+  passThrown: { durationSec: 0.04, strong: 0.0, weak: 0.25, priority: 1 },
+  /** Sa passe attrapée par un coéquipier : confirmation nette (le receveur est souvent hors champ). */
+  passCompleted: { durationSec: 0.08, strong: 0.2, weak: 0.4, priority: 2 },
+  /** Coup de pied : frappe sourde. */
+  kick: { durationSec: 0.08, strong: 0.5, weak: 0.1, priority: 2 },
 };
 /** Vitesse verticale d'atterrissage (m/s) au-delà de laquelle « hardLanding » vibre. ↑ = seulement les grosses chutes. */
 export const RUMBLE_HARD_LANDING_SPEED = 9;

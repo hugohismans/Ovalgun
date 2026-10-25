@@ -5,6 +5,7 @@
  */
 
 import type { MatchEvent, MatchState } from '../sim';
+import { playerName } from './names';
 
 export type FeedbackKind = 'good' | 'bad' | 'info';
 
@@ -25,9 +26,14 @@ export function feedbackFor(e: MatchEvent, state: MatchState, localId: number): 
       return e.playerId === localId ? { text: 'Aucun coéquipier derrière', kind: 'bad' } : null;
     case 'catch': {
       if (e.playerId === localId) return e.intercepted ? { text: 'Interception !', kind: 'good' } : null;
-      if (!e.intercepted) return null;
-      if (e.fromId === localId) return { text: 'Ballon intercepté', kind: 'bad' };
       const catcher = state.players[e.playerId];
+      if (!e.intercepted) {
+        // Passe finale : sa passe attrapée par un coéquipier (souvent hors champ, derrière lui) est confirmée. Un coup de
+        // pied repris par un coéquipier compte aussi (« passe au pied ») ; repris par l'adversaire : rien.
+        if (e.fromId !== localId || catcher === undefined || catcher.team !== me.team) return null;
+        return { text: `Passe réussie → ${playerName(state, catcher.id)}`, kind: 'good' };
+      }
+      if (e.fromId === localId) return { text: 'Ballon intercepté', kind: 'bad' };
       if (catcher === undefined) return null;
       return catcher.team === me.team ? { text: 'Interception de ton équipe !', kind: 'good' } : { text: 'Interception adverse', kind: 'bad' };
     }

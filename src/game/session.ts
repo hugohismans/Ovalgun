@@ -37,6 +37,11 @@
  *    retour au menu sont décidés par l'UI (`requestPlay`, `restart`, `launch`). Réglages du joueur appliqués à chaud
  *    (`applySettings`). Instantané enrichi : flux d'événements (eventFeed.ts), ballon en repère caméra pour la mini-flèche
  *    hors champ (ballArrow.ts), invulnérabilité, régénération, cooldowns totaux, nom de la cible de passe…
+ *  - Passe finale : regard légèrement vers le bas à chaque coup d'envoi (KICKOFF_PITCH_DEG) ; pause sur perte de focus
+ *    de la fenêtre et sur perte du pointer lock quel que soit le périphérique (avant : clavier seulement — avec la manette,
+ *    alt-tab laissait les bots jouer) ; rapport de pixels réappliqué quand `devicePixelRatio` change (zoom, écran HiDPI) ;
+ *    préférence « animations réduites » transmise au rendu ; risque de la passe et nom court de la capacité dans
+ *    l'instantané ; vibration de la passe réussie (équipe du receveur).
  */
 
 import {
@@ -75,6 +80,7 @@ import {
   DEFAULT_BOT_DIFFICULTY,
   DIVE_COOLDOWN_SEC,
   DOWN_DURATION_SEC,
+  KICKOFF_PITCH_DEG,
   SLIDE_COOLDOWN_SEC,
   canCarrierAct,
   lerpAngle,
@@ -107,6 +113,9 @@ export type SessionMode = 'play' | 'attract';
 
 /** Délai (s) au-delà duquel une demande de pointer lock sans réponse est abandonnée (le menu de pause réapparaît). */
 const LOCK_PENDING_TIMEOUT_SEC = 1.5;
+
+/** Noms du risque de passe (Renderer.passRisk : 0, 1, 2) pour l'UI. */
+const PASS_RISK_NAMES = ['open', 'risky', 'marked'] as const;
 
 /** Qui a le ballon, vu par le joueur local (couleur de la mini-flèche). */
 export type BallHolder = 'mine' | 'ally' | 'enemy' | 'free' | 'scrum' | 'dead';
@@ -221,6 +230,8 @@ export interface FrameSnapshot {
   passTarget: number;
   /** Nom de la cible de passe (« Pilier 1 »), chaîne vide sans cible. */
   passTargetName: string;
+  /** Passe finale : risque de cette passe (démarquage du receveur) — 'open', 'risky', 'marked' ; 'open' sans cible. */
+  passRisk: 'open' | 'risky' | 'marked';
   /** Retour texte temporaire en cours (null : aucun) ; `seq` change à chaque nouveau message. */
   feedback: (Feedback & { seq: number }) | null;
   /** Outils de test disponibles (?debug ou entraînement). */
@@ -269,6 +280,18 @@ export class GameSession {
   private readonly loopStep = new FixedStepLoop();
   private fps = 60;
   private readonly onResize = (): void => this.renderer.resize();
+  /** Requête média du rapport de pixels courant, réarmée à chaque changement (zoom, autre écran). */
+  private dprQuery: MediaQueryList | null = null;
+  private readonly onDprChange = (): void => {
+    this.renderer.resize();
+    this.watchPixelRatio();
+  };
+  private reducedMotionQuery: MediaQueryList | null = null;
+  private readonly onReducedMotionChange = (): void => {
+    this.renderer.setReducedMotion(this.reducedMotionQuery?.matches === true);
+  };
+  /** Équipe d'un joueur du match courant (vibration de la passe réussie). */
+  private readonly teamOf = (id: number): TeamId | undefined => this.state.players[id]?.team;
   private readonly candidates: AssistCandidate[] = [];
   private readonly tmpFeet = { x: 0, y: 0, z: 0 };
   private lockRequestedAt = -Infinity;
@@ -283,18 +306,47 @@ export class GameSession {
     this.renderer = new Renderer(canvas);
     this.renderer.setMatch(this.state, this.renderedHumanId);
     this.input = new InputManager(canvas, { debug: this.debug });
-    const me = this.state.players[this.humanId];
-    this.input.setOrientation(me.yaw, me.pitch);
+    this.faceKickoff(this.state.players[this.humanId].team);
     this.input.onPointerLockChange = (locked) => {
       if (this.mode !== 'play') return;
       if (locked) this.setPaused(false);
-      else if (!this.debug && this.input.activeDevice === 'keyboard' && !this.ended) this.setPaused(true);
+      // Passe finale : quel que soit le périphérique actif (souris verrouillée puis manette, puis Échap : la partie
+      // continuait et l'Échap suivant ne faisait rien).
+      else if (!this.debug && !this.ended) this.setPaused(true);
+    };
+    // Passe finale : fenêtre qui perd le focus (alt-tab, clic ailleurs) => pause, même à la manette (avant : les bots
+    // continuaient de jouer, et de marquer, fenêtre visible mais inactive).
+    this.input.onFocusLost = () => {
+      if (this.inGame && !this.debug) this.setPaused(true);
     };
     this.paused = this.mode === 'play' && !this.debug;
     this.installProviders();
     resetAssistCandidates(this.candidates, this.state.players);
     window.addEventListener('resize', this.onResize);
+    this.watchPixelRatio();
+    if (typeof window.matchMedia === 'function') {
+      this.reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+      this.reducedMotionQuery.addEventListener('change', this.onReducedMotionChange);
+      this.onReducedMotionChange();
+    }
     if (this.debug) (window as unknown as { __ovalgun?: { session: GameSession } }).__ovalgun = { session: this };
+  }
+
+  /**
+   * Surveille le rapport de pixels courant : `(resolution: Xdppx)` cesse de correspondre quand il change (zoom du
+   * navigateur, fenêtre déplacée sur un autre écran) ; on redimensionne alors le rendu et on réarme la requête.
+   */
+  private watchPixelRatio(): void {
+    this.dprQuery?.removeEventListener('change', this.onDprChange);
+    this.dprQuery = null;
+    if (typeof window.matchMedia !== 'function') return;
+    this.dprQuery = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+    this.dprQuery.addEventListener('change', this.onDprChange);
+  }
+
+  /** Regard du joueur local à un coup d'envoi : vers l'en-but adverse, légèrement vers le bas (KICKOFF_PITCH_DEG). */
+  private faceKickoff(team: TeamId): void {
+    this.input.setOrientation(attackYaw(team), (KICKOFF_PITCH_DEG * Math.PI) / 180);
   }
 
   /** Vrai quand le match est terminé (écran de fin). */
@@ -385,7 +437,7 @@ export class GameSession {
     this.pendingResetBall = false;
     this.input.releaseAll();
     const me = this.state.players[this.humanId];
-    this.input.setOrientation(me.yaw, me.pitch);
+    this.faceKickoff(me.team);
     this.loopStep.reset();
     this.input.resetMenuNav();
     if (this.mode === 'attract') this.setPaused(false);
@@ -563,7 +615,7 @@ export class GameSession {
     this.matchHud.handleEvents(events, this.state, nowSec);
     for (const e of events) {
       // Remise en jeu : la caméra du joueur local regarde l'en-but adverse (la sim applique ce yaw au tick suivant).
-      if (e.type === 'kickoff') this.input.setOrientation(attackYaw(me.team), 0);
+      if (e.type === 'kickoff') this.faceKickoff(me.team);
       // Fin du match : tout est relâché, la souris redevient libre pour l'écran de fin (sans mise en pause).
       if (e.type === 'match_end') {
         this.input.releaseAll();
@@ -572,7 +624,8 @@ export class GameSession {
     }
     // Aucune vibration en fond de menu (match bots contre bots).
     if (this.mode === 'play') {
-      this.haptics.handleEvents(events, me.id, me.team, nowSec, this.input.activeDevice === 'gamepad' ? this.input.activeGamepad : null, me.pos);
+      const pad = this.input.activeDevice === 'gamepad' ? this.input.activeGamepad : null;
+      this.haptics.handleEvents(events, me.id, me.team, nowSec, pad, me.pos, this.teamOf);
     }
     this.renderer.handleEvents(events, this.state, nowSec, this.prev);
     this.combatHud.handleEvents(events, this.state, this.humanId, nowSec);
@@ -678,7 +731,7 @@ export class GameSession {
       reloadProgress: me.reloadTicks > 0 ? Math.min(1, 1 - me.reloadTicks / reloadTotal) : -1,
       canShoot: canShoot(s, me) && weaponImplemented(role.weapon),
       ammoLow: me.reloadTicks === 0 && me.ammo <= Math.max(1, Math.floor(role.weapon.magazine * STYLE.ammoLowFraction)),
-      abilityLabel: role.ability.label,
+      abilityLabel: role.ability.hudLabel ?? role.ability.label,
       abilityImplemented: abilityImplemented(me),
       abilityActiveSec: abilityActive(me) ? ticksToSec(me.abilityTicks) : this.ownZoneSec(me.id),
       abilityHint: me.role === 'pilier' && abilityActive(me) ? 'réappuie : baisser' : '',
@@ -693,6 +746,7 @@ export class GameSession {
       assistTarget: this.input.lastAssist.targetId,
       passTarget,
       passTargetName: passTarget >= 0 ? playerName(s, passTarget) : '',
+      passRisk: passTarget < 0 ? 'open' : PASS_RISK_NAMES[this.renderer.passRisk],
       feedback: this.feedback !== null && this.lastTime < this.feedbackUntil ? { ...this.feedback, seq: this.feedbackSeq } : null,
       debugTools: this.debugTools,
       match: this.matchHud.frame(s, this.humanId, this.lastTime),
@@ -710,6 +764,8 @@ export class GameSession {
   dispose(): void {
     this.stop();
     window.removeEventListener('resize', this.onResize);
+    this.dprQuery?.removeEventListener('change', this.onDprChange);
+    this.reducedMotionQuery?.removeEventListener('change', this.onReducedMotionChange);
     this.input.dispose();
     this.renderer.dispose();
     const w = window as unknown as { __ovalgun?: { session: GameSession } };

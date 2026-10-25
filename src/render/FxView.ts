@@ -80,6 +80,7 @@ export class FxView {
         transparent: true,
         depthWrite: false,
         side: THREE.DoubleSide,
+        forceSinglePass: true,
         polygonOffset: true,
         polygonOffsetFactor: -4,
         polygonOffsetUnits: -8,

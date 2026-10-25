@@ -19,6 +19,10 @@ describe('feedbackFor', () => {
     expect(feedbackFor({ type: 'catch', playerId: 2, fromId: 4, intercepted: true }, s, 0)?.kind).toBe('good');
     expect(feedbackFor({ type: 'catch', playerId: 4, fromId: 1, intercepted: true }, s, 0)?.kind).toBe('bad');
     expect(feedbackFor({ type: 'catch', playerId: 0, fromId: 1, intercepted: false }, s, 0)).toBeNull();
+    // Passe finale : sa passe attrapée par un coéquipier est confirmée (le receveur est souvent hors champ).
+    expect(feedbackFor({ type: 'catch', playerId: 1, fromId: 0, intercepted: false }, s, 0)).toEqual({ text: 'Passe réussie → Demi 2', kind: 'good' });
+    expect(feedbackFor({ type: 'catch', playerId: 4, fromId: 0, intercepted: false }, s, 0)).toBeNull(); // coup de pied repris par l'adversaire
+    expect(feedbackFor({ type: 'catch', playerId: 2, fromId: 1, intercepted: false }, s, 0)).toBeNull(); // pas sa passe
     expect(feedbackFor({ type: 'jump', playerId: 0, air: false }, s, 0)).toBeNull();
   });
 

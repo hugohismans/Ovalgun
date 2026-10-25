@@ -1,19 +1,27 @@
 <!--
   Score et chrono, au centre en haut (étape 8) : blocs inclinés aux couleurs des équipes (« TOI » sous l'équipe du joueur),
   chrono m:ss (au dixième dans les dernières secondes), dernière minute en rouge pulsant, entraînement indiqué (∞).
+  Passe finale : « TOI » hors du bloc biseauté (le clip-path le rognait entièrement) ; un score ne « saute » que s'il a
+  changé depuis le montage.
 -->
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { hud } from '../state/hud.svelte';
 
   const m = $derived(hud.snap?.match ?? null);
   const lastMinute = $derived(m !== null && m.lastMinute && !m.training);
+  /** Score au montage du HUD : l'animation « score » ne joue que pour un score qui a changé depuis. */
+  const score0 = untrack(() => (hud.snap === null ? null : ([...hud.snap.match.score] as const)));
+  const popped = (team: 0 | 1, v: number): boolean => score0 === null || v !== score0[team];
 </script>
 
 {#if m}
   <div class="scorebar" class:last={lastMinute} class:urgent={m.clockUrgent}>
-    <div class="team t0" class:mine={m.localTeam === 0}>
-      <span class="name">{m.teamNames[0]}</span>
-      {#key m.score[0]}<b class="score">{m.score[0]}</b>{/key}
+    <div class="wrap">
+      <div class="team t0" class:mine={m.localTeam === 0}>
+        <span class="name">{m.teamNames[0]}</span>
+        {#key m.score[0]}<b class="score" class:pop={popped(0, m.score[0])}>{m.score[0]}</b>{/key}
+      </div>
       {#if m.localTeam === 0}<span class="you">TOI</span>{/if}
     </div>
     <div class="clock" aria-label={m.training ? 'Entraînement : chrono figé' : `Temps restant ${m.clock}`}>
@@ -23,10 +31,12 @@
         <span class="time">{m.clock}</span>
       {/if}
     </div>
-    <div class="team t1" class:mine={m.localTeam === 1}>
-      {#key m.score[1]}<b class="score">{m.score[1]}</b>{/key}
-      <span class="name">{m.teamNames[1]}</span>
-      {#if m.localTeam === 1}<span class="you">TOI</span>{/if}
+    <div class="wrap">
+      <div class="team t1" class:mine={m.localTeam === 1}>
+        {#key m.score[1]}<b class="score" class:pop={popped(1, m.score[1])}>{m.score[1]}</b>{/key}
+        <span class="name">{m.teamNames[1]}</span>
+      </div>
+      {#if m.localTeam === 1}<span class="you right">TOI</span>{/if}
     </div>
   </div>
   {#if m.training || lastMinute}
@@ -45,8 +55,14 @@
     filter: drop-shadow(0 0.25rem 0 rgb(0 0 0 / 0.25));
     pointer-events: none;
   }
+  /* Porte « TOI » hors du bloc biseauté (clip-path). */
+  .wrap {
+    position: relative;
+    display: flex;
+  }
   .team {
     position: relative;
+    flex: 1;
     display: flex;
     align-items: center;
     gap: 0.7rem;
@@ -78,17 +94,21 @@
     font: italic 900 2.1rem/1.05 var(--font);
     text-shadow: 0 0.12rem 0 rgb(0 0 0 / 0.25);
   }
+  /* Sous le bord EXTÉRIEUR du bloc : l'étiquette centrée sous le chrono (entraînement, dernière minute) reste dégagée. */
   .you {
     position: absolute;
     bottom: -1.05rem;
-    left: 50%;
-    transform: translateX(-50%);
+    left: 1.6rem;
     padding: 0.08rem 0.45rem;
     border-radius: 0 0 0.4rem 0.4rem;
     background: #fff;
     color: var(--ink);
     font: 900 0.6rem/1.2 var(--font);
     letter-spacing: 0.12em;
+  }
+  .you.right {
+    left: auto;
+    right: 1.6rem;
   }
   .clock {
     display: grid;
@@ -133,7 +153,7 @@
     color: #fff;
   }
   @media (prefers-reduced-motion: no-preference) {
-    .score {
+    .score.pop {
       animation: score-pop 0.45s cubic-bezier(0.2, 1.6, 0.4, 1);
     }
     .last .clock,

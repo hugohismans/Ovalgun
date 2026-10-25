@@ -12,6 +12,7 @@
  * - Shift : appui bref => DODGE pendant un tick (au relâchement par défaut, KEYBOARD_DODGE_ON_RELEASE),
  *   maintien > SPRINT_HOLD_DELAY_SEC => SPRINT.
  * - Porteur (`setCarrier`) : il ne vise pas — la visée ne rapproche pas la caméra et ne change pas les sensibilités.
+ *   Passe finale (CARRIER_AUTO_SPRINT) : il sprinte automatiquement et Maj esquive à l'enfoncement.
  * - Tout est relâché sur blur / perte du pointer lock / pause.
  * - Mode debug (?debug) : le clavier et les clics sont acceptés sans pointer lock (tests Playwright).
  * - Étape 8 : réglages du joueur appliqués à chaud (`applySettings` : sensibilités, inversion Y, aide à la visée) ;
@@ -24,6 +25,7 @@
 import {
   AIM_ASSIST_ENABLED,
   AIM_ASSIST_MIN_INPUT,
+  CARRIER_AUTO_SPRINT,
   clamp,
   GAMEPAD_INVERT_Y,
   GAMEPAD_RUMBLE,
@@ -102,6 +104,8 @@ export class InputManager {
 
   /** Appelé quand le pointer lock change (la session décide de la pause). */
   onPointerLockChange: ((locked: boolean) => void) | null = null;
+  /** Appelé quand la fenêtre perd le focus (alt-tab, clic hors de la page) : la session met en pause (passe finale). */
+  onFocusLost: (() => void) | null = null;
   /** Appelé quand le périphérique actif change (glyphes de l'UI). */
   onDeviceChange: ((device: InputDevice) => void) | null = null;
   /**
@@ -157,7 +161,10 @@ export class InputManager {
     this.listen(document, 'pointerlockerror', () => {
       this.lockPending = false;
     });
-    this.listen(window, 'blur', () => this.releaseAll());
+    this.listen(window, 'blur', () => {
+      this.releaseAll();
+      this.onFocusLost?.();
+    });
     this.listen(document, 'visibilitychange', () => {
       if (document.hidden) this.releaseAll();
     });
@@ -317,11 +324,13 @@ export class InputManager {
   /**
    * Indique si le joueur local porte le ballon (à chaque frame, par la session). Le porteur ne vise
    * pas : clic droit / gâchette gauche ne rapprochent pas la caméra, ne ralentissent pas la caméra et
-   * ne coupent pas le sprint L3.
+   * ne coupent pas le sprint L3. Avec CARRIER_AUTO_SPRINT, il sprinte sans Maj ni L3 et Maj esquive à l'enfoncement.
    */
   setCarrier(carrier: boolean): void {
     this.carrier = carrier;
     this.gamepad.carrier = carrier;
+    // Passe finale : le porteur sprinte tout seul, Maj ne sert plus qu'à esquiver — dès l'enfoncement.
+    this.shift.dodgeOnPress = carrier && CARRIER_AUTO_SPRINT;
   }
 
   /** Vrai si la visée est maintenue (clic droit ou gâchette gauche) — jamais pour le porteur. */
@@ -428,6 +437,7 @@ export class InputManager {
       gamepadButtons: this.gamepad.sampleButtons(),
       gamepadMove: this.gamepad.move,
       gamepadActive: this.activeDevice === 'gamepad',
+      autoSprint: this.carrier && CARRIER_AUTO_SPRINT,
       yaw: this.yaw,
       pitch: this.pitch,
     });

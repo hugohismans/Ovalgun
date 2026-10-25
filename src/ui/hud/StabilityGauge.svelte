@@ -4,6 +4,7 @@
   (et sa progression), invulnérabilité visible (liseré blanc + étiquette), régénération signalée.
 -->
 <script lang="ts">
+  import { untrack } from 'svelte';
   import Icon from '../common/Icon.svelte';
   import { hud } from '../state/hud.svelte';
 
@@ -15,6 +16,9 @@
   const getUp = $derived(s === null || s.statusTotalSec <= 0 ? 0 : 1 - s.statusSec / s.statusTotalSec);
   const sec = (v: number): string => v.toFixed(1).replace('.', ',');
   const seq = $derived(s?.combat.hitTakenSeq ?? 0);
+  /** Compteur au montage : seuls les tirs reçus APRÈS font trembler / flasher la jauge (pas de faux retour au montage). */
+  const seq0 = untrack(() => hud.snap?.combat.hitTakenSeq ?? 0);
+  const hit = $derived(seq > seq0);
 </script>
 
 {#if s}
@@ -29,12 +33,12 @@
       <b class="num">{down ? 0 : Math.max(0, Math.ceil(s.stability))}</b>
     </div>
     <!-- Deux animations identiques alternées : le tremblement repart à chaque tir sans recréer la barre (traînée). -->
-    <div class="shake" class:hit-a={seq > 0 && seq % 2 === 1} class:hit-b={seq > 0 && seq % 2 === 0}>
+    <div class="shake" class:hit-a={hit && seq % 2 === 1} class:hit-b={hit && seq % 2 === 0}>
     <div class="bar">
       <div class="lag" style:width="{frac * 100}%"></div>
       <div class="fill" style:width="{frac * 100}%"></div>
       <div class="ticks"></div>
-      {#key seq}{#if seq > 0}<div class="flash"></div>{/if}{/key}
+      {#key seq}{#if hit}<div class="flash"></div>{/if}{/key}
       {#if down}
         <div class="tackled">
           <div class="getup" style:width="{getUp * 100}%"></div>

@@ -11,7 +11,8 @@
  * tir reçu (léger), plaquage subi (fort), plaquage réussi (court) — étape 5 ; essai marqué par son équipe / encaissé,
  * fin du match — étape 6 ; son bouclier qui bloque (léger), explosion proche (moyen, à moins de
  * RUMBLE_EXPLOSION_NEAR_MULT × rayon d'explosion de ses pieds) ; mêlée déclenchée (pour tous), gagnée / perdue par son
- * équipe — étape 7.
+ * équipe — étape 7 ; gestes du joueur local — esquive, plongeon, passe lancée, coup de pied — et SA passe attrapée par un
+ * coéquipier (le receveur est souvent hors champ, derrière lui) — passe finale.
  */
 
 import {
@@ -27,9 +28,16 @@ import {
 
 /**
  * Signal de vibration correspondant à un événement pour le joueur local, ou null. `localFeet` : position des pieds du
- * joueur local (explosion proche) ; sans elle, les explosions ne vibrent pas.
+ * joueur local (explosion proche) ; sans elle, les explosions ne vibrent pas. `catcherTeam` : équipe du joueur qui
+ * attrape le ballon (événement 'catch' : passe réussie du joueur local) ; sans elle, une passe réussie ne vibre pas.
  */
-export function rumbleCueFor(e: MatchEvent, localId: number, localTeam: TeamId, localFeet: Vec3 | null = null): RumbleCue | null {
+export function rumbleCueFor(
+  e: MatchEvent,
+  localId: number,
+  localTeam: TeamId,
+  localFeet: Vec3 | null = null,
+  catcherTeam: TeamId | null = null,
+): RumbleCue | null {
   switch (e.type) {
     case 'hit':
       return e.targetId === localId ? 'hitTaken' : null;
@@ -38,7 +46,19 @@ export function rumbleCueFor(e: MatchEvent, localId: number, localTeam: TeamId, 
       return e.byId === localId ? 'tackleDealt' : null;
     case 'catch':
       if (e.playerId === localId) return e.intercepted ? 'interceptionMade' : 'catch';
-      return e.intercepted && e.fromId === localId ? 'interceptionSuffered' : null;
+      if (e.fromId !== localId) return null;
+      // Sa passe : interceptée, ou attrapée par un coéquipier (un coup de pied repris par l'adversaire n'est ni l'un ni
+      // l'autre : `intercepted` faux, receveur adverse — l'appelant ne connaît pas son équipe, d'où `catcherTeam`).
+      if (e.intercepted) return 'interceptionSuffered';
+      return catcherTeam === localTeam ? 'passCompleted' : null;
+    case 'dodge':
+      return e.playerId === localId ? 'dodge' : null;
+    case 'dive':
+      return e.playerId === localId ? 'dive' : null;
+    case 'pass':
+      return e.fromId === localId ? 'passThrown' : null;
+    case 'kick':
+      return e.playerId === localId ? 'kick' : null;
     case 'pickup':
       return e.playerId === localId ? 'catch' : null;
     case 'scrum_start':
@@ -80,7 +100,7 @@ export class Haptics {
 
   /**
    * Traite les événements d'un tick. `pad` = manette active (un `Gamepad` ; null : rien). `localFeet` : pieds du joueur
-   * local (explosions proches).
+   * local (explosions proches). `teamOf` : équipe d'un joueur (passe réussie du joueur local).
    */
   handleEvents(
     events: readonly MatchEvent[],
@@ -89,10 +109,12 @@ export class Haptics {
     nowSec: number,
     pad: object | null,
     localFeet: Vec3 | null = null,
+    teamOf: ((id: number) => TeamId | undefined) | null = null,
   ): void {
     if (!this.enabled || pad === null) return;
     for (const e of events) {
-      const cue = rumbleCueFor(e, localId, localTeam, localFeet);
+      const catcherTeam = e.type === 'catch' && teamOf !== null ? (teamOf(e.playerId) ?? null) : null;
+      const cue = rumbleCueFor(e, localId, localTeam, localFeet, catcherTeam);
       if (cue !== null) this.play(cue, nowSec, pad);
     }
   }

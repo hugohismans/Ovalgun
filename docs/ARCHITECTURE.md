@@ -127,6 +127,8 @@ Voir l'en-tête de `src/sim/vec.ts`.
   Les tirs partent de ce point selon `aimDir(yaw, pitch)`. La caméra épaule se place sur la MÊME droite, en arrière :
   `camPos = aimOrigin - aimDir * distance`. Le tir part donc exactement vers le réticule, à toute distance, sans que la sim
   connaisse la caméra. (Si la caméra est rapprochée par une collision, elle reste sur cette droite.)
+  Seule exception (passe finale, §18) : le PORTEUR local, qui ne tire pas, a un pivot de caméra monté de
+  `CAMERA_CARRY_RAISE` (même direction) ; la montée retombe à exactement 0 quand il n'a plus le ballon.
 
 ## 4. Interprétations du cahier des charges (décisions)
 
@@ -135,6 +137,8 @@ Voir l'en-tête de `src/sim/vec.ts`.
   appui plus bref que `SPRINT_HOLD_DELAY_SEC`, et `SPRINT` tant que la touche est maintenue au-delà : maintenir Shift
   sprinte **sans consommer l'esquive** (comme B et L3 séparés à la manette). Latence de l'esquive = durée du tape.
   Avec `false` : `DODGE` au front d'appui (latence nulle), mais chaque sprint commence par une esquive.
+  Passe finale (§18, `CARRIER_AUTO_SPRINT`) : le PORTEUR local sprinte automatiquement (SPRINT émis à chaque tick) et
+  Maj esquive à l'enfoncement ; les autres joueurs gardent ce comportement.
   Sprint : uniquement en avançant ; annulé par la visée (sauf pour le porteur, qui ne vise pas) ; **le tir l'emporte**
   (étape 5) : FIRE maintenu avec une arme prête => le sprint est ignoré ce tick (`fireOverridesSprint`, §10).
 - **Le porteur ne vise pas** : la sim ignore `AIM` pour lui (pas de `AIM_SPEED_MULT`, sprint non annulé) ; côté client,
@@ -325,7 +329,8 @@ Décisions prises à l'étape 3 :
 - **Manette lue** (`GamepadPicker`) : la manette « standard » courante tant qu'elle est connectée ; une AUTRE manette standard
   qui montre un geste franc prend la main (manette virtuelle ou seconde manette à l'index 0). Une manette connectée sans
   mapping « standard » est ignorée et l'overlay le signale. Débranchée : plus rien n'est maintenu (visée relâchée).
-- **Pause** : pointer lock perdu avec le clavier actif (sauf `?debug`) ; Start à la manette (bascule) ; manette ACTIVE
+- **Pause** : pointer lock perdu avec le clavier actif (sauf `?debug` ; passe finale, §18 : quel que soit le périphérique, et
+  aussi perte de focus de la fenêtre et Échap sans pointer lock) ; Start à la manette (bascule) ; manette ACTIVE
   débranchée en jeu (sauf `?debug`, le périphérique actif repasse au clavier). En pause, la manette reste interrogée
   (Start / A reprennent) ; à la reprise, tout est relâché et les boutons encore enfoncés sont ignorés jusqu'à leur
   relâchement (le A qui relance la partie ne fait pas sauter). La pause garde l'accumulateur (image figée, pas de recul
@@ -459,7 +464,8 @@ Décisions prises à l'étape 4 :
   (visible quand il est dans le champ) et d'un trait au sol. Éventail vert = cible, rouge = aucune. Point de chute du coup
   de pied : `predictBallLanding` (relief, sans murets), recalé sur la position interpolée du porteur. Tous ces indicateurs
   sont masqués quand la sim ignorerait PASS / KICK (`canCarrierAct`, exporté par la sim : plongeon, récupération au sol) :
-  l'écran ne promet jamais une passe qui ne partira pas. Coque blanche pulsante pendant `invulnTicks > 0`. Effets : `Renderer.handleEvents` appelé par la session après chaque step.
+  l'écran ne promet jamais une passe qui ne partira pas. Coque blanche pulsante pendant `invulnTicks > 0` (passe finale, §18 :
+  halo à la couleur claire de l'équipe, faces arrière, pulsation lente). Effets : `Renderer.handleEvents` appelé par la session après chaque step.
 - **Vibrations** : réception / ramassage (`catch`), interception réussie (`interceptionMade`), sa passe interceptée
   (`interceptionSuffered`). Un coup de pied réceptionné par l'adversaire n'est pas une interception.
 
@@ -1193,8 +1199,8 @@ Décisions :
   aucune vibration, jamais en pause, pas d'anneau « humain ») ; `play` = la partie. `GameSession.launch(options)` passe de l'un à l'autre sans
   recréer le rendu ni le contexte WebGL. `?debug` lance la partie directement (comportement des étapes précédentes, scripts Playwright) ;
   `?debug&menu` affiche le menu ; `?debug&duration=<s>` raccourcit le match (écran de fin rapide).
-- **Pause et menus** : la session décide encore des mises en pause automatiques (pointer lock perdu au clavier, Start, manette active
-  débranchée) ; la REPRISE, « Recommencer », « Rejouer » et le retour au menu sont décidés par l'UI. Les intentions de navigation de la manette
+- **Pause et menus** : la session décide encore des mises en pause automatiques (pointer lock perdu — au clavier avant la passe
+  finale, quel que soit le périphérique depuis (§18) —, fenêtre qui perd le focus (§18), Start, manette active débranchée) ; la REPRISE, « Recommencer », « Rejouer » et le retour au menu sont décidés par l'UI. Les intentions de navigation de la manette
   (`MenuNavReader` dans l'InputManager) sont transmises par `GameSession.onMenuIntent` seulement quand aucun jeu n'est en cours (menu, pause,
   fin) : en jeu elles sont jetées (A = saut) — l'état « en jeu » est évalué AVANT de traiter Start, donc le Start qui met en pause ne reprend pas
   aussitôt. Le A / Start qui ferme un menu ne fait pas sauter (reset des entrées à la reprise, comme avant). L'ancien `consumeConfirm` de la session
@@ -1359,8 +1365,8 @@ Constats écartés ou reportés :
 - **`DeepReadonly<MatchState>`** pour les bots (Readonly est superficiel) : reporté. Toutes les lectures de la sim appelées par les
   bots et le rendu (`selectPassTarget`, `planPass`, `kickLaunch`, `queries.ts`…) devraient changer de signature ; la garantie reste
   le test à l'exécution (JSON identique avant / après chaque appel de bot) et la vérification de l'audit (4 matchs complets).
-- **Caméra, risque de passe, sprint automatique, latence de l'esquive au clavier** (audit du feeling du porteur) : côté client
-  (src/render, src/input), hors de cette correction.
+- **Caméra, risque de passe, sprint automatique, latence de l'esquive au clavier** (audit du feeling du porteur) : traités côté
+  client (src/render, src/input) par la correction suivante (§18), hors de celle-ci.
 
 Préparation au online (constats de l'audit d'architecture, rien à coder dans le prototype) :
 
@@ -1382,3 +1388,122 @@ Préparation au online (constats de l'audit d'architecture, rien à coder dans l
   transcendantes (`Math.sin`, `Math.exp`…) ne sont pas garanties identiques au bit près entre moteurs.
 - **Identifiants** : prêts (`humanId` paramétrable, `externalIds` des bots, `botInput` et `BotMemory` sérialisables et exportés).
 
+
+
+## 18. Passe finale : client, caméra et UI
+
+Constats des audits client, UX et feeling du porteur (vérifiés par un relecteur sceptique), puis correction côté
+`src/render`, `src/input`, `src/game`, `src/ui`. La simulation et les bots ne changent pas (aucune règle, aucun hash) :
+seules des constantes de caméra / d'entrée, des signaux de vibration et un nom court de capacité (`hudLabel`) ont été
+ajoutés à constants.ts. Les tests de match bots contre bots passent à l'identique.
+
+| Fichier | Rôle |
+|---|---|
+| `render/fadeMath.ts` | **Nouveau**, PUR : `smoothstep`, distances point / segment et segment / segment, `occluderFade`, `localFade`. |
+| `render/colors.ts` | **Nouveau** : couleurs de la palette précalculées en `THREE.Color` (plus d'analyse de chaîne CSS à chaque image). |
+| `render/cameraMath.ts`, `ShoulderCamera.ts` | Collision balayée ; pivot du porteur monté (`raise`, lissé comme la distance). |
+| `render/PlayerView.ts` | Matériaux propres en alpha hash, `bodyAxis`, `setFade` ; halo d'invulnérabilité. |
+| `render/Renderer.ts` | `updateFades`, `passRiskOf` / `passRisk`, `setReducedMotion`, rapport de pixels dans `resize()`. |
+
+Décisions :
+
+- **Joueurs estompés près de la caméra** (constat majeur) : 6 à 8 % du temps en 5v5, la capsule d'un autre joueur était à
+  moins de 1 m de la caméra et couvrait jusqu'à la moitié de l'écran. Le Renderer calcule chaque image, pour chaque joueur,
+  la distance de la caméra à la surface de sa capsule affichée (`PlayerView.bodyAxis` : posture basse et corps couché
+  compris) et, pour les autres, la distance au segment caméra -> dos du joueur local (pivot moins `STYLE.lineFadeBehind`
+  le long du regard : un adversaire DEVANT le joueur local, qu'il vise, n'est jamais estompé). Opacité :
+  `smoothstep(cameraFadeNear 0,4, cameraFadeFar 1,8)` ; entre la caméra et soi, jusqu'à `lineFadeMin` 0,35 ; joueur local :
+  `smoothstep(localFadeNear 0,5, localFadeFar 1,6)` (en visée, ≈ 2,4 m : opaque). Rendu en **alpha hash** (tramage stable
+  en espace objet, dans la passe opaque, `depthWrite` gardé) : pas de tri des transparents, pas de bascule opaque /
+  transparent qui recompilerait un programme ; d'où des matériaux propres à chaque joueur (corps, contour, visière, reflet,
+  arme, signe, poignée), clonés de `PlayerAssets` avec `alphaHash: true` (même programme pour tous). Sous
+  `fadeDetailsBelow` (0,5) : barre de stabilité et étoiles masquées ; sous `fadeHideBelow` (0,05) : joueur masqué. Le
+  halo d'invulnérabilité s'éteint plus vite que le corps (ses faces arrière délaveraient le tramage). Mesuré (5v5,
+  autopilote, 200 échantillons) : capsule à moins de 1 m de la caméra 1,5 % du temps, jamais à plus de 50 % d'opacité.
+  Écarté : vraie transparence (tri par objet entre corps, contour et visière, artefacts).
+- **Cadrage** (constat mineur, polish demandé) : l'invariant du §3 est gardé pour tout joueur qui tire. Deux réglages :
+  regard à `KICKOFF_PITCH_DEG` (−8°) à chaque coup d'envoi et au lancement (`GameSession.faceKickoff` ; avant : horizon
+  au milieu de l'écran, moitié ciel) ; et **pivot du porteur monté** de `CAMERA_CARRY_RAISE` (1 m, constat majeur du
+  feeling du porteur : sa capsule masquait la bande sous l'horizon droit devant lui, là où se tient le défenseur qui lui
+  barre la route ; tête du porteur à ≈ 9,5° sous l'horizon, défenseur à 6, 12 et 20 m visible). Le porteur ne tire pas ;
+  la montée est lissée par `CAMERA_BLEND_RATE` et remise EXACTEMENT à 0 sous le millimètre (test : la droite de tir se
+  reprojette au centre après la passe). Elle repousse aussi le contact avec le sol quand le porteur lève les yeux pour une
+  chandelle (34° : caméra à 4,1 m au lieu de 2,3). Écarté : biais d'inclinaison de la vue avec un réticule décalé vers le
+  haut (toute l'UI du réticule, des retours de visée et de la mini-flèche à recaler, pour un gain que le −8° couvre).
+- **Collision balayée** (constat mineur) : `shoulderPose` échantillonne le segment pivot -> caméra voulue tous les
+  ≤ 0,1 m et place la caméra sur le dernier échantillon libre (avant : seule l'extrémité était testée, ligne de vue jusqu'à
+  0,67 m dans une butte ou une rampe, 0,5 à 0,7 % des poses près du relief). ≈ 50 `groundHeight` par image.
+- **FOV de vitesse** : `CAMERA_FOV_SPEED_GAIN` 1,2 -> 3 (plafond 6° inchangé) : ailier porteur au sprint +5,5° (avant
+  +2,2°), l'esquive ne dépasse plus le sprint que de ≈ 0,5° (avant +3,8° : la « pulsation » que le plafond voulait éviter).
+- **Une seule passe pour les transparents double face** (constat majeur, performance) : three.js dessinait chaque
+  matériau `transparent && DoubleSide` en deux passes en changeant `side` + `needsUpdate` à chaque fois, donc un
+  `getProgram` par objet et par image (≈ 43 % des allocations JS, 13 % du temps de la boucle). `forceSinglePass: true`
+  partout (traceurs, étincelles, flashs, explosions — boule fermée en `FrontSide` —, voile des murs, traînée du ballon,
+  anneaux, indicateurs de passe, mêlée, zones, bouclier) ; test qui parcourt toutes les vues. Mesuré : `material.version`
+  reste à 0 (avant : jusqu'à 11 370 après 25 s), appels de dessin 168 en moyenne / 278 au pic en 5v5 (avant 194 / 426).
+- **Lisibilité des effets** : étincelles — une gerbe par joueur touché et par tick (`sparksPerHit` 3 par balle,
+  `sparksPerPelletHit` 4 par décharge de plombs) et une gerbe de relief par tireur et par tick, pool 120 -> 64 (avant : 48
+  étincelles par décharge, pool saturé) ; mesuré : 15,6 visibles en moyenne, 49 au pic. Éclat de plaquage du joueur local
+  ×`tackleBurstLocalScale` (0,5 : il couvrait les deux tiers de l'écran). **Halo d'invulnérabilité** : coque à la couleur
+  CLAIRE de l'équipe, faces arrière seulement (un liseré autour du corps, qui garde sa couleur d'équipe ; avant, film
+  blanc par-dessus), `invulnScale` 1,22, opacité 0,75 ± 0,15 à 9 rad/s (≈ 1,4 Hz, sous les 3 flashs/s ; avant 0,5 ± 0,3 à
+  6,4 Hz), sans pulsation sous `prefers-reduced-motion: reduce` (`GameSession` -> `Renderer.setReducedMotion` ->
+  `PlayerAssets.reducedMotion`).
+- **Risque de la passe** (constat mineur) : l'humain se faisait intercepter 7 à 10 % de ses passes (54 à 73 % sous une
+  openness de 0,15) contre ≈ 1 % pour les bots, qui filtrent sur le démarquage. `passRiskOf(openness)` reprend LES SEUILS
+  DES BOTS : démarqué ≥ `BOT_PASS_MIN_OPENNESS` (vert), risqué (ambre `PALETTE.passRisky`), marqué
+  < `BOT_PASS_MIN_OPENNESS_OWN_THIRD` (rouge-orangé `PALETTE.passMarked`) ; flèche, chevron, trait et éventail prennent la
+  couleur ; instantané `passRisk` ; pastille « → Pilier 2 · marqué ». Aucune règle de sim ne change.
+- **Porteur au clavier : sprint automatique** (constat mineur, `CARRIER_AUTO_SPRINT`) : le porteur ne vise ni ne tire, Maj
+  ne lui servait qu'à sprinter, et l'esquive au relâchement coûtait 77 à 157 ms (perdue au-delà de 150 ms d'appui).
+  Porteur local : SPRINT émis à chaque tick (`composeInput.autoSprint` ; la sim ne l'applique que dans le cône avant, stick
+  assez incliné — un stick à moitié poussé trottine encore) et `TapHoldState.dodgeOnPress` (esquive à l'enfoncement, mode
+  figé à l'appui : pas de double esquive ni d'esquive perdue si le joueur attrape / passe le ballon pendant l'appui). À la
+  manette, L3 devient inutile pour le porteur. Aide des contrôles mise à jour.
+- **Retours du porteur** : vibrations `dodge`, `dive`, `passThrown`, `kick` (gestes du joueur local, priorités ≤ 2) et
+  `passCompleted` (sa passe attrapée par un coéquipier — l'équipe du receveur arrive par `teamOf` ; un coup de pied repris
+  par l'adversaire ne vibre pas) ; message « Passe réussie → Pilier 2 » (feedback.ts ; un coup de pied repris par un
+  coéquipier compte aussi, l'événement 'catch' ne dit pas s'il s'agissait d'une passe ou d'un coup de pied).
+- **Pause** (constat mineur) : à la manette, Échap (sans pointer lock) met en pause (App.svelte), la fenêtre qui perd le
+  focus met en pause (`InputManager.onFocusLost`, hors `?debug`), et la perte du pointer lock met en pause quel que soit le
+  périphérique actif (avant : clavier seulement ; alt-tab laissait les bots jouer et marquer).
+- **Rapport de pixels** (constat mineur) : `Renderer.resize()` réapplique `min(devicePixelRatio, STYLE.maxPixelRatio)` ;
+  la session surveille `matchMedia('(resolution: Xdppx)')` (réarmée à chaque changement) pour un zoom ou un changement
+  d'écran sans redimensionnement.
+- **HUD** (constats UX) : le HUD reste monté pendant toute la partie et n'est que masqué (`visibility`, pas `display`) en
+  pause / attente du pointer lock — le remonter rejouait le tremblement + flash de « tir reçu » et le « pop » des scores à
+  chaque reprise ; en plus, la jauge ne réagit qu'aux tirs reçus APRÈS son montage et un score ne « saute » que s'il a
+  changé depuis le montage. « TOI » sorti du bloc biseauté (le `clip-path` le rognait entièrement), sous son bord
+  extérieur (l'étiquette « ENTRAÎNEMENT » / « DERNIÈRE MINUTE » reste dégagée). Nom court de capacité
+  (`ROLES.demi.ability.hudLabel` = « Zone lente » ; « Zone de ralentissement » était tronqué à toutes les tailles).
+  Texte secondaire des pastilles 0,6 -> 0,78 rem (cible de passe à 10,5 px en 1280×720 au lieu de 8), libellés
+  0,68 -> 0,75 rem, pastille 6,6 -> 7,2 rem de large. Curseur masqué quand on joue à la manette (aucun pointer lock).
+  Au sol, toutes les pastilles d'action sont barrées (l'esquive et la glissade semblaient prêtes).
+- **Nits** : traînée du ballon coupée sur une téléportation — saut de plus de `STYLE.teleportDist` entre deux ticks
+  (remise en jeu), ou depuis son dernier point à plus de `STYLE.trailTeleportSpeed` (outil « ballon au centre », appliqué
+  entre deux ticks ; un seuil de distance seul couperait la traînée d'un coup de pied à 5 images/s) — et effacée à chaque
+  match (`BallView.reset`) ; couleurs précalculées (`colors.ts`) dans PlayerView, ZoneView, ScrumView, CombatFxView.
+- **Tests** : `tests/render/polish.test.ts` (fadeMath, estompage et axe du corps, halo et animations réduites, gerbes
+  d'étincelles, éclat local, `forceSinglePass` sur toutes les vues, traînée, seuils de risque), `camera.test.ts` (pivot
+  du porteur et retour exact sur la droite de tir, collision balayée sur toutes les formes de relief des deux terrains —
+  l'ancienne version échouait à 0,67 m —, FOV de vitesse), `views.test.ts` (couleurs du risque), `inputLogic.test.ts`
+  (esquive à l'enfoncement, mode figé, sprint automatique), `haptics.test.ts` (gestes, passe réussie), `feedback.test.ts`
+  (« Passe réussie »). Vérification visuelle Playwright (coup d'envoi, défenseur dans l'axe du porteur à 6 / 12 / 20 m,
+  joueur contre la caméra et entre la caméra et soi, halos des deux équipes, risque de passe, HUD en 900×600, 1280×720,
+  1920×1080, pause à Échap / perte de focus à la manette, absence de fausses animations à la reprise).
+- **Limites connues** : le tramage de l'alpha hash est visible (grain) sur un joueur à mi-opacité, surtout en basse
+  résolution ; en regardant très haut sans ballon (> 45°), le joueur local reste en partie à l'écran avant de s'estomper ;
+  le message « Passe réussie » couvre aussi une chandelle reprise par un coéquipier.
+
+| Constante | Avant | Après | Pourquoi |
+|---|---|---|---|
+| `CAMERA_FOV_SPEED_GAIN` | 1,2 °/(m/s) | 3 | Le FOV s'ouvre au sprint, ne pulse plus à l'esquive |
+| `CAMERA_CARRY_RAISE` (nouvelle) | — (0) | 1 m | Le porteur voit le défenseur devant lui |
+| `KICKOFF_PITCH_DEG` (nouvelle) | — (0) | −8° | Plus de terrain, moins de ciel au coup d'envoi |
+| `CARRIER_AUTO_SPRINT` (nouvelle) | — (non) | oui | Esquive du porteur sans latence au clavier |
+| `GAMEPAD_RUMBLE_EFFECTS` | — | + `dodge`, `dive`, `passThrown`, `passCompleted`, `kick` | Retours des gestes du porteur |
+| `STYLE.invulnScale` / `invulnOpacity` / `invulnPulse` / `invulnPulseRate` | 1,16 / 0,5 / 0,3 / 40 | 1,22 / 0,75 / 0,15 / 9 | Halo lisible, couleur d'équipe gardée, sous 3 Hz |
+| `STYLE.sparkPoolSize` / `sparksPerHit` | 120 / 6 | 64 / 3 (+ `sparksPerPelletHit` 4) | Une gerbe par cible et par tick |
+| `STYLE.tackleBurstLocalScale` (nouvelle) | — (1) | 0,5 | Éclat du plaquage subi moins envahissant |
+| `STYLE.cameraFade*`, `lineFade*`, `localFade*`, `fade*Below` (nouvelles) | — | voir palette.ts | Estompage près de la caméra |
+| `STYLE.maxPixelRatio` (nouvelle) | 2 en dur | 2 | Valeur visuelle sortie du code |

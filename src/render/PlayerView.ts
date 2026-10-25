@@ -3,16 +3,21 @@
  * orientée selon le yaw, arme côté droit (inclinée selon le pitch), signe distinctif du rôle sur la
  * tête, posture basse (capsule écrasée à la hauteur de la hitbox de la sim, PLAYER_LOW_HEIGHT, à peine
  * inclinée) en glissade / plongeon / au sol, ombre portée au sol,
- * anneau sous le joueur humain, losange au-dessus du porteur visible à travers le relief, coque blanche
- * pulsante pendant l'invulnérabilité (plongeon, relevé : on voit d'un coup d'œil que le joueur est intouchable).
+ * anneau sous le joueur humain, losange au-dessus du porteur visible à travers le relief, halo pulsant pendant
+ * l'invulnérabilité (plongeon, relevé : on voit d'un coup d'œil que le joueur est intouchable).
  * Étape 5 : clignotement quand il est touché (`flash`), barre de stabilité au-dessus de la tête des AUTRES joueurs
  * (visible quand la jauge n'est pas pleine), posture au sol COUCHÉE avec des étoiles qui tournent, puis relevé.
  * Étape 7 : bouclier frontal du pilier (même géométrie que la sim, shield.ts : arc de cylindre de rayon SHIELD_DISTANCE
  * sur ±SHIELD_HALF_ANGLE_DEG, des pieds à SHIELD_HEIGHT), translucide à la couleur de l'équipe, liseré blanc, qui
  * flashe quand il bloque (`shieldFlash`) ; il se déploie / se replie en STYLE.shieldDeploySec.
  *
- * Géométries et matériaux partagés (PlayerAssets) ; seuls le corps (clignotement) et la jauge (couleur) ont un
- * matériau propre à chaque joueur. Aucune allocation par frame.
+ * Passe finale : estompage près de la caméra (`setFade`, calculé par le Renderer avec fadeMath.ts) — les matériaux du
+ * corps, du contour, de la visière, de l'arme et du signe sont PROPRES à chaque joueur, en « alpha hash » (tramage stable
+ * dans la passe opaque : pas de tri, pas de recompilation quand l'opacité change) ; halo d'invulnérabilité à la couleur
+ * claire de l'équipe, faces arrière seulement (la couleur d'équipe du corps reste visible), pulsation lente, coupée sous
+ * `prefers-reduced-motion` (`PlayerAssets.reducedMotion`).
+ *
+ * Géométries partagées (PlayerAssets). Aucune allocation par frame.
  */
 
 import * as THREE from 'three';
@@ -33,6 +38,8 @@ import {
   type TeamId,
   type Vec3,
 } from '../sim';
+import { SHIELD_FLASH, TEAM_MAIN } from './colors';
+import { smoothstep, type Point3 } from './fadeMath';
 import { PALETTE, STYLE } from './palette';
 
 /** Dégradé à 3 paliers pour MeshToonMaterial (ombrage flat). */
@@ -110,8 +117,6 @@ export class PlayerAssets {
     polygonOffsetFactor: -4,
     polygonOffsetUnits: -8,
   });
-  /** Coque d'invulnérabilité (plongeon, relevé) : blanche, translucide, pulsante. */
-  readonly invulnMat = new THREE.MeshBasicMaterial({ color: PALETTE.invuln, transparent: true, opacity: STYLE.invulnOpacity, depthWrite: false });
   /** Losange du porteur : pas de test de profondeur => visible à travers les obstacles. */
   readonly markerMat = new THREE.MeshBasicMaterial({ color: PALETTE.carrierMarker, depthTest: false, depthWrite: false, transparent: true });
   readonly markerOutlineMat = new THREE.MeshBasicMaterial({
@@ -123,6 +128,8 @@ export class PlayerAssets {
   });
   readonly barBackMat = new THREE.MeshBasicMaterial({ color: PALETTE.stabilityBarBack, transparent: true, opacity: STYLE.stabilityBarBackOpacity, depthWrite: false });
   readonly starMat = new THREE.MeshBasicMaterial({ color: PALETTE.dizzyStar, side: THREE.DoubleSide });
+  /** Préférence « animations réduites » du système (Renderer.setReducedMotion) : halo d'invulnérabilité sans pulsation. */
+  reducedMotion = false;
 
   constructor() {
     const toon = (color: string): THREE.MeshToonMaterial => new THREE.MeshToonMaterial({ color, gradientMap: this.gradient });
@@ -158,7 +165,6 @@ export class PlayerAssets {
       this.ringMat,
       this.markerMat,
       this.markerOutlineMat,
-      this.invulnMat,
       this.barBackMat,
       this.starMat,
     ];
@@ -230,6 +236,12 @@ function targetLean(p: PlayerState): number {
   return p.move === 'dive' || p.move === 'dive_recover' ? STYLE.lowPostureLean : -STYLE.lowPostureLean;
 }
 
+/**
+ * Atténuation du halo d'invulnérabilité d'un joueur estompé : il disparaît plus vite que le corps (ses faces arrière se
+ * verraient à travers le tramage du corps et le délaveraient).
+ */
+const haloFade = (k: number): number => smoothstep(STYLE.fadeDetailsBelow, 1, k);
+
 /** Échelle verticale de la capsule en posture basse : hauteur affichée = hauteur de la hitbox. */
 const LOW_RATIO = PLAYER_LOW_HEIGHT / PLAYER_HEIGHT;
 
@@ -256,6 +268,14 @@ export class PlayerView {
   private readonly fallGroup = new THREE.Group();
   private readonly pose = new THREE.Group();
   private readonly bodyMat: THREE.MeshToonMaterial;
+  /** Matériaux propres (estompage) : corps, contour, visière, reflet, arme, signe, poignée. */
+  private readonly fadeMats: THREE.Material[] = [];
+  private readonly assets: PlayerAssets;
+  /** Opacité d'estompage courante (1 : opaque) et opacités de base du halo / du bouclier calculées par `update`. */
+  private fade = 1;
+  private invulnBase = 0;
+  private shieldBase = 0;
+  private shieldRimBase = 0;
   private readonly barFill: THREE.Mesh;
   private readonly barFillMat: THREE.MeshBasicMaterial;
   private readonly dizzy = new THREE.Group();
@@ -293,33 +313,42 @@ export class PlayerView {
     const R = PLAYER_RADIUS;
     this.role = role;
     this.team = team;
+    this.assets = assets;
+    // Copie propre au joueur, en alpha hash (estompage près de la caméra).
+    const own = <M extends THREE.Material>(m: M): M => {
+      const c = m.clone() as M;
+      c.alphaHash = true;
+      this.fadeMats.push(c);
+      return c;
+    };
+    const outlineMat = own(assets.outlineMat);
     this.root.add(this.yawGroup);
     this.yawGroup.add(this.fallGroup);
     this.fallGroup.add(this.pose);
 
     // Corps + contour. Matériau propre (clignotement émissif quand il est touché).
-    this.bodyMat = assets.teamMats[team].clone();
+    this.bodyMat = own(assets.teamMats[team]);
     this.bodyMat.emissive.set(PALETTE.hitFlash);
     this.bodyMat.emissiveIntensity = 0;
     const body = new THREE.Mesh(assets.capsule, this.bodyMat);
-    const outline = new THREE.Mesh(assets.capsule, assets.outlineMat);
+    const outline = new THREE.Mesh(assets.capsule, outlineMat);
     outline.scale.setScalar(STYLE.outlineScale);
     this.pose.add(body, outline);
 
     // Visière (avant = +Z local), à hauteur des yeux.
-    const visor = new THREE.Mesh(assets.visor, assets.visorMat);
+    const visor = new THREE.Mesh(assets.visor, own(assets.visorMat));
     visor.position.set(0, H * 0.31, R * 0.82);
-    const glint = new THREE.Mesh(assets.glint, assets.glintMat);
+    const glint = new THREE.Mesh(assets.glint, own(assets.glintMat));
     glint.position.set(-0.14, H * 0.31 + 0.04, R * 0.82 + 0.115);
     this.pose.add(visor, glint);
 
     // Arme côté droit (droite = −X local, cf. right(yaw)), inclinée selon le pitch.
-    const gun = new THREE.Mesh(assets.weapons[role], assets.weaponMat);
+    const gun = new THREE.Mesh(assets.weapons[role], own(assets.weaponMat));
     gun.position.set(0, 0, 0.22);
-    const gunOutline = new THREE.Mesh(assets.weapons[role], assets.outlineMat);
+    const gunOutline = new THREE.Mesh(assets.weapons[role], outlineMat);
     gunOutline.position.copy(gun.position);
     gunOutline.scale.setScalar(1.18);
-    const grip = new THREE.Mesh(assets.weapons.ailier, assets.teamDarkMats[team]);
+    const grip = new THREE.Mesh(assets.weapons.ailier, own(assets.teamDarkMats[team]));
     grip.scale.set(0.9, 0.9, 0.35);
     grip.position.set(0, -0.02, -0.08);
     this.weapon.add(gun, gunOutline, grip);
@@ -327,18 +356,25 @@ export class PlayerView {
     this.pose.add(this.weapon);
 
     // Signe du rôle sur la tête.
-    const sign = new THREE.Mesh(assets.signs[role], assets.signMat);
+    const sign = new THREE.Mesh(assets.signs[role], own(assets.signMat));
     sign.position.set(0, H / 2 + (role === 'ailier' ? 0.12 : 0.02), role === 'ailier' ? -0.1 : 0);
     if (role === 'ailier') sign.rotation.x = -0.5;
-    const signOutline = new THREE.Mesh(assets.signs[role], assets.outlineMat);
+    const signOutline = new THREE.Mesh(assets.signs[role], outlineMat);
     signOutline.position.copy(sign.position);
     signOutline.rotation.copy(sign.rotation);
     signOutline.scale.setScalar(1.2);
     this.pose.add(sign, signOutline);
 
-    // Coque d'invulnérabilité (suit la posture : écrasée en plongeon comme la hitbox).
-    this.invulnMat = assets.invulnMat;
-    this.invulnShell = new THREE.Mesh(assets.capsule, assets.invulnMat);
+    // Halo d'invulnérabilité (suit la posture : écrasé en plongeon comme la hitbox) : couleur claire de l'équipe, faces
+    // arrière seulement => un liseré lumineux autour du corps, qui garde sa couleur d'équipe.
+    this.invulnMat = new THREE.MeshBasicMaterial({
+      color: PALETTE.teams[team].light,
+      transparent: true,
+      opacity: STYLE.invulnOpacity,
+      depthWrite: false,
+      side: THREE.BackSide,
+    });
+    this.invulnShell = new THREE.Mesh(assets.capsule, this.invulnMat);
     this.invulnShell.scale.setScalar(STYLE.invulnScale);
     this.invulnShell.renderOrder = 2;
     this.invulnShell.visible = false;
@@ -393,6 +429,8 @@ export class PlayerView {
         transparent: true,
         opacity: STYLE.shieldOpacity,
         side: THREE.DoubleSide,
+        // Une seule passe (sinon three.js dessine les faces arrière puis avant et recalcule le programme à chaque image).
+        forceSinglePass: true,
         depthWrite: false,
       });
       this.shieldRimMat = new THREE.LineBasicMaterial({ color: PALETTE.shieldRim, transparent: true, opacity: STYLE.shieldRimOpacity });
@@ -423,8 +461,52 @@ export class PlayerView {
     if (this.bar.visible) this.bar.quaternion.copy(q);
   }
 
+  /**
+   * Axe du corps affiché (pour l'estompage) : `base` = centre de la sphère basse, `top` = centre de la sphère haute
+   * (posture basse et chute visuelle comprises ; couché, l'axe est horizontal vers l'avant du plaquage).
+   */
+  bodyAxis(base: Point3, top: Point3): void {
+    const R = PLAYER_RADIUS;
+    const len = Math.max(0, PLAYER_HEIGHT * this.pose.scale.y - 2 * R);
+    const fall = this.fall * (Math.PI / 2);
+    const yaw = this.yawGroup.rotation.y;
+    const p = this.root.position;
+    // Rotation de la chute autour de l'axe X local (vers +Z local = forward(yaw)), puis lacet.
+    const up = Math.cos(fall);
+    const fwd = Math.sin(fall);
+    base.x = p.x;
+    base.y = p.y + R;
+    base.z = p.z;
+    top.x = base.x + Math.sin(yaw) * fwd * len;
+    top.y = base.y + up * len;
+    top.z = base.z + Math.cos(yaw) * fwd * len;
+  }
+
+  /**
+   * Opacité d'estompage pour cette frame (APRÈS `update`) : matériaux en alpha hash, halo et bouclier atténués, barre de
+   * stabilité et étoiles masquées sous STYLE.fadeDetailsBelow, joueur masqué sous STYLE.fadeHideBelow.
+   */
+  setFade(f: number): void {
+    const k = Math.min(1, Math.max(0, f));
+    if (k !== this.fade) {
+      this.fade = k;
+      for (const m of this.fadeMats) m.opacity = k; // corps compris
+    }
+    this.root.visible = k > STYLE.fadeHideBelow;
+    if (k < STYLE.fadeDetailsBelow) {
+      this.bar.visible = false;
+      this.dizzy.visible = false;
+    }
+    this.invulnMat.opacity = this.invulnBase * haloFade(k);
+    if (this.shieldMat !== null && this.shieldRimMat !== null) {
+      this.shieldMat.opacity = this.shieldBase * k;
+      this.shieldRimMat.opacity = this.shieldRimBase * k;
+    }
+  }
+
   dispose(): void {
-    this.bodyMat.dispose();
+    for (const m of this.fadeMats) m.dispose();
+    this.invulnMat.dispose();
     this.barFillMat.dispose();
     this.shieldMat?.dispose();
     this.shieldRimMat?.dispose();
@@ -471,9 +553,9 @@ export class PlayerView {
     // Clignotement quand il est touché.
     const since = this.hitAt < 0 ? Infinity : timeSec - this.hitAt;
     this.bodyMat.emissiveIntensity = since < STYLE.hitFlashSec ? STYLE.hitFlashIntensity * (1 - since / STYLE.hitFlashSec) : 0;
-    if (this.invulnShell.visible) {
-      this.invulnMat.opacity = STYLE.invulnOpacity + STYLE.invulnPulse * Math.sin(timeSec * STYLE.invulnPulseRate);
-    }
+    const pulse = this.assets.reducedMotion ? 0 : STYLE.invulnPulse * Math.sin(timeSec * STYLE.invulnPulseRate);
+    this.invulnBase = STYLE.invulnOpacity + pulse;
+    this.invulnMat.opacity = this.invulnBase * haloFade(this.fade);
 
     // Bouclier : se déploie (largeur et hauteur) quand il est levé, flashe quand il bloque.
     if (this.shieldGroup !== null && this.shieldMat !== null && this.shieldRimMat !== null) {
@@ -488,9 +570,11 @@ export class PlayerView {
         const since = this.blockedAt < 0 ? Infinity : timeSec - this.blockedAt;
         const flash = since < STYLE.shieldFlashSec ? 1 - since / STYLE.shieldFlashSec : 0;
         const shimmer = STYLE.shieldShimmer * Math.sin(timeSec * STYLE.shieldShimmerRate);
-        this.shieldMat.opacity = Math.min(1, (STYLE.shieldOpacity + shimmer) * k + STYLE.shieldFlashOpacity * flash);
-        this.shieldMat.color.set(flash > 0.5 ? PALETTE.shieldFlash : PALETTE.teams[this.team].main);
-        this.shieldRimMat.opacity = Math.min(1, STYLE.shieldRimOpacity * k + flash);
+        this.shieldBase = Math.min(1, (STYLE.shieldOpacity + shimmer) * k + STYLE.shieldFlashOpacity * flash);
+        this.shieldRimBase = Math.min(1, STYLE.shieldRimOpacity * k + flash);
+        this.shieldMat.opacity = this.shieldBase * this.fade;
+        this.shieldMat.color.copy(flash > 0.5 ? SHIELD_FLASH : TEAM_MAIN[this.team]);
+        this.shieldRimMat.opacity = this.shieldRimBase * this.fade;
       }
     }
 

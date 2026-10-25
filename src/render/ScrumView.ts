@@ -16,6 +16,7 @@
 
 import * as THREE from 'three';
 import { scrumCaptureTicks, scrumInOvertime, scrumMaxTicks, TICK_RATE, type MatchEvent, type ScrumState, type TeamId } from '../sim';
+import { SCRUM_NEUTRAL, SCRUM_OVERTIME, SCRUM_RIM, TEAM_MAIN } from './colors';
 import { PALETTE, STYLE } from './palette';
 
 /** Ce qu'affiche la zone de capture pour une frame. */
@@ -108,6 +109,7 @@ export class ScrumView {
       transparent: true,
       depthWrite: false,
       side: THREE.DoubleSide,
+      forceSinglePass: true,
       polygonOffset: true,
       polygonOffsetFactor: -4,
       polygonOffsetUnits: -8,
@@ -135,6 +137,7 @@ export class ScrumView {
       opacity: STYLE.scrumWallOpacity,
       depthWrite: false,
       side: THREE.DoubleSide,
+      forceSinglePass: true,
     });
     this.disc = new THREE.Mesh(this.discGeo, this.discMat);
     this.disc.renderOrder = 1;
@@ -186,19 +189,19 @@ export class ScrumView {
     this.group.scale.set(s, 1, s);
 
     const u = this.discMat.uniforms;
-    const gold = PALETTE.scrumOvertime;
+    const gold = SCRUM_OVERTIME;
     // Couleur du remplissage et du rideau : équipe qui mène (vainqueur pendant le fondu), blanc à égalité, doré en prolongation.
     const lead: TeamId | -1 = ended ? this.winner : g.leader;
-    const leadColor = lead === -1 ? (g.overtime && !ended ? gold : PALETTE.scrumNeutral) : PALETTE.teams[lead].main;
-    (u.uFill.value as THREE.Color).set(leadColor);
-    (u.uRim.value as THREE.Color).set(g.overtime && !ended ? gold : PALETTE.scrumRim);
+    const leadColor = lead === -1 ? (g.overtime && !ended ? gold : SCRUM_NEUTRAL) : TEAM_MAIN[lead];
+    (u.uFill.value as THREE.Color).copy(leadColor);
+    (u.uRim.value as THREE.Color).copy(g.overtime && !ended ? gold : SCRUM_RIM);
     u.uShare.value = g.share0;
     u.uProgress.value = ended ? 1 : g.progress;
     u.uBand.value = STYLE.scrumBandWidth / Math.max(0.5, l.radius);
     u.uRimW.value = STYLE.scrumRimWidth / Math.max(0.5, l.radius);
     u.uFillOp.value = STYLE.scrumFillOpacity * pulse;
     u.uOpacity.value = k * appear;
-    this.wallMat.color.set(leadColor);
+    this.wallMat.color.copy(leadColor);
     this.wallMat.opacity = STYLE.scrumWallOpacity * k * appear * pulse;
   }
 

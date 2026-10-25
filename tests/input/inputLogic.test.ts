@@ -200,3 +200,36 @@ describe('actions du porteur au clavier (étape 4)', () => {
     expect(composeInput({ ...base, keyboardActions: k }).buttons).toBe(0);
   });
 });
+
+describe('porteur local : sprint automatique et esquive à l’enfoncement (passe finale, CARRIER_AUTO_SPRINT)', () => {
+  it('dodgeOnPress : l’esquive part dès l’enfoncement, même pour un appui long (plus de latence ni d’esquive perdue)', () => {
+    const s = new TapHoldState(); // défaut : esquive au relâchement
+    s.dodgeOnPress = true;
+    s.press(1.0);
+    expect(s.sample(1.01).tap).toBe(true); // au tick suivant l'enfoncement
+    s.release(1.0 + SPRINT_HOLD_DELAY_SEC + 0.05); // appui « long » : avant, esquive perdue au profit du sprint
+    expect(s.sample(1.3).tap).toBe(false); // pas de seconde esquive au relâchement
+  });
+
+  it('mode figé à l’enfoncement : changer de mode pendant l’appui ne donne ni double esquive ni esquive perdue', () => {
+    const a = new TapHoldState();
+    a.dodgeOnPress = true; // porteur à l'enfoncement…
+    a.press(0);
+    expect(a.sample(0.01).tap).toBe(true);
+    a.dodgeOnPress = false; // … passe en relâchant le bouton
+    a.release(0.05);
+    expect(a.sample(0.06).tap).toBe(false);
+    const b = new TapHoldState();
+    b.press(0); // pas encore porteur (esquive au relâchement)…
+    b.dodgeOnPress = true; // … attrape le ballon pendant l'appui
+    b.release(0.05);
+    expect(b.sample(0.06).tap).toBe(true);
+  });
+
+  it('composeInput : SPRINT émis à chaque tick en sprint automatique (la sim ne l’applique que vers l’avant)', () => {
+    const base: InputParts = { keyboardActions: 0, shift: { tap: false, hold: false }, gamepadButtons: 0, gamepadMove: { x: 0, y: 0 }, gamepadActive: false, yaw: 0, pitch: 0 };
+    expect(composeInput({ ...base, autoSprint: true }).buttons).toBe(Buttons.SPRINT);
+    expect(composeInput({ ...base, autoSprint: false }).buttons).toBe(0);
+    expect(composeInput({ ...base, autoSprint: true, shift: { tap: true, hold: false } }).buttons).toBe(Buttons.SPRINT | Buttons.DODGE);
+  });
+});

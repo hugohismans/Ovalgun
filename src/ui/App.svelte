@@ -3,7 +3,9 @@
   L'état et les transitions sont dans state/app.svelte.ts (session : GameSession de ../game/session) ; l'instantané de la
   session dans state/hud.svelte.ts ; la navigation au focus (clavier / manette) dans state/nav.svelte.ts.
   Clavier dans les menus : flèches = navigation spatiale (sauf gauche / droite sur un curseur), Tab / Entrée natifs,
-  Échap = retour. En jeu en ?debug (sans pointer lock) : Échap met en pause.
+  Échap = retour. En jeu sans pointer lock (?debug, ou partie à la manette) : Échap met en pause.
+  Passe finale : le HUD reste monté pendant toute la partie (masqué en pause : le remonter rejouait les animations de
+  tir reçu et de score) ; curseur de la souris masqué quand on joue à la manette.
 -->
 <script lang="ts">
   import { onMount } from 'svelte';
@@ -51,9 +53,9 @@
       }
       return;
     }
-    // En jeu : Échap met en pause en ?debug (sans pointer lock ; sinon le navigateur libère le verrou et la session
-    // se met en pause d'elle-même).
-    if (playing && e.key === 'Escape' && s?.debug === true) {
+    // En jeu : Échap met en pause quand la souris n'est pas verrouillée (?debug, partie à la manette) ; sinon le navigateur
+    // libère le verrou et la session se met en pause d'elle-même.
+    if (playing && e.key === 'Escape' && (s?.debug === true || s?.pointerLocked !== true)) {
       e.preventDefault();
       app.pause();
     }
@@ -66,11 +68,11 @@
 
 <svelte:window onkeydown={onKeydown} onpointermove={onPointerMove} />
 
-<div class="root" style:--t0={TEAM_COLORS[0]} style:--t1={TEAM_COLORS[1]}>
+<div class="root" class:pad-play={playing && app.device === 'gamepad'} style:--t0={TEAM_COLORS[0]} style:--t1={TEAM_COLORS[1]}>
   <canvas bind:this={canvas} tabindex="-1"></canvas>
 
-  {#if playing}
-    <Hud />
+  {#if inGameScreen && !ended}
+    <Hud hidden={!playing} />
   {/if}
 
   {#if app.screen === 'menu'}
@@ -92,6 +94,12 @@
   .root {
     position: fixed;
     inset: 0;
+  }
+  /* À la manette, aucun pointer lock : le curseur resterait figé par-dessus le jeu (souvent sur la jauge). Un clic sur le
+     jeu (pointer lock, clavier actif) ou la pause le rendent. */
+  .root.pad-play,
+  .root.pad-play canvas {
+    cursor: none;
   }
   canvas {
     position: fixed;

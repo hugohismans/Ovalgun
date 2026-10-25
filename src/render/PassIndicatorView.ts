@@ -8,7 +8,10 @@
  *  - éventail au sol derrière le porteur = cône de passe (relatif au TERRAIN : vers son propre en-but), vert
  *    quand une cible existe, rouge sinon (état « aucune cible » lisible d'un coup d'œil), avec un repère du
  *    regard replié (passAimDirection) : on voit de quel côté la passe partira ;
- *  - point de chute prévu du coup de pied, discret (anneau + balise verticale fine, lisible de loin).
+ *  - point de chute prévu du coup de pied, discret (anneau + balise verticale fine, lisible de loin) ;
+ *  - passe finale : RISQUE de la passe (démarquage du receveur, Renderer.passRiskOf) — flèche, chevron, trait et éventail
+ *    verts si le receveur est démarqué, ambre si la passe est risquée, rouge-orangé s'il est marqué (l'humain se faisait
+ *    intercepter 5 fois plus que les bots, qui filtrent sur ce démarquage, sans que l'écran le dise).
  * La cible est recalculée à chaque frame par le Renderer (selectPassTarget de la sim, avec le yaw courant).
  * Aucune allocation par frame.
  */
@@ -33,6 +36,8 @@ export interface PassIndicatorFrame {
   targetHeight: number;
   /** Point de chute prévu du coup de pied, ou null. */
   kickLanding: Vec3 | null;
+  /** Risque de la passe : 0 démarqué, 1 risqué, 2 marqué (ignoré sans cible). */
+  risk: 0 | 1 | 2;
 }
 
 const groundMat = (color: string, opacity: number, depthTest = true): THREE.MeshBasicMaterial =>
@@ -43,6 +48,7 @@ const groundMat = (color: string, opacity: number, depthTest = true): THREE.Mesh
     depthWrite: false,
     depthTest,
     side: THREE.DoubleSide,
+    forceSinglePass: true,
     polygonOffset: true,
     polygonOffsetFactor: -4,
     polygonOffsetUnits: -8,
@@ -60,14 +66,17 @@ export class PassIndicatorView {
   private readonly kick: THREE.Group;
   private readonly chevron = new THREE.Group();
   private readonly disposables: Array<{ dispose(): void }> = [];
-  private readonly targetColor = new THREE.Color(PALETTE.passTarget);
+  private readonly riskColors = [new THREE.Color(PALETTE.passTarget), new THREE.Color(PALETTE.passRisky), new THREE.Color(PALETTE.passMarked)] as const;
   private readonly noneColor = new THREE.Color(PALETTE.passNone);
+  private readonly arrowMat: THREE.MeshBasicMaterial;
+  private readonly chevMat: THREE.MeshBasicMaterial;
 
   constructor() {
     // Flèche : cône pointe en bas + anneau, sans test de profondeur (visible derrière les murets).
     const coneGeo = new THREE.ConeGeometry(STYLE.passArrowSize * 0.75, STYLE.passArrowSize * 1.5, 4).rotateX(Math.PI);
     const ringGeo = new THREE.TorusGeometry(STYLE.passArrowSize, STYLE.passArrowSize * 0.18, 6, 28).rotateX(Math.PI / 2);
     const arrowMat = new THREE.MeshBasicMaterial({ color: PALETTE.passTarget, depthTest: false, depthWrite: false, transparent: true });
+    this.arrowMat = arrowMat;
     const outlineMat = new THREE.MeshBasicMaterial({
       color: PALETTE.outline,
       side: THREE.BackSide,
@@ -113,6 +122,7 @@ export class PassIndicatorView {
     shape.closePath();
     const chevGeo = new THREE.ShapeGeometry(shape).rotateX(Math.PI / 2); // +Y de la forme -> +Z
     const chevMat = groundMat(PALETTE.passTarget, 0.95, false);
+    this.chevMat = chevMat;
     const chevOutlineMat = groundMat(PALETTE.outline, 0.6, false);
     const chev = new THREE.Mesh(chevGeo, chevMat);
     chev.renderOrder = 7;
@@ -162,9 +172,12 @@ export class PassIndicatorView {
     this.group.visible = f.visible;
     if (!f.visible) return;
     const has = f.targetFeet !== null;
-    const color = has ? this.targetColor : this.noneColor;
+    const color = has ? this.riskColors[f.risk] : this.noneColor;
     this.fanMat.color.copy(color);
     this.aimMat.color.copy(color);
+    this.lineMat.color.copy(color);
+    this.arrowMat.color.copy(color);
+    this.chevMat.color.copy(color);
     this.fanMat.opacity = has ? STYLE.passFanOpacity : STYLE.passFanOpacity * 1.4;
 
     const cf = f.carrierFeet;

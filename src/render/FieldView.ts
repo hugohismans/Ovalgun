@@ -209,7 +209,7 @@ export class FieldView {
 
     // Voile translucide (dégradé vertical) au-dessus de la bordure.
     const fenceMat = this.mat(
-      new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, side: THREE.DoubleSide, fog: true }),
+      new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true, fog: true }),
     );
     const addFence = (cx: number, cz: number, length: number, rotY: number, color: string): void => {
       const g = this.track(new THREE.PlaneGeometry(length, STYLE.fenceHeight, 1, 1));

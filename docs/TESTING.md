@@ -157,7 +157,7 @@ La partie démarre en mode entraînement (chrono figé) : 3v3, tu joues l'ailier
 | `AIM_ORIGIN_HEIGHT` | Hauteur du réticule (et du départ des tirs) au-dessus des pieds | 1,6 m | 1,7 pour faire passer le réticule au ras du haut de la tête |
 | `CAMERA_DISTANCE` / `_CARRY` / `_AIM` | Recul de la caméra : course / porteur / visée (m) | 4,2 / 5,4 / 2,8 | Porteur plus loin (6) pour mieux lire le jeu ; visée plus près (2,4) pour plus de précision |
 | `CAMERA_FOV` / `_CARRY` / `_AIM` | Champ de vision (degrés) | 72 / 78 / 58 | Monter pour plus de sensation de vitesse, au prix de la lisibilité au loin |
-| `CAMERA_FOV_SPEED_GAIN` / `CAMERA_FOV_SPEED_MAX_BONUS` | FOV ajouté par m/s au-delà de la course, et son plafond | 1,2 °/(m/s) / 6° | 2 et 8 pour un effet « warp » ; gain à 0 pour le couper |
+| `CAMERA_FOV_SPEED_GAIN` / `CAMERA_FOV_SPEED_MAX_BONUS` | FOV ajouté par m/s au-delà de la course, et son plafond | 3 °/(m/s) / 6° (gain 1,2 avant la passe finale) | 8 de plafond pour un effet « warp » ; gain à 0 pour le couper |
 | `CAMERA_BLEND_RATE` | Vivacité des transitions de caméra (1/s) | 10 | Monter (15) pour des transitions plus sèches |
 | `CAMERA_GROUND_MARGIN` / `CAMERA_MIN_DISTANCE` | Collision caméra / sol | 0,3 / 0,9 m | Monter la marge si la caméra frôle le sol en regardant en l'air |
 | `MOUSE_SENSITIVITY` / `MOUSE_AIM_SENSITIVITY_MULT` | Sensibilité souris (rad/px), et multiplicateur en visée | 0,0022 / 0,6 | Réglage personnel ; un menu d'options viendra plus tard |
@@ -831,3 +831,68 @@ Porteur sur terrain plat, Maj + avant, vitesse moyenne sur 5 s (m/s) :
 | `BOT_RECEIVE_TIME_MARGIN_SEC` / `BOT_RECEIVE_ARRIVE_RADIUS` | Avance du receveur bot sur le ballon / rayon où il l'attend arrêté | 0,15 s / 0,4 m | 0,3 s si des passes tombent encore (il attend plus souvent arrêté) |
 | `BOT_MARK_HYSTERESIS_M` / `BOT_MARK_DANGER_STICKY` | Stabilité du marquage | 3 m / 0,3 | 0 / 0 = ancien marquage (zigzag) ; 5 m pour un marquage « collant » |
 | `BOT_SCRUM_SUPPORTERS` | Soutiens derrière la zone de mêlée quand l'équipe mène | 2 | 3 en 5v5 pour plus de passes à la sortie de mêlée |
+
+## Passe finale — client, caméra et UI
+
+Correctifs de la passe finale côté rendu, entrées, session et HUD (détails et décisions : docs/ARCHITECTURE.md §18). La
+simulation et les bots ne changent pas : les tests de match bots contre bots passent à l'identique.
+
+### Comment tester
+
+1. **Tests automatiques** : `npm test`. Nouveaux tests :
+   - `tests/render/polish.test.ts` : maths de l'estompage (`fadeMath.ts`), matériaux en alpha hash propres à chaque
+     joueur, barre et étoiles masquées, joueur masqué presque transparent, axe du corps (debout / couché), halo
+     d'invulnérabilité (couleur claire de l'équipe, faces arrière, < 3 Hz, fixe en « animations réduites »), une gerbe
+     d'étincelles par cible et par tick, éclat de plaquage local réduit, `forceSinglePass` sur tous les transparents double
+     face de toutes les vues, traînée coupée sur une téléportation, seuils du risque de passe ;
+   - `tests/render/camera.test.ts` : pivot du porteur monté puis retour EXACT sur la droite de tir, collision balayée
+     (ligne de vue jamais dans le relief, toutes formes des deux terrains), FOV de vitesse ;
+   - `tests/input/inputLogic.test.ts` (esquive à l'enfoncement du porteur, sprint automatique), `haptics.test.ts`
+     (vibrations des gestes du porteur, passe réussie), `tests/game/feedback.test.ts` (« Passe réussie → … »).
+2. **En jeu** (`npm run dev`) :
+   - coup d'envoi : le regard part légèrement vers le bas (plus de terrain et de coéquipiers, l'horizon vers 40 % de la
+     hauteur au lieu du milieu) ;
+   - porteur (`?debug&dummies=off`, ou G) : la caméra monte d'un mètre ; un défenseur droit devant à 6, 12 ou 20 m reste
+     visible au-dessus de la tête du porteur ; en levant les yeux pour une chandelle, le corps du porteur gêne moins ;
+   - porteur au clavier : il sprinte tout seul en avançant ; Maj esquive dès l'appui (même long) ; à la manette, L3 est
+     inutile pour lui ;
+   - passe : flèche, chevron et trait verts (receveur démarqué), ambre (risqué), rouge-orangé + « · marqué » sous la
+     pastille (un adversaire près de la trajectoire) ;
+   - passe réussie : « Passe réussie → Pilier 2 » près du réticule et petite vibration ; esquive, plongeon, passe, coup de
+     pied vibrent légèrement à la manette ;
+   - `?debug&autopilot&size=5` : un joueur qui passe contre la caméra se fond (tramage) au lieu de couvrir l'écran ; un
+     joueur entre la caméra et soi devient translucide ; les mêlées ne font plus de nuage blanc d'étincelles ; un joueur
+     qui se relève a un halo à la couleur claire de son équipe, sans clignoter, et garde sa couleur ;
+   - à la manette (sans `?debug`) : le curseur disparaît en jeu ; Échap ou un alt-tab mettent en pause ;
+   - pause puis reprise après un tir reçu : la jauge ne tremble pas et les scores ne « sautent » pas ;
+   - HUD : « TOI » visible sous le score de son équipe ; demi : « Zone lente » en entier ; cible de passe lisible
+     (≈ 10,5 px en 1280×720) ; au sol, toutes les pastilles sont barrées ;
+   - zoom du navigateur (Ctrl + / Ctrl −) : le rendu reste net.
+
+### Mesures (5v5, autopilote, pilier, 200 échantillons à 100 ms, SwiftShader)
+
+| Mesure | Avant (audit) | Après |
+|---|---|---|
+| Autre joueur à moins de 1 m de la caméra (capsule) | 6–8 % du temps, opaque | 1,5 %, jamais plus de 50 % d'opacité |
+| Étincelles visibles (moyenne / pic) | 20 / 120 (pool saturé) | 15,6 / 49 (pool 64) |
+| Appels de dessin (moyenne / pic) | 194 / 426 | 168 / 278 |
+| `material.version` maximal (programme recalculé à chaque image) | 11 370 après 25 s | 0 |
+| FOV ailier porteur : sprint / esquive (au-dessus de 78°) | +2,2° / +6° | +5,5° / +6° |
+| Ligne de vue de la caméra dans le relief (pire cas, grille de test) | 0,67 m | < 0,1 m |
+
+### Constantes utiles pour ajuster le feeling
+
+| Constante | Effet | Valeur actuelle | Piste de réglage |
+|---|---|---|---|
+| `CAMERA_CARRY_RAISE` | Montée de la caméra du porteur (m) | 1 | 0,6 si la vue paraît trop plongeante ; 1,3 pour voir encore plus loin devant |
+| `KICKOFF_PITCH_DEG` | Regard au coup d'envoi (degrés) | −8 | −12 pour plus de terrain ; 0 = ancien cadrage |
+| `CAMERA_FOV_SPEED_GAIN` | FOV ajouté par m/s au-delà de la course | 3 | 2 pour un effet plus discret |
+| `CARRIER_AUTO_SPRINT` | Sprint automatique du porteur, esquive à l'enfoncement | oui | `false` = Maj / L3 comme les autres joueurs |
+| `GAMEPAD_RUMBLE_EFFECTS.dodge` / `dive` / `passThrown` / `passCompleted` / `kick` | Vibrations des gestes du porteur | légères (priorité ≤ 2) | `strong` et `weak` à 0 pour couper un signal |
+
+Réglages purement visuels (`src/render/palette.ts`) : `cameraFadeNear` / `cameraFadeFar` (0,4 / 1,8 m),
+`lineFadeRadius` / `lineFadeMin` / `lineFadeBehind` (0,6 m / 0,35 / 0,6 m), `localFadeNear` / `localFadeFar`
+(0,5 / 1,6 m), `fadeDetailsBelow` / `fadeHideBelow` (0,5 / 0,05) ; halo `invulnScale` / `invulnOpacity` / `invulnPulse` /
+`invulnPulseRate` (1,22 / 0,75 / 0,15 / 9 rad/s) ; étincelles `sparkPoolSize` / `sparksPerHit` / `sparksPerPelletHit` /
+`sparksPerTerrain` (64 / 3 / 4 / 4) ; `tackleBurstLocalScale` (0,5) ; `maxPixelRatio` (2) ; `trailTeleportSpeed` (55 m/s) ; couleurs du risque de passe
+`PALETTE.passRisky` / `passMarked`.

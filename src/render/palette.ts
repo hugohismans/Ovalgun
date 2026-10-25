@@ -57,6 +57,13 @@ export const PALETTE = {
   /** Passe assistée : cible (flèche au-dessus du receveur, ligne, éventail au sol) / aucune cible. */
   passTarget: '#3dffa0',
   passNone: '#ff4d6d',
+  /**
+   * Passe finale : risque de la passe assistée (démarquage du receveur, `openness` de selectPassTarget) — ambre sous
+   * BOT_PASS_MIN_OPENNESS (passe que les bots refusent hors de leurs 22 m), rouge-orangé « marqué » sous
+   * BOT_PASS_MIN_OPENNESS_OWN_THIRD (passe que les bots ne tentent jamais).
+   */
+  passRisky: '#ffc23d',
+  passMarked: '#ff5a2e',
   /** Point de chute prévu du coup de pied. */
   kickLanding: '#ffffff',
   /** Effets (FX) des événements du porteur. */
@@ -66,8 +73,6 @@ export const PALETTE = {
   fxKick: '#fff6b0',
   fxDive: '#7fe7ff',
   fxPass: '#ffffff',
-  /** Coque d'invulnérabilité (plongeon, relevé). */
-  invuln: '#ffffff',
 
   /** Combat (étape 5) : traceurs par équipe (cœur vif), flash de bouche, étincelles (joueur touché / relief). */
   tracers: ['#fff0a0', '#c8f4ff'] as const,
@@ -183,6 +188,11 @@ export const STYLE = {
   trailWidth: 0.14,
   trailOpacity: 0.85,
   trailMaxPoints: 48,
+  /**
+   * Traînée : vitesse apparente (m/s) au-delà de laquelle un saut de plus de `teleportDist` depuis son dernier point est une
+   * téléportation (outil « ballon au centre ») et la coupe — le double du ballon le plus rapide (coup de pied ≈ 27 m/s).
+   */
+  trailTeleportSpeed: 55,
   /** Passe assistée : flèche au-dessus du receveur — taille (m), hauteur au-dessus de la tête (m), flottement (m, rad/s), rotation (rad/s). */
   passArrowSize: 0.34,
   passArrowAboveHead: 0.95,
@@ -217,13 +227,37 @@ export const STYLE = {
   /** Effets : nombre max d'effets simultanés, épaisseur relative des anneaux (0..1). */
   fxPoolSize: 32,
   fxRingThickness: 0.16,
-  /** Coque d'invulnérabilité : échelle, opacité moyenne, amplitude et vitesse (rad/s) de la pulsation. */
-  invulnScale: 1.16,
-  invulnOpacity: 0.5,
-  invulnPulse: 0.3,
-  invulnPulseRate: 40,
+  /**
+   * Halo d'invulnérabilité (plongeon, relevé) : coque à la couleur CLAIRE de l'équipe, faces arrière seulement (un liseré
+   * autour du corps, qui garde sa couleur d'équipe) — échelle, opacité moyenne, amplitude et vitesse (rad/s) de la
+   * pulsation. Passe finale : avant, coque blanche par-dessus le corps (couleur d'équipe perdue) qui clignotait à 6,4 Hz ;
+   * 9 rad/s ≈ 1,4 Hz, sous le seuil de 3 flashs/s ; pulsation coupée sous `prefers-reduced-motion: reduce`.
+   */
+  invulnScale: 1.22,
+  invulnOpacity: 0.75,
+  invulnPulse: 0.15,
+  invulnPulseRate: 9,
   /** Distance (m) au-delà de laquelle un saut entre deux ticks est une téléportation (pas d'interpolation). */
   teleportDist: 4,
+  /** Rapport pixels physiques / CSS maximal du rendu (écrans HiDPI, zoom du navigateur). ↑ = plus net, plus coûteux. */
+  maxPixelRatio: 2,
+  /**
+   * Passe finale : joueurs estompés près de la caméra (fadeMath.ts, tramage « alpha hash »). Autres joueurs : opaques au-delà
+   * de `cameraFadeFar` (m, de la caméra à la surface de leur capsule), presque invisibles à `cameraFadeNear` ; entre la
+   * caméra et le joueur local (à moins de `lineFadeRadius` m du segment caméra -> dos du joueur local, qui s'arrête
+   * `lineFadeBehind` m derrière l'origine de visée) : opacité ramenée jusqu'à `lineFadeMin`. Joueur local : estompé
+   * entre `localFadeFar` et `localFadeNear` (caméra plaquée contre lui en regardant en l'air ; en visée ≈ 2,4 m : opaque).
+   * Sous `fadeDetailsBelow`, barre de stabilité et étoiles masquées ; sous `fadeHideBelow`, joueur masqué.
+   */
+  cameraFadeNear: 0.4,
+  cameraFadeFar: 1.8,
+  lineFadeRadius: 0.6,
+  lineFadeMin: 0.35,
+  lineFadeBehind: 0.6,
+  localFadeNear: 0.5,
+  localFadeFar: 1.6,
+  fadeDetailsBelow: 0.5,
+  fadeHideBelow: 0.05,
 
   // --- Combat (étape 5) ---
   /** Traceurs : nombre max simultanés, longueur (m) et épaisseur (m) — balles / plombs ; opacité. */
@@ -250,9 +284,15 @@ export const STYLE = {
   muzzleFlashAhead: 0.15,
   muzzleFlashSpinStep: 0.9,
   muzzleFlashShrink: 0.4,
-  /** Étincelles d'impact : nombre max, par impact (joueur / relief), vitesse (m/s), durée (s), taille (m), gravité (m/s²). */
-  sparkPoolSize: 120,
-  sparksPerHit: 6,
+  /**
+   * Étincelles d'impact : nombre max, par balle qui touche un joueur / par décharge de plombs sur un joueur / sur le
+   * relief ou un bouclier, vitesse (m/s), durée (s), taille (m), gravité (m/s²). Passe finale : une seule gerbe par joueur
+   * touché et par tick, et une seule gerbe de relief par tireur et par tick (une décharge de 8 plombs en faisait 48 et le
+   * pool de 120 saturait dans les mêlées) ; 6 -> 3 par balle, pool 120 -> 64.
+   */
+  sparkPoolSize: 64,
+  sparksPerHit: 3,
+  sparksPerPelletHit: 4,
   sparksPerTerrain: 4,
   sparkSpeed: 5,
   sparkSec: 0.28,
@@ -279,9 +319,13 @@ export const STYLE = {
   /** Barre de stabilité : opacité du fond, marge du fond autour de la jauge (m). */
   stabilityBarBackOpacity: 0.75,
   stabilityBarBackMargin: 0.06,
-  /** Plaquage : éclat en étoile (durée s, taille max m), nombre max simultanés. */
+  /**
+   * Plaquage : éclat en étoile (durée s, taille max m), nombre max simultanés ; échelle de l'éclat quand le plaqué est le
+   * joueur local (la caméra est juste derrière : à pleine taille il couvrait les deux tiers de l'écran).
+   */
   tackleBurstSec: 0.4,
   tackleBurstSize: 2.2,
+  tackleBurstLocalScale: 0.5,
   tackleBurstPoolSize: 8,
   /** Éclat de plaquage : hauteur au-dessus des pieds (m), rotation sur sa durée (rad), échelle de départ (fraction). */
   tackleBurstHeight: 0.9,

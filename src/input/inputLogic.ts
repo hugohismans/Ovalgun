@@ -54,11 +54,18 @@ export class PressLatch {
  *   bref que le délai ; un maintien sprinte sans consommer l'esquive.
  * - sinon : l'esquive part à l'enfoncement (latence nulle) et un maintien donne esquive PUIS sprint.
  * Un appui bref (pressé et relâché entre deux ticks) donne toujours son esquive au tick suivant.
+ * Passe finale : `dodgeOnPress` (porteur local, CARRIER_AUTO_SPRINT) force l'esquive à l'enfoncement, quel que soit
+ * `dodgeOnRelease` ; le mode est figé à l'enfoncement (changer de mode pendant un appui ne donne ni double esquive ni
+ * esquive perdue au relâchement).
  */
 export class TapHoldState {
+  /** Esquive à l'enfoncement, prioritaire sur `dodgeOnRelease` (porteur local, sprint automatique). */
+  dodgeOnPress = false;
   private down = false;
   private downAt = 0;
   private pendingTap = false;
+  /** Mode de l'appui en cours : vrai si son esquive part (est partie) à l'enfoncement. */
+  private tapOnPress = false;
 
   constructor(
     private readonly holdDelaySec: number = SPRINT_HOLD_DELAY_SEC,
@@ -69,13 +76,14 @@ export class TapHoldState {
     if (this.down) return; // répétition clavier
     this.down = true;
     this.downAt = nowSec;
-    if (!this.dodgeOnRelease) this.pendingTap = true;
+    this.tapOnPress = this.dodgeOnPress || !this.dodgeOnRelease;
+    if (this.tapOnPress) this.pendingTap = true;
   }
 
   release(nowSec: number): void {
     if (!this.down) return;
     this.down = false;
-    if (this.dodgeOnRelease && nowSec - this.downAt < this.holdDelaySec) this.pendingTap = true;
+    if (!this.tapOnPress && nowSec - this.downAt < this.holdDelaySec) this.pendingTap = true;
   }
 
   reset(): void {
@@ -133,6 +141,11 @@ export interface InputParts {
   gamepadMove: { x: number; y: number };
   /** Manette = périphérique actif (départage des déplacements à égalité). */
   gamepadActive: boolean;
+  /**
+   * Sprint automatique (passe finale : porteur local, CARRIER_AUTO_SPRINT) : SPRINT émis à chaque tick ; la sim ne
+   * l'applique que vers l'avant, stick assez incliné.
+   */
+  autoSprint?: boolean;
   yaw: number;
   pitch: number;
 }
@@ -146,7 +159,7 @@ export function composeInput(p: InputParts): PlayerInput {
   const kb = keyboardMove((a & BIT_FORWARD) !== 0, (a & BIT_BACK) !== 0, (a & BIT_LEFT) !== 0, (a & BIT_RIGHT) !== 0);
   let buttons = actionsToButtons(a);
   if (p.shift.tap) buttons |= Buttons.DODGE;
-  if (p.shift.hold) buttons |= Buttons.SPRINT;
+  if (p.shift.hold || p.autoSprint === true) buttons |= Buttons.SPRINT;
   buttons |= p.gamepadButtons;
   const move = mergeMove(kb, p.gamepadMove, p.gamepadActive);
   return { moveX: move.x, moveY: move.y, yaw: p.yaw, pitch: p.pitch, buttons };

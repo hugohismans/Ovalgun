@@ -26,6 +26,7 @@ import {
   type TeamId,
   type Vec3,
 } from '../sim';
+import { EXPLOSION_CORE, TEAM_LIGHT } from './colors';
 import { PALETTE, STYLE } from './palette';
 
 /** Géométrie d'étoile plate (branches alternant rayon 1 et `inner`). */
@@ -171,6 +172,10 @@ export class CombatFxView {
   private readonly gp: Vec3 = { x: 0, y: 0, z: 0 };
   private readonly gq: Vec3 = { x: 0, y: 0, z: 0 };
   private endingCount = 0;
+  /** Joueurs qui ont déjà eu leur gerbe d'étincelles pendant le tick en cours. */
+  private readonly sparkedTargets = new Set<number>();
+  /** Tireurs dont un projectile a déjà fait une gerbe sur le relief / un bouclier pendant le tick en cours. */
+  private readonly sparkedOwners = new Set<number>();
   /**
    * Fins de projectiles des ticks PRÉCÉDENTS de la même frame (plusieurs ticks par frame à ≤ 30 i/s ou après un
    * à-coup) : les `endingFull` premières entrées sont dessinées en entier (jusqu'au point final) ; seules celles du
@@ -189,7 +194,7 @@ export class CombatFxView {
 
   constructor() {
     const basic = (color: string, opacity = 1): THREE.MeshBasicMaterial =>
-      new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false, side: THREE.DoubleSide, fog: false });
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true, fog: false });
     this.tracerMats = [basic(PALETTE.tracers[0], STYLE.tracerOpacity), basic(PALETTE.tracers[1], STYLE.tracerOpacity)];
     this.flashMat = basic(PALETTE.muzzleFlash);
     this.sparkMats = { hit: basic(PALETTE.sparkHit), terrain: basic(PALETTE.sparkTerrain) };
@@ -236,6 +241,7 @@ export class CombatFxView {
     // Explosions : boule flat + onde au sol (matériaux propres : opacité animée).
     for (let i = 0; i < STYLE.explosionPoolSize; i++) {
       const ballMat = basic(PALETTE.explosionCore, STYLE.explosionOpacity);
+      ballMat.side = THREE.FrontSide; // boule fermée : les faces avant suffisent
       const ringMat = basic(PALETTE.explosionRing, 1);
       const ball = new THREE.Mesh(this.blastGeo, ballMat);
       const ring = new THREE.Mesh(this.blastRingGeo, ringMat);
@@ -255,7 +261,11 @@ export class CombatFxView {
    * Événements d'un tick (appelé après chaque step, avec l'état après et l'état avant le tick). Les projectiles
    * terminés pendant ce tick sont retenus pour être prolongés jusqu'à leur point final à l'affichage.
    */
-  handleEvents(events: readonly MatchEvent[], state: MatchState, prev: MatchState | null, timeSec: number): void {
+  handleEvents(events: readonly MatchEvent[], state: MatchState, prev: MatchState | null, timeSec: number, localId = -1): void {
+    // Passe finale : une seule gerbe d'étincelles par joueur touché et par tick (une décharge de plombs en faisait 8), une
+    // seule gerbe de relief par tireur et par tick.
+    this.sparkedTargets.clear();
+    this.sparkedOwners.clear();
     if (this.endingsDrawn) {
       this.endingCount = 0;
       this.endingsDrawn = false;
@@ -267,16 +277,25 @@ export class CombatFxView {
         case 'shot':
           this.spawnFlash(e.pos, e.dir, state.players[e.playerId]?.yaw ?? 0, timeSec);
           break;
-        case 'hit':
-          this.spawnSparks(e.pos, STYLE.sparksPerHit, this.sparkMats.hit, timeSec);
+        case 'hit': {
+          if (this.sparkedTargets.has(e.targetId)) break;
+          this.sparkedTargets.add(e.targetId);
+          const shooter = state.players[e.sourceId];
+          const pellet = shooter !== undefined && ROLES[shooter.role].weapon.projectile === 'pellet';
+          this.spawnSparks(e.pos, pellet ? STYLE.sparksPerPelletHit : STYLE.sparksPerHit, this.sparkMats.hit, timeSec);
           break;
+        }
         case 'projectile_end':
           this.recordEnding(e, events, prev);
-          if (e.reason === 'terrain' || e.reason === 'blocked') this.spawnSparks(e.pos, STYLE.sparksPerTerrain, this.sparkMats.terrain, timeSec);
+          if ((e.reason === 'terrain' || e.reason === 'blocked') && !this.sparkedOwners.has(e.ownerId)) {
+            this.sparkedOwners.add(e.ownerId);
+            this.spawnSparks(e.pos, STYLE.sparksPerTerrain, this.sparkMats.terrain, timeSec);
+          }
           break;
         case 'tackled': {
           const p = state.players[e.targetId];
-          if (p !== undefined) this.spawnBurst(p.pos, timeSec);
+          // Plaqué = joueur local : la caméra est juste derrière, éclat réduit (il couvrait les deux tiers de l'écran).
+          if (p !== undefined) this.spawnBurst(p.pos, timeSec, e.targetId === localId ? STYLE.tackleBurstLocalScale : 1);
           break;
         }
         case 'explosion':
@@ -394,18 +413,18 @@ export class CombatFxView {
     b.radius = radius;
     b.ball.position.set(pos.x, pos.y, pos.z);
     b.ring.position.set(pos.x, groundHeight(state.field, pos.x, pos.z) + 0.05, pos.z);
-    b.ballMat.color.set(PALETTE.explosionCore);
-    b.ringMat.color.set(PALETTE.teams[team].light);
+    b.ballMat.color.copy(EXPLOSION_CORE);
+    b.ringMat.color.copy(TEAM_LIGHT[team]);
   }
 
-  private spawnBurst(feet: Vec3, timeSec: number): void {
+  private spawnBurst(feet: Vec3, timeSec: number, scale: number): void {
     const s = this.bursts[this.nextBurst];
     this.nextBurst = (this.nextBurst + 1) % this.bursts.length;
     s.mesh.position.set(feet.x, feet.y + STYLE.tackleBurstHeight, feet.z);
     s.active = true;
     s.start = timeSec;
     s.duration = STYLE.tackleBurstSec;
-    s.size = STYLE.tackleBurstSize;
+    s.size = STYLE.tackleBurstSize * scale;
   }
 
   /** Place un traceur (pool) entre les distances `s0` et `s1` de la trajectoire `spec`. */

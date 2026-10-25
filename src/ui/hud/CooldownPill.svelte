@@ -17,6 +17,7 @@
     activeFrac = -1,
     blocked = false,
     sub = '',
+    subTone = 'default',
     tone = 'default',
   }: {
     icon: IconName;
@@ -31,6 +32,8 @@
     /** Action impossible pour l'instant (pas de cible de passe, plongeon en cours…). */
     blocked?: boolean;
     sub?: string;
+    /** Couleur du texte secondaire : risque de la passe (passe finale). */
+    subTone?: 'default' | 'risky' | 'marked';
     tone?: 'default' | 'ball' | 'ability';
   } = $props();
 
@@ -57,7 +60,7 @@
     </span>
   </div>
   <span class="lbl">{label}</span>
-  {#if sub}<span class="sub">{sub}</span>{/if}
+  {#if sub}<span class="sub" class:risky={subTone === 'risky'} class:marked={subTone === 'marked'}>{sub}</span>{/if}
 </div>
 
 <style>
@@ -69,7 +72,7 @@
     align-items: center;
     gap: 0.15rem;
     min-width: 4.6rem;
-    max-width: 6.6rem;
+    max-width: 7.2rem;
     color: #fff;
   }
   .pill.ability {
@@ -173,22 +176,32 @@
     padding: 0.06rem 0.4rem;
     border-radius: 999px;
     background: rgb(15 13 43 / 0.72);
-    font: 800 0.68rem/1.15 var(--font);
+    font: 800 0.75rem/1.15 var(--font);
     letter-spacing: 0.02em;
   }
   .cooling .lbl,
   .blocked .lbl {
     color: var(--text-dim);
   }
+  /* Passe finale : 0,6 -> 0,78 rem (la cible de passe faisait 8 px en 1280×720, illisible en courant). */
   .sub {
-    max-width: 6.5rem;
+    max-width: 8rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
     text-align: center;
     white-space: nowrap;
     padding: 0.04rem 0.35rem;
     border-radius: 999px;
-    background: rgb(15 13 43 / 0.6);
-    font: 700 0.6rem/1.1 var(--font);
+    background: rgb(15 13 43 / 0.72);
+    font: 800 0.78rem/1.15 var(--font);
     color: var(--text-dim);
+  }
+  .sub.risky {
+    color: #ffc23d;
+  }
+  .sub.marked {
+    color: #fff;
+    background: #d8401c;
   }
   @media (prefers-reduced-motion: no-preference) {
     .burst {

@@ -120,6 +120,7 @@ describe('effets et indicateurs du porteur (étape 4)', () => {
       targetFeet: { x: 4, y: 0, z: -6 },
       targetHeight: PLAYER_HEIGHT,
       kickLanding: { x: 0, y: 0, z: 30 },
+      risk: 0 as const,
     };
     v.update(base, 0);
     const [arrow, fan] = v.group.children;
@@ -136,6 +137,16 @@ describe('effets et indicateurs du porteur (étape 4)', () => {
     expect(arrow.visible).toBe(false);
     expect(chevron.visible).toBe(false);
     expect(fanMat.color.getHex()).not.toBe(green);
+    // Passe finale : couleur selon le risque (démarqué / risqué / marqué), flèche et chevron compris.
+    const arrowMat = ((arrow as THREE.Group).children[1] as THREE.Mesh).material as THREE.MeshBasicMaterial;
+    const chevMat = ((chevron as THREE.Group).children[1] as THREE.Mesh).material as THREE.MeshBasicMaterial;
+    const hexes = ([0, 1, 2] as const).map((risk) => {
+      v.update({ ...base, risk }, 0.15);
+      expect(arrowMat.color.getHex()).toBe(fanMat.color.getHex());
+      expect(chevMat.color.getHex()).toBe(fanMat.color.getHex());
+      return fanMat.color.getHex();
+    });
+    expect(hexes).toEqual([new THREE.Color(PALETTE.passTarget).getHex(), new THREE.Color(PALETTE.passRisky).getHex(), new THREE.Color(PALETTE.passMarked).getHex()]);
     v.update({ ...base, visible: false }, 0.2);
     expect(v.group.visible).toBe(false);
     v.dispose();
